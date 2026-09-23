@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ShieldCheck, Download, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { checkCertTrusted } from '../../api/client';
 
 interface Props {
@@ -7,6 +8,8 @@ interface Props {
 }
 
 export function CertInstallScreen({ onCertTrusted }: Props) {
+  const { t } = useTranslation();
+  const steps = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => t(`${prefix}.s${i + 1}`));
   const [checking, setChecking] = useState(false);
   const [failed, setFailed] = useState(false);
   const [openGuide, setOpenGuide] = useState<string | null>('mac');
@@ -32,9 +35,9 @@ export function CertInstallScreen({ onCertTrusted }: Props) {
           <div className="w-16 h-16 bg-amber-900/30 rounded-2xl flex items-center justify-center mb-4 border border-amber-700/40">
             <ShieldCheck className="w-8 h-8 text-amber-400" />
           </div>
-          <h1 className="text-xl font-bold text-white">Certificaat installeren</h1>
+          <h1 className="text-xl font-bold text-white">{t('setup.cert.title')}</h1>
           <p className="text-sm text-gray-400 mt-1 text-center">
-            De Novabot app gebruikt HTTPS. Installeer het lokale CA-certificaat zodat de app kan verbinden.
+            {t('setup.cert.intro')}
           </p>
         </div>
 
@@ -45,36 +48,22 @@ export function CertInstallScreen({ onCertTrusted }: Props) {
           className="flex items-center justify-center gap-2.5 w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition-colors mb-6 text-sm"
         >
           <Download className="w-4 h-4" />
-          Download opennova-ca.crt
+          {t('setup.cert.download')}
         </a>
 
         {/* Installatie handleidingen */}
         <div className="space-y-2 mb-6">
           <Guide
-            title="Mac (inclusief iOS app op Apple Silicon)"
+            title={t('setup.cert.macTitle')}
             open={openGuide === 'mac'}
             onToggle={() => setOpenGuide(g => g === 'mac' ? null : 'mac')}
-            steps={[
-              'Download opennova-ca.crt en dubbelklik → Keychain Access opent',
-              'Het cert staat nu in de System keychain maar is nog NIET vertrouwd',
-              'Dubbelklik op "OpenNova Local CA" in de lijst',
-              'Klap "Trust" open (klik op het driehoekje)',
-              'Zet "When using this certificate" op "Always Trust"',
-              'Sluit het venster → voer je Mac-wachtwoord in als gevraagd',
-              'Klik hieronder op "Controleer opnieuw"',
-            ]}
+            steps={[...steps('setup.cert.mac', 6), t('setup.cert.macCheckAgain')]}
           />
           <Guide
-                        title="iPhone / iPad"
+            title="iPhone / iPad"
             open={openGuide === 'iphone'}
             onToggle={() => setOpenGuide(g => g === 'iphone' ? null : 'iphone')}
-            steps={[
-              'Stuur het .crt bestand naar je iPhone (AirDrop of mail)',
-              'Open het bestand → "Profiel gedownload" verschijnt',
-              'Ga naar Instellingen → Profiel gedownload → Installeer',
-              'Ga naar Instellingen → Algemeen → Info → Vertrouwde certificaten',
-              'Zet "OpenNova Local CA" aan',
-            ]}
+            steps={steps('setup.cert.iphone', 5)}
           />
         </div>
 
@@ -85,17 +74,17 @@ export function CertInstallScreen({ onCertTrusted }: Props) {
           className="flex items-center justify-center gap-2 w-full bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
         >
           <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
-          {checking ? 'Controleren...' : 'Controleer opnieuw'}
+          {checking ? t('setup.cert.checking') : t('setup.cert.checkAgain')}
         </button>
 
         {failed && (
           <p className="text-center text-xs text-red-400 mt-3">
-            Certificaat nog niet vertrouwd. Installeer het en probeer opnieuw.
+            {t('setup.cert.notTrusted')}
           </p>
         )}
 
         <p className="text-center text-[11px] text-gray-600 mt-4">
-          Dit certificaat is alleen geldig voor *.lfibot.com op je lokale netwerk.
+          {t('setup.cert.scope')}
         </p>
       </div>
     </div>

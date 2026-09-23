@@ -1183,9 +1183,7 @@ export function MowerControls({
             {/* ── Edge cut mode ── only height matters (mapName hardcoded 'map0') */}
             {edgeMode && (
               <p className="text-[10px] text-gray-400 leading-snug">
-                Edge cut runs along the work-zone boundary at the chosen
-                cutting height. Map is fixed to <code>map0</code>; dock
-                departure detected automatically.
+                {t('controls.edgeCutHint', { map: 'map0' })}
               </p>
             )}
 
@@ -1307,7 +1305,7 @@ export function MowerControls({
                   >−</button>
                   <div className={`flex-1 text-center text-sm font-mono ${edgeOffset === 0 ? 'text-gray-500' : edgeOffset > 0 ? 'text-blue-300' : 'text-orange-300'}`}>
                     {edgeOffset === 0
-                      ? 'No offset'
+                      ? t('controls.noOffset')
                       : edgeOffset > 0
                         ? `+${edgeOffset.toFixed(1)}m`
                         : `${edgeOffset.toFixed(1)}m`}

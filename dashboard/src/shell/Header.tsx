@@ -145,8 +145,8 @@ export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnl
         {activeSn && (
           <button
             onClick={() => setShowDiagnosis(true)}
-            title={t('diagnose.title', 'Waarom komt hij niet online?')}
-            aria-label={t('diagnose.title', 'Waarom komt hij niet online?')}
+            title={t('diagnose.title', 'Why is it not coming online?')}
+            aria-label={t('diagnose.title', 'Why is it not coming online?')}
             className={`p-1.5 rounded-lg transition-colors ${
               activeOnline
                 ? 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'
@@ -165,7 +165,7 @@ export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnl
           onClick={onOpenDrawer}
           title={t('header.diagnostics', 'Diagnostics & logs')}
           className="grid place-items-center w-8 h-8 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 transition-colors"
-          aria-label="Open diagnostics drawer"
+          aria-label={t('header.diagnostics', 'Diagnostics & logs')}
         >
           <Activity className="w-4 h-4" />
         </button>

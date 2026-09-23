@@ -1,6 +1,7 @@
 import type { DeviceState, SensorDef, MapData, MapsResponse, TrailPoint, MapCalibration, Schedule, WorkRecord, SignalHistoryPoint, LocalPoint, MowerEvent } from '../types';
 import { selfIntersects } from '../utils/editGeometry';
 import { makeValidPolygon } from '../utils/brushPaint';
+import i18n from '../i18n';
 
 const BASE = '/api/dashboard';
 
@@ -68,6 +69,8 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
   const headers = new Headers(init?.headers);
   const token = getToken();
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+  // The server writes its messages in the reader's language.
+  if (!headers.has('X-Lang')) headers.set('X-Lang', i18n.language);
 
   const res = await fetch(input, { ...init, headers });
 
@@ -107,7 +110,7 @@ export async function login(email: string, password: string): Promise<void> {
     | null;
   const token = body?.value?.accessToken;
   if (!res.ok || !body?.success || !token) {
-    throw new Error(body?.message || `Login failed (${res.status})`);
+    throw new Error(body?.message || i18n.t('login.failedStatus', { status: res.status }));
   }
   setToken(token);
 }

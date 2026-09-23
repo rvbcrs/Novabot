@@ -6,7 +6,8 @@
     "password": "Password",
     "submit": "Sign in",
     "signingIn": "Signing in…",
-    "error": "Invalid email or password"
+    "error": "Invalid email or password",
+    "failedStatus": "Sign-in failed ({{status}})"
   },
   "update": {
     "title": "Server update available",
@@ -20,7 +21,10 @@
     "dashboard": "Dashboard",
     "server": "Server",
     "serverOffline": "Server offline",
-    "connectionTitle": "Connection to OpenNova server"
+    "connectionTitle": "Connection to OpenNova server",
+    "serverVersion": "Server version",
+    "diagnostics": "Diagnostics & logs",
+    "adminPanel": "Admin panel"
   },
   "sidebar": {
     "devices": "Devices",
@@ -40,7 +44,9 @@
     "loading": "Loading…",
     "failed": "Failed",
     "failedToLoad": "Failed to load",
-    "close": "Close"
+    "close": "Close",
+    "collapse": "Collapse",
+    "expand": "Expand"
   },
   "pages": {
     "selectMower": "Select a mower.",
@@ -48,11 +54,30 @@
   },
   "chips": {
     "offline": "offline",
-    "noMowers": "No mowers"
+    "noMowers": "No mowers",
+    "network": "Network",
+    "other": "Other",
+    "updated": "Updated: {{time}}",
+    "noSensorData": "No sensor data yet.",
+    "noChargerTelemetry": "No charger telemetry yet.",
+    "sats": "Sats",
+    "temp": "Temp",
+    "notOk": "Not OK",
+    "noRtk": "No RTK",
+    "sensorDetails": "{{name}} sensor details",
+    "rtkFixQuality": "RTK fix quality: {{quality}}",
+    "cpuTemp": "CPU temp: {{temp}}°C",
+    "cpuTempDanger": "DANGER: CPU temp {{temp}}°C (>= {{limit}}°C)",
+    "workStatus": "Work status: {{status}}",
+    "drivingSpeed": "Driving speed: {{speed}} m/s",
+    "waiting": "waiting…"
   },
   "mower": {
     "longPause": {
       "banner": "Mower has been paused for {{minutes}} minutes. Resume, stop, or send to dock?"
+    },
+    "mdnsConflict": {
+      "banner": "A second OpenNova server was detected at {{ips}} advertising opennovabot.local. Mowers can (accidentally) connect to it instead of this server ({{self}}). Running npm run dev or docker locally? Stop it, or the mowers will follow that server."
     }
   },
   "time": {
@@ -85,7 +110,8 @@
     "mowSpeed": "Mow speed",
     "area": "Area",
     "error": "Error",
-    "errorCode": "Code: {{code}}"
+    "errorCode": "Code: {{code}}",
+    "unknownError": "Unknown error"
   },
   "log": {
     "title": "MQTT Log",
@@ -94,7 +120,8 @@
     "autoScrollOn": "Auto-scroll ON",
     "autoScrollOff": "Auto-scroll OFF",
     "waiting": "Waiting for MQTT traffic...",
-    "noMatches": "No matches"
+    "noMatches": "No matches",
+    "waitingBle": "Waiting for BLE activity..."
   },
   "devices": {
     "charger": "Charger",
@@ -118,7 +145,15 @@
     "confirmRemove": "Remove {{sn}} from dashboard?",
     "loading": "Loading devices...",
     "waitingForDevices": "Waiting for devices...",
-    "schedule": "Schedule"
+    "schedule": "Schedule",
+    "unbound": {
+      "title": "Devices found, not linked yet",
+      "intro": "The devices below are connected to your MQTT server but not yet linked to your account. Give them a name and click \"Link\" to add them.",
+      "namePlaceholder": "Name (optional)",
+      "bind": "Link",
+      "binding": "Linking...",
+      "bindFailed": "Linking failed"
+    }
   },
   "controls": {
     "startMowing": "Start mowing",
@@ -233,7 +268,10 @@
     "heightMismatchBody": "You set {{expected}} cm, but the mower is cutting at {{actual}} cm.",
     "continueAnyway": "Continue anyway",
     "reanchorRequiredTitle": "Re-anchoring required",
-    "reanchorRequiredBody": "The map was restored but the frame has not been validated. Re-anchor the mower on the charging station before mowing."
+    "reanchorRequiredBody": "The map was restored but the frame has not been validated. Re-anchor the mower on the charging station before mowing.",
+    "dragWindow": "Drag to move",
+    "edgeCutHint": "Edge cut runs along the work-area boundary at the chosen cutting height. The map is fixed to {{map}}; leaving the dock is detected automatically.",
+    "noOffset": "No offset"
   },
   "camera": {
     "title": "Camera",
@@ -246,7 +284,8 @@
     "frontHd": "Front HD",
     "tofGray": "ToF Gray",
     "tofDepth": "ToF Depth",
-    "aruco": "ArUco"
+    "aruco": "ArUco",
+    "dragHint": "Drag to move"
   },
   "map": {
     "workArea": "Work area",
@@ -409,7 +448,10 @@
       "coverageStart": "Mower starts here",
       "coverageRefresh": "Refresh from mower",
       "unsupportedFirmware": "Applying map edits needs OpenNova custom firmware. On stock firmware, use “Edit map” in the app and drive the changed section.",
-      "stockNotice": "Stock firmware: edits can't be sent to the mower from here. Use “Edit map” in the OpenNova app instead (drive the changed section)."
+      "stockNotice": "Stock firmware: edits can't be sent to the mower from here. Use “Edit map” in the OpenNova app instead (drive the changed section).",
+      "revertTitle": "Revert changes",
+      "discardTitle": "Discard drafts",
+      "pasteDismiss": "Clear clipboard"
     },
     "missedPoint": "Missed point",
     "sourceMower": "driven by the mower",
@@ -481,17 +523,70 @@
       "renderFromAerial": "Aerial imagery (satellite)",
       "renderFromDrone": "Your drone photo",
       "renderMadeFrom": "Current render: {{src}}",
-      "renderFit": "Fit to view"
+      "renderFit": "Fit to view",
+      "renderNotMade": "not made yet"
     },
     "render": {
       "noKey": "Set a key first under Settings → 3D render.",
       "noBase": "No aerial imagery for this location; upload a drone photo.",
-      "failed": "Render failed"
-    }
+      "failed": "Render failed",
+      "notMadeTitle": "Not made yet",
+      "missingFlat": "There is no top-down render yet. Make one via \"New 3D render\" with the Top-down view.",
+      "missingIso": "There is no angled render yet. Make one via \"New 3D render\" with the Angled view.",
+      "framing": "View",
+      "flat": "Top-down",
+      "flatDesc": "Covers what you currently see on the map. Zones, mower and lanes on top.",
+      "iso": "Angled",
+      "isoDesc": "3D picture from the side, with the mower and lanes on it.",
+      "light": "Light",
+      "auto": "Auto",
+      "autoHint": "Day or evening based on sunrise and sunset at the mower",
+      "newTitle": "New 3D render",
+      "source": "Made from",
+      "aerial": "Aerial photo",
+      "aerialDesc": "Works everywhere, imagery is 1 to 3 years old.",
+      "drone": "Drone photo",
+      "droneDesc": "Your own photo: sharper and up to date.",
+      "costNote": "Takes 1 to 3 minutes and costs a credit or API balance. A day and an evening version are made.",
+      "replaceNote": "Replaces the existing render for this view.",
+      "make": "Make render"
+    },
+    "dronePlaceFailed": "Placement not saved",
+    "droneManageHint": "Upload or replace: Settings › Drone photo.",
+    "tiles": {
+      "esri": "Esri satellite (global)",
+      "google": "Google satellite (hi-res, unofficial)",
+      "pdok": "PDOK aerial photo (NL, ~8 cm)",
+      "usgs": "USGS imagery (US)",
+      "street": "Street map (OSM)"
+    },
+    "celebration": {
+      "title": "Mowing complete!",
+      "allLanes": "100%: all lanes mowed",
+      "area": "{{area}} m² finished"
+    },
+    "noGo": {
+      "saved": "No-go zone saved",
+      "saveFailed": "Saving the no-go zone failed",
+      "deleted": "No-go zone deleted",
+      "deleteFailed": "Delete failed",
+      "firstCorner": "Click the first corner of the no-go rectangle",
+      "secondCorner": "Click the opposite corner to complete"
+    },
+    "lastMowed": "Last mowed: {{date}}",
+    "navigationTarget": "Navigation target",
+    "mowingComplete": "Mowing complete!",
+    "allLanesDone": "all lanes mowed",
+    "areaFinished": "{{area}} m² finished"
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",
-    "terrainStockNotice": "3D terrain needs the OpenNova custom firmware on the mower; nothing is scanned on stock firmware."
+    "terrainStockNotice": "3D terrain needs the OpenNova custom firmware on the mower; nothing is scanned on stock firmware.",
+    "betaWarning": {
+      "line1": "This is BETA / experimental custom firmware.",
+      "line2": "Installing it can make the mower unusable (brick it).",
+      "line3": "You can lose ALL your maps."
+    }
   },
   "terrain": {
     "title": "Terrain",
@@ -536,7 +631,13 @@
     "moveButton": "Move",
     "moveActive": "Arrow keys = move (Shift = big step, Esc = done)",
     "followLabel": "Follow mower",
-    "cameraLabel": "Camera"
+    "cameraLabel": "Camera",
+    "loading": "Loading terrain…",
+    "empty": "No terrain data yet. The map grows by itself while mowing.",
+    "loadFailed": "Failed to load terrain",
+    "legendTitle": "Objects",
+    "groupObstacle": "Obstacle",
+    "groupObject": "Object"
   },
   "schedule": {
     "title": "Mowing Schedules",
@@ -617,6 +718,15 @@
       "skipped": "not started",
       "failed": "start failed",
       "missed": "missed"
+    },
+    "cuttingHeightDown": "Decrease cutting height",
+    "cuttingHeightUp": "Increase cutting height",
+    "pathDirectionDown": "Rotate direction down",
+    "pathDirectionUp": "Rotate direction up",
+    "timeWheel": {
+      "hour": "Hour",
+      "minute": "Minute",
+      "period": "AM or PM"
     }
   },
   "rain": {
@@ -626,7 +736,9 @@
     "warningTitle": "Rain forecast",
     "warningDesc": "Rain around {{time}} ({{mm}} mm, {{prob}}%). Mow anyway?",
     "ignoreSession": "Ignore rain this session",
-    "ignoreSessionHint": "The mower will not auto-pause for rain until this session ends."
+    "ignoreSessionHint": "The mower will not auto-pause for rain until this session ends.",
+    "badge": "Rain",
+    "badgePaused": "Paused (rain)"
   },
   "autoMap": {
     "title": "Autonomous mapping",
@@ -874,7 +986,18 @@
       "rebootDesc": "Full OS restart. Offline for a few minutes — use Restart first for stuck states.",
       "rebootConfirm": "Reboot the mower (full OS restart)? It goes offline for a few minutes. Use Restart first for stuck states.",
       "rebooting": "Reboot sent — the mower is offline for a few minutes",
-      "rebootFailed": "Reboot failed"
+      "rebootFailed": "Reboot failed",
+      "nightGuard": "No mowing after dark",
+      "nightGuardOn": "Scheduled runs between sunset and sunrise are skipped (protects hedgehogs)",
+      "nightGuardOff": "Scheduled runs may mow at night",
+      "frostGuard": "No mowing in frost",
+      "frostGuardOn": "Scheduled runs are skipped below {{c}} °C",
+      "frostGuardOff": "Scheduled runs ignore the temperature",
+      "frostThreshold": "Skip below",
+      "recalibrateTitle": "Recalibrate charging pose",
+      "recalibrateForceTitle": "Not charging",
+      "restartTitle": "Restart mower software",
+      "rebootTitle": "Reboot mower"
     },
     "notifications": {
       "title": "Notifications",
@@ -910,6 +1033,28 @@
       "clear": "Remove",
       "privacy": "Note: a render sends an aerial photo of your garden to OpenAI. Only do this if you are comfortable with that.",
       "credits": "{{n}} renders left"
+    },
+    "help": {
+      "title": "Help",
+      "report": "Report a problem",
+      "reportDesc": "Opens a GitHub issue with your server and firmware versions filled in"
+    },
+    "on": "On",
+    "timezoneSaveFailed": "Could not save timezone",
+    "pinQueryFailed": "PIN query failed",
+    "pinSetFailed": "Setting PIN failed",
+    "pinVerifyFailed": "PIN verification failed",
+    "pinSendFailed": "Send failed",
+    "pinSendRaw": "Send raw type",
+    "drone": {
+      "title": "Drone photo",
+      "help": "Your own photo taken straight from above, under the map: sharper than the aerial imagery, handy for drawing zones and as a source for the 3D render. Place and show it on the map, via View › Drone photo.",
+      "failed": "That did not work",
+      "copyTitle": "Copy drone photo",
+      "placed": "Placed on the map",
+      "notPlaced": "Not placed yet: Map › View › Drone photo › Place",
+      "none": "No drone photo for this mower yet.",
+      "copyFrom": "Copy from {{name}}"
     }
   },
   "ai": {
@@ -954,7 +1099,20 @@
     "height": "{{cm}} cm",
     "status": "Status",
     "date": "Date",
-    "loadMore": "Load more"
+    "loadMore": "Load more",
+    "summary": {
+      "week": "This week",
+      "month": "This month",
+      "year": "This year",
+      "blades": "Blades",
+      "bladesSince": "Mowing hours since replacement on {{date}}",
+      "bladesNever": "No replacement recorded yet; counting all mowing hours",
+      "markReplaced": "Mark replaced"
+    },
+    "result": {
+      "complete": "Complete",
+      "cancelled": "Cancelled"
+    }
   },
   "charts": {
     "title": "Signal History",
@@ -974,7 +1132,8 @@
     "rotation": "Rotation",
     "startPattern": "Start pattern",
     "patternMode": "Pattern",
-    "mapMode": "Map area"
+    "mapMode": "Map area",
+    "numbered": "Pattern {{id}}"
   },
   "ble": {
     "addDevice": "Add Device",
@@ -992,7 +1151,8 @@
     "manualEntry": "Enter MAC manually",
     "scanFailed": "BLE scan failed",
     "tryAgain": "Try again",
-    "close": "Close"
+    "close": "Close",
+    "registerFailed": "Registration failed"
   },
   "firmwareRequired": {
     "progress": "Updating: {{pct}}%.",
@@ -1061,7 +1221,8 @@
       "charger": "Charger",
       "rest": "Rest",
       "autoScroll": "Auto-scroll",
-      "search": "Filter (e.g. start_run, error, LFIN)"
+      "search": "Filter (e.g. start_run, error, LFIN)",
+      "floatingOpen": "Opened in a floating window."
     }
   },
   "mobile": {
@@ -1094,7 +1255,20 @@
     "startMowing": "Start Mowing",
     "starting": "Starting...",
     "sessionEnds": "Mowing session ends at",
-    "mapObjects": "Map objects"
+    "mapObjects": "Map objects",
+    "demoMode": "Demo mode",
+    "demoModeOn": "Demo mode ON",
+    "demoModeOff": "Demo mode OFF",
+    "demoModeToggleFailed": "Failed to toggle demo mode",
+    "demoBanner": "DEMO MODE: commands are simulated",
+    "debugMode": "Debug mode",
+    "debugBattery": "Battery:",
+    "actionFailed": "{{label}} failed",
+    "novabotMower": "Novabot mower",
+    "defaultMowerName": "OpenNova mower",
+    "mowerImageAlt": "Mower",
+    "mowerCamera": "Mower camera",
+    "toggleTheme": "Toggle theme"
   },
   "reanchorMsgAnchor": "Saving the dock position...",
   "reanchorMsgCheck": "Checking: mower on the dock and RTK Fixed?",
@@ -1124,7 +1298,9 @@
   "events": {
     "title": "Notifications",
     "empty": "No notifications yet",
-    "justNow": "just now"
+    "justNow": "just now",
+    "minutesShort": "{{count}} min",
+    "hoursShort": "{{count}} h"
   },
   "returnReason": {
     "why": "Why is it on the dock?",
@@ -1197,5 +1373,247 @@
     "rolled-back": "Rolled back to {{version}}",
     "failed": "Update failed",
     "stalled": "The reboot is not happening, check the OTA log"
+  },
+  "setup": {
+    "welcome": {
+      "title": "Welcome to OpenNova",
+      "subtitle": "Your personal cloud replacement for your robot mower",
+      "localTitle": "Fully local",
+      "localDesc": "Your mower and charging station connect to this container instead of servers in China.",
+      "privacyTitle": "No data collection",
+      "privacyDesc": "All your data stays on your own network. No subscription, no cloud dependency.",
+      "appTitle": "Same app",
+      "appDesc": "Use the regular Novabot app; only the connection goes through your server.",
+      "start": "Get started"
+    },
+    "account": {
+      "title": "Create account",
+      "subtitle": "Create an account to get started",
+      "intro": "You also use this account to sign in to the Novabot app.",
+      "privacy": "Your data stays local in the Docker container and is <b>never sent anywhere</b>.",
+      "privacyScope": "This account is only for access to the dashboard and the Novabot app on your local network.",
+      "name": "Name",
+      "optional": "optional",
+      "namePlaceholder": "Your name",
+      "email": "Email address",
+      "emailPlaceholder": "you@example.com",
+      "password": "Password",
+      "passwordPlaceholder": "At least 6 characters",
+      "confirm": "Confirm password",
+      "confirmPlaceholder": "Repeat password",
+      "errRequired": "Enter your email address and password.",
+      "errMismatch": "Passwords do not match.",
+      "errTooShort": "Password must be at least 6 characters.",
+      "errGeneric": "Something went wrong.",
+      "errUnreachable": "Cannot reach the server.",
+      "creating": "Creating account...",
+      "submit": "Create account",
+      "useInApp": "Then use the same details to sign in to the Novabot app."
+    },
+    "cert": {
+      "title": "Install certificate",
+      "detected": "Certificate detected!",
+      "redirecting": "Taking you to the dashboard...",
+      "intro": "The Novabot app uses HTTPS. Install the local CA certificate so the app can connect.",
+      "download": "Download opennova-ca.crt",
+      "macTitle": "Mac (including the iOS app on Apple Silicon)",
+      "mac": {
+        "s1": "Download opennova-ca.crt and double-click it → Keychain Access opens",
+        "s2": "The cert is now in the System keychain but is NOT trusted yet",
+        "s3": "Double-click \"OpenNova Local CA\" in the list",
+        "s4": "Expand \"Trust\" (click the triangle)",
+        "s5": "Set \"When using this certificate\" to \"Always Trust\"",
+        "s6": "Close the window → enter your Mac password when asked"
+      },
+      "macCheckAgain": "Click \"Check again\" below",
+      "iphone": {
+        "s1": "Send the .crt file to your iPhone (AirDrop or email)",
+        "s2": "Open the file → \"Profile Downloaded\" appears",
+        "s3": "Go to Settings → Profile Downloaded → Install",
+        "s4": "Go to Settings → General → About → Certificate Trust Settings",
+        "s5": "Turn on \"OpenNova Local CA\""
+      },
+      "iphoneStrict": {
+        "s1": "Send the .crt file to your iPhone (AirDrop or email)",
+        "s2": "Tap the file → \"Profile Downloaded\" appears at the top",
+        "s3": "Go to Settings → \"Profile Downloaded\" at the top → Install → Install",
+        "s4": "⚠️ REQUIRED EXTRA STEP: Go to Settings → General → About → Certificate Trust Settings",
+        "s5": "Turn on the switch for \"OpenNova Local CA\" → Continue",
+        "s6": "Without this step the certificate does not work!"
+      },
+      "androidSend": {
+        "s1": "Send opennova-ca.crt to your Android device",
+        "s2": "Go to Settings → Security → Install certificates",
+        "s3": "Choose \"CA certificate\" and select the file"
+      },
+      "androidDownload": {
+        "s1": "Download opennova-ca.crt on your Android device",
+        "s2": "Go to Settings → Security → Install certificates",
+        "s3": "Choose \"CA certificate\" and select the file"
+      },
+      "autoDetect": "Detecting automatically...",
+      "autoDetectHint": "The dashboard continues on its own as soon as the certificate is trusted.",
+      "checking": "Checking...",
+      "checkManual": "Check manually",
+      "checkAgain": "Check again",
+      "notTrusted": "Certificate not trusted yet. Install it and try again.",
+      "notTrustedIphone": "Certificate not trusted yet. On iPhone: check that you turned on the switch under <b>Settings → General → About → Certificate Trust Settings</b>.",
+      "scope": "This certificate is only valid for *.lfibot.com on your local network."
+    },
+    "wizard": {
+      "title": "Setup",
+      "port": "port {{port}}",
+      "dnsBuiltin": "Built-in (dnsmasq)",
+      "dnsDisabled": "Disabled (own DNS)",
+      "dnsTest": "DNS test",
+      "dnsTestHint": "Tests whether <c>app.lfibot.com</c> points to your server correctly.",
+      "dnsTestFailed": "DNS test failed",
+      "testing": "Testing...",
+      "dnsOk": "DNS works!",
+      "dnsFail": "DNS not reachable",
+      "testDns": "Test DNS",
+      "dnsPointsTo": "app.lfibot.com points to {{ip}}",
+      "tlsTitle": "TLS certificate (Novabot app)",
+      "tlsIntro": "The Novabot app uses HTTPS. Install the OpenNova CA certificate once on your device so the app can connect.",
+      "macSimTitle": "Mac (including iOS Simulator)",
+      "macSim": {
+        "s1": "Download opennova-ca.crt with the button above",
+        "s2": "Double-click the file → Keychain Access opens",
+        "s3": "Choose the \"System\" keychain → add",
+        "s4": "Find \"OpenNova Local CA\" → double-click → Trust → \"Always Trust\"",
+        "s5": "iOS Simulator inherits the trust from macOS automatically"
+      },
+      "certScope": "This certificate is only valid for <c>*.lfibot.com</c> on your local network. It is not used for anything outside the OpenNova server.",
+      "dnsSetupTitle": "Set up DNS",
+      "dnsSetupIntro": "The Novabot app and devices must be able to reach <c>*.lfibot.com</c> on your local server. Pick your DNS solution below.",
+      "adguard": {
+        "s1": "Open AdGuard Home (usually on port 3000 of your DNS server)",
+        "s2": "Go to Filters → DNS rewrites",
+        "s3": "Add: domain = *.lfibot.com, answer = {{ip}}",
+        "s4": "Click \"Save\""
+      },
+      "pihole": {
+        "s1": "SSH into your Pi-hole server",
+        "s2": "Add to /etc/dnsmasq.d/99-novabot.conf:",
+        "s4": "Restart: pihole restartdns"
+      },
+      "router": {
+        "s1": "Open your router's admin page (usually 192.168.0.1 or 192.168.1.1)",
+        "s2": "Go to the DHCP / LAN settings",
+        "s3": "Set the DNS server to: {{ip}}",
+        "s4": "Save and restart your router",
+        "s5": "The built-in dnsmasq in the container handles the rewrite"
+      },
+      "manualTitle": "Manually per device",
+      "manual": {
+        "s1": "iOS: Settings → Wi-Fi → [network] → DNS → Manual → {{ip}}",
+        "s2": "Android: Wi-Fi → [network] → Advanced → DNS → {{ip}}"
+      },
+      "dnsNote": "This requires DISABLE_DNS=false in your .env",
+      "copy": "Copy",
+      "copied": "Copied!",
+      "copyLine": "Copy line"
+    }
+  },
+  "workStatus": {
+    "0": "Idle",
+    "1": "Failed",
+    "2": "Cancelled",
+    "7": "Failed once",
+    "8": "Finished once",
+    "9": "Finished",
+    "10": "User stopped",
+    "11": "User recharge",
+    "12": "Low power",
+    "13": "Error stop",
+    "14": "Time limit",
+    "15": "Recovery error",
+    "49": "Resuming",
+    "50": "Start requested",
+    "51": "Sensor init",
+    "53": "Map init",
+    "54": "UTM init",
+    "55": "Localization init",
+    "56": "Leaving dock",
+    "57": "System check",
+    "59": "Init success",
+    "61": "Localization error",
+    "62": "LoRa error",
+    "63": "Wheels slipping",
+    "64": "Out of map",
+    "90": "Mowing",
+    "91": "Avoiding obstacle",
+    "92": "Driving",
+    "93": "Edge cutting",
+    "94": "Re-covering missed spots",
+    "130": "Mapping work zone",
+    "131": "Mapping obstacle",
+    "132": "Mapping channel",
+    "133": "Mapping channel to dock",
+    "134": "Setting dock position",
+    "135": "Deleting map",
+    "136": "Deleting obstacle",
+    "137": "Deleting channel",
+    "138": "Auto-erasing map",
+    "139": "Auto-erase failed",
+    "140": "Auto-erase done",
+    "141": "Auto-mapping work zone",
+    "142": "Auto-mapping obstacle",
+    "143": "Editing map",
+    "169": "Mapping paused",
+    "191": "Returning to dock",
+    "192": "Searching for dock",
+    "193": "Aligning dock",
+    "unknown": "State {{n}}"
+  },
+  "tabs": {
+    "records": "Records"
+  },
+  "ota": {
+    "title": "Firmware update",
+    "deleteTitle": "Delete version",
+    "deleteConfirm": "Are you sure you want to delete {{version}}?",
+    "deleteDetail": "The registration is removed. The firmware file stays in the firmware/ folder.",
+    "chargeNote": "The download only starts once the mower is on the charging station.",
+    "unknown": "unknown",
+    "betaTitle": "BETA CUSTOM FIRMWARE",
+    "betaBackupNote": "A fresh backup is made automatically before flashing.",
+    "betaConfirm": "I understand, flash anyway",
+    "downgradeTitle": "Downgrade warning",
+    "downgradeMessage": "You are about to downgrade:",
+    "flashAnyway": "Flash anyway",
+    "sameTitle": "Same version",
+    "sameMessage": "{{device}} is already running {{version}}.",
+    "sameDetail": "Do you want to flash the same version again?",
+    "reflash": "Flash again",
+    "updateTitle": "Firmware update",
+    "updateMessage": "Update {{device}}:",
+    "flash": "Flash",
+    "currentVersions": "Current versions",
+    "noDevices": "No devices connected",
+    "filesIn": "Files in",
+    "noFilesCopy": "Copy",
+    "noFilesTo": "to",
+    "noFilesReload": "and reload.",
+    "registeredVersions": "Registered versions",
+    "noVersionsCopy": "No versions found. Copy",
+    "noVersionsTo": "to the firmware folder; versions are registered automatically.",
+    "version": "Version",
+    "type": "Type",
+    "editVersion": "Edit version",
+    "deleteVersion": "Delete version",
+    "noChargerConnected": "No charging station connected",
+    "noMowerConnected": "No mower connected",
+    "deviceOffline": "Device offline",
+    "alreadyActive": "Already the active version",
+    "downgradeBang": "Downgrade!",
+    "commandSent": "Command sent",
+    "sendError": "Error sending",
+    "busy": "Working…",
+    "current": "current",
+    "downgrade": "downgrade",
+    "downloading": "Downloading…",
+    "updateDone": "Update complete",
+    "updateFailed": "Update failed"
   }
 }

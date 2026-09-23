@@ -61,7 +61,7 @@ export function ScheduleTimeline({ sn, onSelect }: Props) {
         const list = await fetchSchedules(sn);
         if (!cancelled) { setSchedules(list); setError(null); }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load schedules');
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -199,7 +199,7 @@ export function ScheduleTimeline({ sn, onSelect }: Props) {
                       key={s.scheduleId}
                       role={onSelect ? 'button' : undefined}
                       onClick={onSelect ? () => onSelect(s.scheduleId) : undefined}
-                      title={`${s.scheduleName ?? 'Schedule'} ${timeRange}${s.mapName ? ` · ${s.mapName}` : ''} · ${s.cuttingHeight >= 20 ? s.cuttingHeight / 10 : s.cuttingHeight} cm`}
+                      title={`${s.scheduleName ?? t('devices.schedule')} ${timeRange}${s.mapName ? ` · ${s.mapName}` : ''} · ${s.cuttingHeight >= 20 ? s.cuttingHeight / 10 : s.cuttingHeight} cm`}
                       className={`absolute rounded-lg overflow-hidden border transition-transform hover:-translate-y-px ${onSelect ? 'cursor-pointer' : ''}`}
                       style={{ top: top + 1, height: height - 2, left: 4, right: 4, background: a.bg, borderColor: a.border, color: a.text }}
                     >

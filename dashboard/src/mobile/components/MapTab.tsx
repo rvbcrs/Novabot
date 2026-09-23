@@ -194,13 +194,13 @@ export function MapTab({ mower, liveOutlines, coveredLanes }: Props) {
               <h3 className="text-lg font-bold text-emerald-400 mb-1">{t('map.mowingComplete')}</h3>
               <p className="text-sm text-gray-300 mb-1">100% — {t('map.allLanesDone')}</p>
               {celebrationArea.current > 0 && (
-                <p className="text-xs text-gray-500">{celebrationArea.current.toFixed(0)} m² {t('map.finished')}</p>
+                <p className="text-xs text-gray-500">{t('map.areaFinished', { area: celebrationArea.current.toFixed(0) })}</p>
               )}
               <button
                 onClick={() => setShowCelebration(false)}
                 className="mt-4 px-6 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-sm transition-colors"
               >
-                {t('map.close')}
+                {t('common.close')}
               </button>
             </div>
           </div>

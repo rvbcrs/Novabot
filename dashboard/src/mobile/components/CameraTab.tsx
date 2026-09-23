@@ -167,7 +167,7 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
             {imageSrc && (
               <img
                 src={imageSrc}
-                alt="Mower camera"
+                alt={t('mobile.mowerCamera')}
                 className="w-full h-full object-contain"
               />
             )}

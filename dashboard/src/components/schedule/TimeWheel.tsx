@@ -7,6 +7,7 @@
 // time-format setting only changes the wheel's rendering: 24h shows a 0–23 hour
 // column; 12h shows a 1–12 hour column plus an AM/PM column.
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useTimeFormat, to12Hour, to24Hour } from '../../utils/timeFormat';
 
 const ROW_H = 34;        // px per row
@@ -102,6 +103,7 @@ interface Props {
 }
 
 export function TimeWheel({ value, onChange, minuteStep = 5 }: Props) {
+  const { t } = useTranslation();
   const tf = useTimeFormat();
 
   const [hStr = '0', mStr = '0'] = (value || '0:0').split(':');
@@ -120,9 +122,9 @@ export function TimeWheel({ value, onChange, minuteStep = 5 }: Props) {
     const setHour = (key: string) => onChange(`${key}:${pad2(minute)}`);
     return (
       <Frame>
-        <Col><WheelColumn options={hourOpts} selectedKey={pad2(hour)} onSelect={setHour} ariaLabel="Hour" /></Col>
+        <Col><WheelColumn options={hourOpts} selectedKey={pad2(hour)} onSelect={setHour} ariaLabel={t('schedule.timeWheel.hour')} /></Col>
         <Sep>:</Sep>
-        <Col><WheelColumn options={minuteOpts} selectedKey={pad2(minute)} onSelect={setMinute} ariaLabel="Minute" /></Col>
+        <Col><WheelColumn options={minuteOpts} selectedKey={pad2(minute)} onSelect={setMinute} ariaLabel={t('schedule.timeWheel.minute')} /></Col>
       </Frame>
     );
   }
@@ -144,10 +146,10 @@ export function TimeWheel({ value, onChange, minuteStep = 5 }: Props) {
 
   return (
     <Frame>
-      <Col><WheelColumn options={hourOpts} selectedKey={String(h12)} onSelect={setHour12} ariaLabel="Hour" /></Col>
+      <Col><WheelColumn options={hourOpts} selectedKey={String(h12)} onSelect={setHour12} ariaLabel={t('schedule.timeWheel.hour')} /></Col>
       <Sep>:</Sep>
-      <Col><WheelColumn options={minuteOpts} selectedKey={pad2(minute)} onSelect={setMinute} ariaLabel="Minute" /></Col>
-      <Col><WheelColumn options={periodOpts} selectedKey={period} onSelect={setPeriod} ariaLabel="AM or PM" /></Col>
+      <Col><WheelColumn options={minuteOpts} selectedKey={pad2(minute)} onSelect={setMinute} ariaLabel={t('schedule.timeWheel.minute')} /></Col>
+      <Col><WheelColumn options={periodOpts} selectedKey={period} onSelect={setPeriod} ariaLabel={t('schedule.timeWheel.period')} /></Col>
     </Frame>
   );
 }

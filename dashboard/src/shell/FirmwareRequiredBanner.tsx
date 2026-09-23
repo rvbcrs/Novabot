@@ -3,7 +3,7 @@ import { ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchFirmwareAdvisory, triggerOta, type FirmwareAdvisoryDto } from '../api/client';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
-import { BETA_FIRMWARE_WARNING_LINES } from '../utils/betaFirmware';
+import { betaFirmwareWarningLines } from '../utils/betaFirmware';
 import { otaFinished, type OtaProgress } from '../hooks/useDevices';
 import { useNow, otaElapsed, useOtaPhaseLabel } from '../utils/otaPhase';
 
@@ -89,7 +89,7 @@ export function FirmwareRequiredBanner({ sn, charging, otaProgress }: {
         open={confirm}
         title={t('firmwareRequired.confirmTitle', { target: target.version })}
         message={[
-          ...BETA_FIRMWARE_WARNING_LINES,
+          ...betaFirmwareWarningLines(),
           '',
           t('firmwareRequired.confirmBody'),
           charging ? '' : t('firmwareRequired.confirmDock'),

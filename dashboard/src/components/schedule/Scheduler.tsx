@@ -665,7 +665,7 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange, editRequ
                   }`}
                   title={s.enabled ? t('schedule.disable') : t('schedule.enable')}
                 >
-                  <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-transform ${
+                  <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 left-0 transition-transform ${
                     s.enabled ? 'translate-x-4' : 'translate-x-0.5'
                   }`} />
                 </button>

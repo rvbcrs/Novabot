@@ -177,7 +177,7 @@ function useServerLogs(tail: number, active: boolean) {
         const fresh = await fetchSystemLogs({ tail });
         if (!cancelled) { setLogs(fresh); setError(null); }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'load failed');
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
     }
     load();

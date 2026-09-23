@@ -6,7 +6,8 @@
     "password": "Mot de passe",
     "submit": "Se connecter",
     "signingIn": "Connexion…",
-    "error": "E-mail ou mot de passe invalide"
+    "error": "E-mail ou mot de passe invalide",
+    "failedStatus": "Échec de la connexion ({{status}})"
   },
   "update": {
     "title": "Mise à jour du serveur disponible",
@@ -20,7 +21,10 @@
     "dashboard": "Tableau de bord",
     "server": "Serveur",
     "serverOffline": "Serveur hors ligne",
-    "connectionTitle": "Connexion au serveur OpenNova"
+    "connectionTitle": "Connexion au serveur OpenNova",
+    "serverVersion": "Version du serveur",
+    "diagnostics": "Diagnostic et journaux",
+    "adminPanel": "Panneau d'administration"
   },
   "sidebar": {
     "devices": "Appareils",
@@ -40,7 +44,9 @@
     "loading": "Chargement…",
     "failed": "Échec",
     "failedToLoad": "Échec du chargement",
-    "close": "Fermer"
+    "close": "Fermer",
+    "collapse": "Réduire",
+    "expand": "Développer"
   },
   "time": {
     "justNow": "à l'instant",
@@ -72,7 +78,8 @@
     "mowSpeed": "Vitesse de tonte",
     "area": "Surface",
     "error": "Erreur",
-    "errorCode": "Code : {{code}}"
+    "errorCode": "Code : {{code}}",
+    "unknownError": "Erreur inconnue"
   },
   "log": {
     "title": "Journal MQTT",
@@ -81,7 +88,8 @@
     "autoScrollOn": "Défilement auto ACTIVÉ",
     "autoScrollOff": "Défilement auto DÉSACTIVÉ",
     "waiting": "En attente de trafic MQTT...",
-    "noMatches": "Aucun résultat"
+    "noMatches": "Aucun résultat",
+    "waitingBle": "En attente d'activité BLE..."
   },
   "devices": {
     "charger": "Station de charge",
@@ -105,7 +113,15 @@
     "confirmRemove": "Supprimer {{sn}} du tableau de bord ?",
     "loading": "Chargement des appareils...",
     "waitingForDevices": "En attente d'appareils...",
-    "schedule": "Planification"
+    "schedule": "Planification",
+    "unbound": {
+      "title": "Appareils trouvés, pas encore associés",
+      "intro": "Les appareils ci-dessous sont connectés à votre serveur MQTT mais ne sont pas encore associés à votre compte. Donnez-leur un nom et cliquez sur « Associer » pour les ajouter.",
+      "namePlaceholder": "Nom (facultatif)",
+      "bind": "Associer",
+      "binding": "Association...",
+      "bindFailed": "Échec de l'association"
+    }
   },
   "controls": {
     "startMowing": "Démarrer la tonte",
@@ -217,7 +233,11 @@
     "heightMismatchBody": "Vous avez réglé {{expected}} cm, mais la tondeuse coupe à {{actual}} cm.",
     "continueAnyway": "Continuer quand même",
     "reanchorRequiredTitle": "Réancrage requis",
-    "reanchorRequiredBody": "La carte a été restaurée mais le référentiel n'a pas été validé. Réancrez la tondeuse sur la station de charge avant de tondre."
+    "reanchorRequiredBody": "La carte a été restaurée mais le référentiel n'a pas été validé. Réancrez la tondeuse sur la station de charge avant de tondre.",
+    "previewSavedOnly": "L'aperçu ne fonctionne que pour les zones de travail enregistrées ; les motifs sont tondus mais ne peuvent pas être prévisualisés.",
+    "dragWindow": "Faire glisser pour déplacer",
+    "edgeCutHint": "La coupe de bordure suit la limite de la zone de travail à la hauteur de coupe choisie. La carte est fixée sur {{map}} ; le départ de la station de charge est détecté automatiquement.",
+    "noOffset": "Aucun décalage"
   },
   "camera": {
     "title": "Caméra",
@@ -230,7 +250,8 @@
     "frontHd": "Front HD",
     "tofGray": "ToF Gris",
     "tofDepth": "ToF Profondeur",
-    "aruco": "ArUco"
+    "aruco": "ArUco",
+    "dragHint": "Faire glisser pour déplacer"
   },
   "map": {
     "workArea": "Zone de travail",
@@ -393,7 +414,10 @@
       "coverageStart": "Le robot démarre ici",
       "coverageRefresh": "Actualiser depuis la tondeuse",
       "unsupportedFirmware": "Appliquer des modifications de carte nécessite le firmware OpenNova. Sur le firmware d’origine, utilisez « Modifier la carte » dans l’application et parcourez la section modifiée.",
-      "stockNotice": "Firmware d’origine : les modifications ne peuvent pas être envoyées à la tondeuse d’ici. Utilisez « Modifier la carte » dans l’application OpenNova (parcourez la section modifiée)."
+      "stockNotice": "Firmware d’origine : les modifications ne peuvent pas être envoyées à la tondeuse d’ici. Utilisez « Modifier la carte » dans l’application OpenNova (parcourez la section modifiée).",
+      "revertTitle": "Annuler les modifications",
+      "discardTitle": "Supprimer les brouillons",
+      "pasteDismiss": "Vider le presse-papiers"
     },
     "missedPoint": "Point manqué",
     "sourceMower": "parcouru par la tondeuse",
@@ -440,11 +464,95 @@
     "droneRemovePoint": "Retirer le repère",
     "droneResidualInfo": "Écart : distance entre ce point de la photo et son point sur la carte. Avec 2 ou 4 repères il est toujours nul ; avec davantage, il montre si la photo s'ajuste dans son ensemble. Un grand écart vient le plus souvent d'un clic erroné, d'un toit ou d'une cime d'arbre.",
     "droneMeanResidual": "en moyenne {{cm}} cm",
-    "dronePointsSliders": "Pendant le pointage, les repères déterminent le placement ; les curseurs fonctionnent à nouveau ensuite."
+    "dronePointsSliders": "Pendant le pointage, les repères déterminent le placement ; les curseurs fonctionnent à nouveau ensuite.",
+    "base": {
+      "title": "Fond de carte",
+      "satellite": "Satellite",
+      "drone": "Photo de drone",
+      "droneMissing": "Aucune photo de drone importée",
+      "render": "Rendu 3D",
+      "day": "jour",
+      "night": "soir",
+      "renderMake": "Créer un rendu 3D…",
+      "renderAgain": "Générer à nouveau…",
+      "renderStale": "La carte a été modifiée après ce rendu.",
+      "noKey": "Configurez d'abord une clé dans Paramètres → Rendu 3D.",
+      "noBase": "Aucune image aérienne disponible pour cet emplacement ; importez une photo de drone.",
+      "failed": "Échec du rendu",
+      "renderBusy": "Création du rendu 3D…",
+      "renderStepBase": "Récupération de l'image aérienne…",
+      "renderStepComposite": "Superposition de votre carte sur l'image…",
+      "renderStepDay": "Dessin de la version de jour…",
+      "renderStepNight": "Dessin de la version du soir…",
+      "renderWait": "Cela prend généralement 1 à 3 minutes ; la fenêtre se ferme automatiquement.",
+      "renderFrom": "Créer un rendu 3D à partir de",
+      "renderFromAerial": "Image aérienne (satellite)",
+      "renderFromDrone": "Votre photo de drone",
+      "renderMadeFrom": "Rendu actuel : {{src}}",
+      "renderFit": "Ajuster à la vue",
+      "renderNotMade": "pas encore créé"
+    },
+    "render": {
+      "noKey": "Configurez d'abord une clé dans Paramètres → Rendu 3D.",
+      "noBase": "Aucune image aérienne disponible pour cet emplacement ; importez une photo de drone.",
+      "failed": "Échec du rendu",
+      "notMadeTitle": "Pas encore créé",
+      "missingFlat": "Il n'y a pas encore de rendu vu de dessus. Créez-en un via \"Nouveau rendu 3D\" avec la vue De dessus.",
+      "missingIso": "Il n'y a pas encore de rendu en perspective. Créez-en un via \"Nouveau rendu 3D\" avec la vue En perspective.",
+      "framing": "Vue",
+      "flat": "De dessus",
+      "flatDesc": "Couvre ce que vous voyez actuellement sur la carte. Zones, tondeuse et passes par-dessus.",
+      "iso": "En perspective",
+      "isoDesc": "Image 3D vue de côté, avec la tondeuse et les passes.",
+      "light": "Lumière",
+      "auto": "Auto",
+      "autoHint": "Jour ou soir selon le lever et le coucher du soleil à la tondeuse",
+      "newTitle": "Nouveau rendu 3D",
+      "source": "Créé à partir de",
+      "aerial": "Photo aérienne",
+      "aerialDesc": "Fonctionne partout, l'image date de 1 à 3 ans.",
+      "drone": "Photo de drone",
+      "droneDesc": "Votre propre photo : plus nette et à jour.",
+      "costNote": "Prend 1 à 3 minutes et coûte un crédit ou du solde API. Une version de jour et une version du soir sont créées.",
+      "replaceNote": "Remplace le rendu existant pour cette vue.",
+      "make": "Créer le rendu"
+    },
+    "dronePlaceFailed": "Placement non enregistré",
+    "droneManageHint": "Téléverser ou remplacer : Paramètres › Photo de drone.",
+    "tiles": {
+      "esri": "Esri satellite (mondial)",
+      "google": "Google satellite (haute résolution, non officiel)",
+      "pdok": "PDOK photo aérienne (NL, ~8 cm)",
+      "usgs": "USGS imagerie (États-Unis)",
+      "street": "Plan des rues (OSM)"
+    },
+    "celebration": {
+      "title": "Tonte terminée !",
+      "allLanes": "100 % : toutes les passes tondues",
+      "area": "{{area}} m² terminés"
+    },
+    "noGo": {
+      "saved": "Zone interdite enregistrée",
+      "saveFailed": "Échec de l'enregistrement de la zone interdite",
+      "deleted": "Zone interdite supprimée",
+      "deleteFailed": "Échec de la suppression",
+      "firstCorner": "Cliquez sur le premier coin du rectangle de la zone interdite",
+      "secondCorner": "Cliquez sur le coin opposé pour terminer"
+    },
+    "lastMowed": "Dernière tonte : {{date}}",
+    "navigationTarget": "Destination de navigation",
+    "mowingComplete": "Tonte terminée !",
+    "allLanesDone": "toutes les bandes tondues",
+    "areaFinished": "{{area}} m² terminés"
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",
-    "terrainStockNotice": "Le terrain 3D nécessite le firmware personnalisé OpenNova sur la tondeuse ; rien n'est scanné avec le firmware d'origine."
+    "terrainStockNotice": "Le terrain 3D nécessite le firmware personnalisé OpenNova sur la tondeuse ; rien n'est scanné avec le firmware d'origine.",
+    "betaWarning": {
+      "line1": "Ceci est un firmware personnalisé BETA / expérimental.",
+      "line2": "L'installation peut rendre la tondeuse inutilisable (brick).",
+      "line3": "Vous pouvez perdre TOUTES vos cartes."
+    }
   },
   "terrain": {
     "title": "Terrain",
@@ -488,7 +596,14 @@
     "moveButton": "Déplacer",
     "moveActive": "Flèches = déplacer (Maj = grand pas, Échap = terminé)",
     "followLabel": "Suivre la tondeuse",
-    "cameraLabel": "Caméra"
+    "cameraLabel": "Caméra",
+    "rotationLabel": "Rotation",
+    "loading": "Chargement du terrain…",
+    "empty": "Pas encore de données de terrain. La carte se complète d'elle-même pendant la tonte.",
+    "loadFailed": "Échec du chargement du terrain",
+    "legendTitle": "Objets",
+    "groupObstacle": "Obstacle",
+    "groupObject": "Objet"
   },
   "schedule": {
     "title": "Planifications de tonte",
@@ -569,6 +684,15 @@
       "skipped": "non démarré",
       "failed": "démarrage échoué",
       "missed": "manqué"
+    },
+    "cuttingHeightDown": "Diminuer la hauteur de coupe",
+    "cuttingHeightUp": "Augmenter la hauteur de coupe",
+    "pathDirectionDown": "Tourner la direction vers le bas",
+    "pathDirectionUp": "Tourner la direction vers le haut",
+    "timeWheel": {
+      "hour": "Heure",
+      "minute": "Minute",
+      "period": "AM ou PM"
     }
   },
   "rain": {
@@ -578,7 +702,9 @@
     "warningTitle": "Pluie prévue",
     "warningDesc": "Pluie vers {{time}} ({{mm}} mm, {{prob}}%). Tondre quand même ?",
     "ignoreSession": "Ignorer la pluie cette session",
-    "ignoreSessionHint": "Le robot ne se mettra pas en pause automatiquement en cas de pluie jusqu'à la fin de cette session."
+    "ignoreSessionHint": "Le robot ne se mettra pas en pause automatiquement en cas de pluie jusqu'à la fin de cette session.",
+    "badge": "Pluie",
+    "badgePaused": "En pause (pluie)"
   },
   "reanchor": {
     "title": "Réancrage",
@@ -736,6 +862,116 @@
       "help": "Fonctions inachevées susceptibles de changer ou de ne pas marcher. Désactivées par défaut.",
       "enable": "Activer les fonctions expérimentales",
       "note": "Débloque actuellement l'onglet Terrain."
+    },
+    "mower": {
+      "cuttingHeight": "Hauteur de coupe",
+      "obstacle": "Évitement d'obstacles",
+      "sensitivity": {
+        "low": "Désactivé (terrain uniquement)",
+        "lowDesc": "Segmentation uniquement, pas de détection d'objets (couverture max.)",
+        "medium": "Éviter les objets",
+        "mediumDesc": "Détection d'objets périodique pendant la tonte",
+        "high": "Éviter les objets (fréquent)",
+        "highDesc": "Détection d'objets fréquente (meilleur évitement)"
+      },
+      "direction": "Direction de tonte",
+      "directionHint": "Les bandes montrent comment la tondeuse se déplace",
+      "directionDown": "Tourner la direction vers le bas",
+      "directionUp": "Tourner la direction vers le haut",
+      "joystickSpeed": "Vitesse max du joystick",
+      "joystickHandling": "Maniabilité du joystick",
+      "level": {
+        "low": "Faible",
+        "medium": "Moyen",
+        "high": "Élevé"
+      },
+      "rain": "Météo et horaires",
+      "rainPause": "Pause en cas de pluie",
+      "rainSummary": "≥ {{mm}} mm ou ≥ {{prob}}% dans les {{h}}",
+      "rainMm": "Précipitations min.",
+      "rainProb": "Probabilité min.",
+      "rainHours": "Anticipation",
+      "nightGuard": "Pas de tonte dans l'obscurité",
+      "nightGuardOn": "Les tontes planifiées entre le coucher et le lever du soleil sont ignorées (protège les hérissons)",
+      "nightGuardOff": "Les tontes planifiées peuvent avoir lieu la nuit",
+      "frostGuard": "Pas de tonte par temps de gel",
+      "frostGuardOn": "Les tontes planifiées sont ignorées en dessous de {{c}} °C",
+      "frostGuardOff": "Les tontes planifiées ignorent la température",
+      "frostThreshold": "Ignorer en dessous de",
+      "other": "Autres",
+      "headlight": "Phares",
+      "brightness": "Luminosité",
+      "speaker": "Haut-parleur",
+      "timezone": "Fuseau horaire",
+      "save": "Enregistrer les paramètres",
+      "saving": "Enregistrement…",
+      "saved": "Paramètres enregistrés",
+      "saveFailed": "Impossible d'enregistrer les paramètres",
+      "offline": "La tondeuse est hors ligne, connectez-la pour enregistrer.",
+      "offlinePending": "Tondeuse hors ligne : les modifications seront enregistrées dès sa reconnexion.",
+      "savedAuto": "Modifications enregistrées automatiquement",
+      "autoSaveHint": "Les modifications sont enregistrées automatiquement",
+      "recovery": "Récupération",
+      "recalibrate": "Recalibrer la position de charge",
+      "recalibrateDesc": "Écrase map_info.json avec la position actuelle. Placez d'abord la tondeuse sur sa station (elle doit être EN CHARGE).",
+      "recalibrateConfirm": "Écraser la position de charge avec la position ACTUELLE de la tondeuse ? La tondeuse doit être physiquement sur sa station et en charge, sinon la couverture future dérivera.",
+      "recalibrateForce": "L'état de la batterie est \"{{state}}\" (attendu : EN CHARGE). Ignorer quand même la vérification de sécurité ?",
+      "recalibrated": "Position de charge recalibrée",
+      "recalibrateFailed": "Échec du recalibrage",
+      "restart": "Redémarrer la tondeuse",
+      "restartDesc": "Redémarre le logiciel de la tondeuse (pas un reboot). Débloque les états figés ; de retour en ligne en ~1 min.",
+      "restartConfirm": "Redémarrer le logiciel de la tondeuse (pas un reboot complet) ? Cela débloque les états figés et la tondeuse revient en ligne en une minute environ. Fonctionne uniquement à l'arrêt ou en charge.",
+      "restarting": "Redémarrage de la tondeuse, de retour en ligne en ~1 min",
+      "restartFailed": "Échec du redémarrage",
+      "maxSpeed": "Vitesse max",
+      "maxSpeedHint": "Vitesse en tonte autonome",
+      "chargeThreshold": "Niveau de batterie pour le retour",
+      "chargeThresholdHint": "Aller se recharger quand la batterie passe sous ce niveau",
+      "reboot": "Rebooter la tondeuse",
+      "rebootDesc": "Redémarrage complet du système. Hors ligne pendant quelques minutes ; utilisez d'abord Redémarrer pour les états figés.",
+      "rebootConfirm": "Rebooter la tondeuse (redémarrage complet du système) ? Elle sera hors ligne pendant quelques minutes. Utilisez d'abord Redémarrer pour les états figés.",
+      "rebooting": "Reboot envoyé, la tondeuse est hors ligne pendant quelques minutes",
+      "rebootFailed": "Échec du reboot",
+      "recalibrateTitle": "Recalibrer la position de charge",
+      "recalibrateForceTitle": "Pas en charge",
+      "restartTitle": "Redémarrer le logiciel de la tondeuse",
+      "rebootTitle": "Redémarrer la tondeuse"
+    },
+    "help": {
+      "title": "Aide",
+      "report": "Signaler un problème",
+      "reportDesc": "Ouvre un ticket GitHub avec vos versions de serveur et de firmware déjà renseignées"
+    },
+    "render": {
+      "title": "Rendu 3D",
+      "help": "Crée une image 3D de votre propre jardin à partir de la carte de la tondeuse. Environ 20 centimes par rendu chez OpenAI.",
+      "modeOwn": "Clé personnelle configurée",
+      "modeRelay": "Jeton de crédit configuré",
+      "modeNone": "Rien de configuré pour le moment",
+      "ownKey": "Votre clé OpenAI",
+      "ownKeyHint": "Pas besoin d'abonnement ChatGPT : un compte API avec un petit crédit prépayé suffit.",
+      "token": "Jeton de crédit (via OpenNova)",
+      "save": "Enregistrer",
+      "clear": "Supprimer",
+      "privacy": "Attention : un rendu envoie une photo aérienne de votre jardin à OpenAI. Ne le faites que si cela vous convient.",
+      "credits": "{{n}} rendus restants"
+    },
+    "on": "Activé",
+    "timezoneSaveFailed": "Impossible d'enregistrer le fuseau horaire",
+    "pinQueryFailed": "Échec de la lecture du PIN",
+    "pinSetFailed": "Échec de la définition du PIN",
+    "pinVerifyFailed": "Échec de la vérification du PIN",
+    "pinSendFailed": "Échec de l'envoi",
+    "pinSendRaw": "Envoyer le type brut",
+    "drone": {
+      "title": "Photo de drone",
+      "help": "Votre propre photo prise à la verticale, sous la carte : plus nette que la photo aérienne, pratique pour dessiner des zones et comme source pour le rendu 3D. Placez-la et affichez-la sur la carte, via Affichage › Photo de drone.",
+      "failed": "Cela n'a pas fonctionné",
+      "copyTitle": "Reprendre la photo de drone",
+      "placed": "Placée sur la carte",
+      "notPlaced": "Pas encore placée : Carte › Affichage › Photo de drone › Placer",
+      "none": "Pas encore de photo de drone pour cette tondeuse.",
+      "copyFrom": "Reprendre de {{name}}"
     }
   },
   "ai": {
@@ -780,7 +1016,20 @@
     "height": "{{cm}} cm",
     "status": "Statut",
     "date": "Date",
-    "loadMore": "Charger plus"
+    "loadMore": "Charger plus",
+    "summary": {
+      "week": "Cette semaine",
+      "month": "Ce mois-ci",
+      "year": "Cette année",
+      "blades": "Lames",
+      "bladesSince": "Heures de tonte depuis le remplacement le {{date}}",
+      "bladesNever": "Aucun remplacement enregistré ; toutes les heures de tonte sont comptées",
+      "markReplaced": "Marquer comme remplacées"
+    },
+    "result": {
+      "complete": "Terminée",
+      "cancelled": "Annulée"
+    }
   },
   "charts": {
     "title": "Historique du signal",
@@ -800,7 +1049,8 @@
     "rotation": "Rotation",
     "startPattern": "Démarrer le motif",
     "patternMode": "Motif",
-    "mapMode": "Zone de carte"
+    "mapMode": "Zone de carte",
+    "numbered": "Motif {{id}}"
   },
   "ble": {
     "addDevice": "Ajouter un appareil",
@@ -818,7 +1068,8 @@
     "manualEntry": "Saisir le MAC manuellement",
     "scanFailed": "Échec du scan BLE",
     "tryAgain": "Réessayer",
-    "close": "Fermer"
+    "close": "Fermer",
+    "registerFailed": "Échec de l'enregistrement"
   },
   "mobile": {
     "activity": {
@@ -850,7 +1101,20 @@
     "startMowing": "Démarrer la tonte",
     "starting": "Démarrage...",
     "sessionEnds": "Session de tonte se termine à",
-    "mapObjects": "Objets de la carte"
+    "mapObjects": "Objets de la carte",
+    "demoMode": "Mode démo",
+    "demoModeOn": "Mode démo ACTIVÉ",
+    "demoModeOff": "Mode démo DÉSACTIVÉ",
+    "demoModeToggleFailed": "Impossible de basculer le mode démo",
+    "demoBanner": "MODE DÉMO : les commandes sont simulées",
+    "debugMode": "Mode débogage",
+    "debugBattery": "Batterie :",
+    "actionFailed": "Échec : {{label}}",
+    "novabotMower": "Tondeuse Novabot",
+    "defaultMowerName": "Tondeuse OpenNova",
+    "mowerImageAlt": "Tondeuse",
+    "mowerCamera": "Caméra de la tondeuse",
+    "toggleTheme": "Changer de thème"
   },
   "firmwareRequired": {
     "progress": "Mise à jour : {{pct}} %.",
@@ -913,7 +1177,14 @@
     "logs": {
       "title": "Journal serveur",
       "empty": "— vide —",
-      "search": "Filtrer (p.ex. start_run, error, LFIN)"
+      "search": "Filtrer (p.ex. start_run, error, LFIN)",
+      "enlarge": "Agrandir",
+      "dragHint": "Faites glisser pour déplacer, tirez le coin pour redimensionner",
+      "mower": "Tondeuse",
+      "charger": "Station de charge",
+      "rest": "Autres",
+      "autoScroll": "Défilement auto",
+      "floatingOpen": "Ouvert dans une fenêtre flottante."
     }
   },
   "pages": {
@@ -922,11 +1193,30 @@
   },
   "chips": {
     "offline": "hors ligne",
-    "noMowers": "Aucune tondeuse"
+    "noMowers": "Aucune tondeuse",
+    "network": "Réseau",
+    "other": "Autres",
+    "updated": "Mis à jour : {{time}}",
+    "noSensorData": "Pas encore de données de capteurs.",
+    "noChargerTelemetry": "Pas encore de télémétrie de la station de charge.",
+    "sats": "Sats",
+    "temp": "Temp.",
+    "notOk": "Pas OK",
+    "noRtk": "Pas de RTK",
+    "sensorDetails": "Détails des capteurs de {{name}}",
+    "rtkFixQuality": "Qualité du fix RTK : {{quality}}",
+    "cpuTemp": "Temp. CPU : {{temp}}°C",
+    "cpuTempDanger": "DANGER : temp. CPU {{temp}}°C (>= {{limit}}°C)",
+    "workStatus": "État de travail : {{status}}",
+    "drivingSpeed": "Vitesse de déplacement : {{speed}} m/s",
+    "waiting": "en attente…"
   },
   "mower": {
     "longPause": {
       "banner": "Tondeuse en pause depuis {{minutes}} minutes. Reprendre, arrêter ou retour à la base ?"
+    },
+    "mdnsConflict": {
+      "banner": "Un second serveur OpenNova a été détecté sur {{ips}} et annonce opennovabot.local. Les tondeuses peuvent s'y connecter (par erreur) au lieu de ce serveur ({{self}}). Vous exécutez npm run dev ou docker en local ? Arrêtez-le, sinon les tondeuses suivront ce serveur."
     }
   },
   "reanchorMsgAnchor": "Définition de l’origine sur la station (réécriture de pos.json)...",
@@ -957,7 +1247,9 @@
   "events": {
     "title": "Notifications",
     "empty": "Aucune notification",
-    "justNow": "à l'instant"
+    "justNow": "à l'instant",
+    "minutesShort": "{{count}} min",
+    "hoursShort": "{{count}} h"
   },
   "returnReason": {
     "why": "Pourquoi est-elle à la station ?",
@@ -1030,5 +1322,296 @@
     "rolled-back": "Retour à {{version}}",
     "failed": "Échec de la mise à jour",
     "stalled": "Le redémarrage ne vient pas, vérifiez le journal OTA"
+  },
+  "autoMap": {
+    "title": "Cartographie autonome",
+    "modeTest": "Trajet de test (sans enregistrement)",
+    "modeRecord": "Créer la carte",
+    "radiusLabel": "Géorepérage (m)",
+    "start": "Démarrer",
+    "stop": "Arrêter",
+    "accept": "Accepter la carte",
+    "reject": "Rejeter",
+    "newAttempt": "Nouvelle tentative",
+    "retry": "Réessayer",
+    "reviewBanner": "La tondeuse a créé une carte. Vérifiez-la dans la vue carte, puis acceptez-la ou rejetez-la.",
+    "reviewFailed": "L'action a échoué, réessayez.",
+    "stopFailed": "L'arrêt a échoué, réessayez.",
+    "done": "Terminé",
+    "rejected": "Rejetée",
+    "rejectedHint": "Vous pouvez supprimer la carte sur la tondeuse via la gestion des cartes existante. Lancez ensuite une nouvelle tentative.",
+    "phase": {
+      "preflight": "Préparation",
+      "preparing": "Préparation",
+      "searchingBoundary": "Recherche de la bordure de pelouse",
+      "following": "Suivi de la bordure",
+      "recording": "Enregistrement",
+      "finishing": "Enregistrement de la carte",
+      "awaitingReview": "En attente de validation",
+      "done": "Terminé",
+      "rejected": "Rejetée",
+      "error": "Erreur",
+      "aborted": "Interrompu"
+    },
+    "error": {
+      "unknown": "Erreur inconnue",
+      "preflightBattery": "La batterie doit être au-dessus de 40 %",
+      "preflightRtk": "En attente de RTK Fixed",
+      "alreadyRunning": "Une session est déjà en cours",
+      "geofence": "Géorepérage dépassé, trajet arrêté",
+      "timeout": "Délai dépassé",
+      "relayMissing": "lawn_edge_relay ne tourne pas sur la tondeuse",
+      "mapExists": "Cette tondeuse possède déjà une carte. La cartographie autonome ne fonctionne que sur une tondeuse sans carte.",
+      "userStop": "Arrêté via le bouton d'arrêt",
+      "gpsStale": "Signal GPS perdu, trajet arrêté",
+      "noGpsFix": "Aucun fix GPS obtenu au démarrage",
+      "costmapParamFailed": "Échec du réglage de la costmap sur la tondeuse",
+      "scanStartTimeout": "La tondeuse n'a pas répondu au démarrage de l'enregistrement",
+      "abortedDuringFinishing": "Arrêté pendant l'enregistrement de la carte",
+      "orphanedByRestart": "Session perdue suite à un redémarrage du serveur",
+      "daemonTimeout": "Le daemon de la tondeuse n'a pas répondu"
+    }
+  },
+  "setup": {
+    "welcome": {
+      "title": "Bienvenue sur OpenNova",
+      "subtitle": "Votre remplacement cloud personnel pour votre robot tondeuse",
+      "localTitle": "Entièrement local",
+      "localDesc": "Votre tondeuse et votre station de charge se connectent à ce conteneur au lieu de serveurs en Chine.",
+      "privacyTitle": "Aucune collecte de données",
+      "privacyDesc": "Toutes vos données restent sur votre propre réseau. Pas d'abonnement, aucune dépendance au cloud.",
+      "appTitle": "Même application",
+      "appDesc": "Utilisez l'application Novabot habituelle : seule la connexion passe par votre serveur.",
+      "start": "Commencer"
+    },
+    "account": {
+      "title": "Créer un compte",
+      "subtitle": "Créez un compte pour commencer",
+      "intro": "Vous utilisez aussi ce compte pour vous connecter à l'application Novabot.",
+      "privacy": "Vos données restent en local dans le conteneur Docker et ne sont <b>envoyées nulle part</b>.",
+      "privacyScope": "Ce compte sert uniquement à accéder au tableau de bord et à l'application Novabot sur votre réseau local.",
+      "name": "Nom",
+      "optional": "facultatif",
+      "namePlaceholder": "Votre nom",
+      "email": "Adresse e-mail",
+      "emailPlaceholder": "vous@example.com",
+      "password": "Mot de passe",
+      "passwordPlaceholder": "Au moins 6 caractères",
+      "confirm": "Confirmer le mot de passe",
+      "confirmPlaceholder": "Répétez le mot de passe",
+      "errRequired": "Saisissez votre adresse e-mail et votre mot de passe.",
+      "errMismatch": "Les mots de passe ne correspondent pas.",
+      "errTooShort": "Le mot de passe doit contenir au moins 6 caractères.",
+      "errGeneric": "Une erreur s'est produite.",
+      "errUnreachable": "Impossible de joindre le serveur.",
+      "creating": "Création du compte...",
+      "submit": "Créer un compte",
+      "useInApp": "Utilisez ensuite les mêmes identifiants pour vous connecter à l'application Novabot."
+    },
+    "cert": {
+      "title": "Installer le certificat",
+      "detected": "Certificat détecté !",
+      "redirecting": "Redirection vers le tableau de bord...",
+      "intro": "L'application Novabot utilise HTTPS. Installez le certificat CA local pour que l'application puisse se connecter.",
+      "download": "Télécharger opennova-ca.crt",
+      "macTitle": "Mac (y compris l'application iOS sur Apple Silicon)",
+      "mac": {
+        "s1": "Téléchargez opennova-ca.crt et double-cliquez dessus → Trousseau d'accès s'ouvre",
+        "s2": "Le certificat est maintenant dans le trousseau Système mais n'est PAS encore approuvé",
+        "s3": "Double-cliquez sur \"OpenNova Local CA\" dans la liste",
+        "s4": "Dépliez \"Se fier\" (cliquez sur le triangle)",
+        "s5": "Réglez \"Lors de l'utilisation de ce certificat\" sur \"Toujours approuver\"",
+        "s6": "Fermez la fenêtre → saisissez votre mot de passe Mac si demandé"
+      },
+      "macCheckAgain": "Cliquez sur \"Vérifier à nouveau\" ci-dessous",
+      "iphone": {
+        "s1": "Envoyez le fichier .crt sur votre iPhone (AirDrop ou e-mail)",
+        "s2": "Ouvrez le fichier → \"Profil téléchargé\" apparaît",
+        "s3": "Allez dans Réglages → Profil téléchargé → Installer",
+        "s4": "Allez dans Réglages → Général → Informations → Réglages de confiance des certificats",
+        "s5": "Activez \"OpenNova Local CA\""
+      },
+      "iphoneStrict": {
+        "s1": "Envoyez le fichier .crt sur votre iPhone (AirDrop ou e-mail)",
+        "s2": "Touchez le fichier → \"Profil téléchargé\" apparaît en haut",
+        "s3": "Allez dans Réglages → \"Profil téléchargé\" en haut → Installer → Installer",
+        "s4": "⚠️ ÉTAPE SUPPLÉMENTAIRE OBLIGATOIRE : allez dans Réglages → Général → Informations → Réglages de confiance des certificats",
+        "s5": "Activez l'interrupteur de \"OpenNova Local CA\" → Continuer",
+        "s6": "Sans cette étape, le certificat ne fonctionne pas !"
+      },
+      "androidSend": {
+        "s1": "Envoyez opennova-ca.crt sur votre appareil Android",
+        "s2": "Allez dans Paramètres → Sécurité → Installer des certificats",
+        "s3": "Choisissez \"Certificat CA\" et sélectionnez le fichier"
+      },
+      "androidDownload": {
+        "s1": "Téléchargez opennova-ca.crt sur votre appareil Android",
+        "s2": "Allez dans Paramètres → Sécurité → Installer des certificats",
+        "s3": "Choisissez \"Certificat CA\" et sélectionnez le fichier"
+      },
+      "autoDetect": "Détection automatique...",
+      "autoDetectHint": "Le tableau de bord continue automatiquement dès que le certificat est approuvé.",
+      "checking": "Vérification...",
+      "checkManual": "Vérifier manuellement",
+      "checkAgain": "Vérifier à nouveau",
+      "notTrusted": "Certificat pas encore approuvé. Installez-le et réessayez.",
+      "notTrustedIphone": "Certificat pas encore approuvé. Sur iPhone : vérifiez que vous avez activé l'interrupteur dans <b>Réglages → Général → Informations → Réglages de confiance des certificats</b>.",
+      "scope": "Ce certificat n'est valable que pour *.lfibot.com sur votre réseau local."
+    },
+    "wizard": {
+      "title": "Configuration",
+      "port": "port {{port}}",
+      "dnsBuiltin": "Intégré (dnsmasq)",
+      "dnsDisabled": "Désactivé (DNS personnel)",
+      "dnsTest": "Test DNS",
+      "dnsTestHint": "Vérifie que <c>app.lfibot.com</c> pointe correctement vers votre serveur.",
+      "dnsTestFailed": "Échec du test DNS",
+      "testing": "Test en cours...",
+      "dnsOk": "Le DNS fonctionne !",
+      "dnsFail": "DNS injoignable",
+      "testDns": "Tester le DNS",
+      "dnsPointsTo": "app.lfibot.com pointe vers {{ip}}",
+      "tlsTitle": "Certificat TLS (application Novabot)",
+      "tlsIntro": "L'application Novabot utilise HTTPS. Installez une fois le certificat CA OpenNova sur votre appareil pour que l'application puisse se connecter.",
+      "macSimTitle": "Mac (y compris le simulateur iOS)",
+      "macSim": {
+        "s1": "Téléchargez opennova-ca.crt avec le bouton ci-dessus",
+        "s2": "Double-cliquez sur le fichier → Trousseau d'accès s'ouvre",
+        "s3": "Choisissez le trousseau \"Système\" → ajouter",
+        "s4": "Cherchez \"OpenNova Local CA\" → double-clic → Se fier → \"Toujours approuver\"",
+        "s5": "Le simulateur iOS hérite automatiquement de la confiance de macOS"
+      },
+      "certScope": "Ce certificat n'est valable que pour <c>*.lfibot.com</c> sur votre réseau local. Il ne sert à rien en dehors du serveur OpenNova.",
+      "dnsSetupTitle": "Configurer le DNS",
+      "dnsSetupIntro": "L'application Novabot et les appareils doivent pouvoir joindre <c>*.lfibot.com</c> sur votre serveur local. Choisissez votre solution DNS ci-dessous.",
+      "adguard": {
+        "s1": "Ouvrez AdGuard Home (généralement sur le port 3000 de votre serveur DNS)",
+        "s2": "Allez dans Filtres → Réécritures DNS",
+        "s3": "Ajoutez : domaine = *.lfibot.com, réponse = {{ip}}",
+        "s4": "Cliquez sur \"Enregistrer\""
+      },
+      "pihole": {
+        "s1": "Connectez-vous en SSH à votre serveur Pi-hole",
+        "s2": "Ajoutez à /etc/dnsmasq.d/99-novabot.conf :",
+        "s4": "Redémarrez : pihole restartdns"
+      },
+      "router": {
+        "s1": "Ouvrez la page d'administration de votre routeur (généralement 192.168.0.1 ou 192.168.1.1)",
+        "s2": "Allez dans les paramètres DHCP / LAN",
+        "s3": "Réglez le serveur DNS sur : {{ip}}",
+        "s4": "Enregistrez et redémarrez votre routeur",
+        "s5": "Le dnsmasq intégré au conteneur gère la réécriture"
+      },
+      "manualTitle": "Manuellement par appareil",
+      "manual": {
+        "s1": "iOS : Réglages → Wi-Fi → [réseau] → DNS → Manuel → {{ip}}",
+        "s2": "Android : Wi-Fi → [réseau] → Avancé → DNS → {{ip}}"
+      },
+      "dnsNote": "Cela nécessite DISABLE_DNS=false dans votre .env",
+      "copy": "Copier",
+      "copied": "Copié !",
+      "copyLine": "Copier la ligne"
+    }
+  },
+  "workStatus": {
+    "0": "Inactif",
+    "1": "Échoué",
+    "2": "Annulé",
+    "7": "Échoué une fois",
+    "8": "Terminé une fois",
+    "9": "Terminé",
+    "10": "Arrêté par l'utilisateur",
+    "11": "Recharge par l'utilisateur",
+    "12": "Batterie faible",
+    "13": "Arrêt sur erreur",
+    "14": "Limite de temps",
+    "15": "Erreur de reprise",
+    "49": "Reprise",
+    "50": "Démarrage demandé",
+    "51": "Init. capteurs",
+    "53": "Init. carte",
+    "54": "Init. UTM",
+    "55": "Init. localisation",
+    "56": "Quitte la station",
+    "57": "Vérification système",
+    "59": "Init. réussie",
+    "61": "Erreur de localisation",
+    "62": "Erreur LoRa",
+    "63": "Roues qui patinent",
+    "64": "Hors de la carte",
+    "90": "Tonte",
+    "91": "Évite un obstacle",
+    "92": "En déplacement",
+    "93": "Coupe des bordures",
+    "94": "Reprise des zones manquées",
+    "130": "Cartographie de la zone de travail",
+    "131": "Cartographie d'un obstacle",
+    "132": "Cartographie d'un passage",
+    "133": "Cartographie du passage vers la station",
+    "134": "Réglage de la position de la station",
+    "135": "Suppression de la carte",
+    "136": "Suppression de l'obstacle",
+    "137": "Suppression du passage",
+    "138": "Effacement auto de la carte",
+    "139": "Échec de l'effacement auto",
+    "140": "Effacement auto terminé",
+    "141": "Cartographie auto de la zone de travail",
+    "142": "Cartographie auto d'un obstacle",
+    "143": "Modification de la carte",
+    "169": "Cartographie en pause",
+    "191": "Retour à la station",
+    "192": "Recherche de la station",
+    "193": "Alignement sur la station",
+    "unknown": "État {{n}}"
+  },
+  "tabs": {
+    "records": "Tontes"
+  },
+  "ota": {
+    "title": "Mise à jour du firmware",
+    "deleteTitle": "Supprimer la version",
+    "deleteConfirm": "Voulez-vous vraiment supprimer {{version}} ?",
+    "deleteDetail": "L'enregistrement est supprimé. Le fichier firmware reste dans le dossier firmware/.",
+    "chargeNote": "Le téléchargement ne démarre que lorsque la tondeuse est sur la station de charge.",
+    "unknown": "inconnue",
+    "betaTitle": "FIRMWARE PERSONNALISÉ BETA",
+    "betaBackupNote": "Une sauvegarde récente est créée automatiquement avant le flash.",
+    "betaConfirm": "Je comprends, flasher quand même",
+    "downgradeTitle": "Avertissement de rétrogradation",
+    "downgradeMessage": "Vous êtes sur le point de rétrograder :",
+    "flashAnyway": "Flasher quand même",
+    "sameTitle": "Même version",
+    "sameMessage": "{{device}} exécute déjà {{version}}.",
+    "sameDetail": "Voulez-vous flasher à nouveau la même version ?",
+    "reflash": "Flasher à nouveau",
+    "updateTitle": "Mise à jour du firmware",
+    "updateMessage": "Mettre à jour {{device}} :",
+    "flash": "Flasher",
+    "currentVersions": "Versions actuelles",
+    "noDevices": "Aucun appareil connecté",
+    "filesIn": "Fichiers dans",
+    "noFilesCopy": "Copiez",
+    "noFilesTo": "vers",
+    "noFilesReload": "puis rechargez.",
+    "registeredVersions": "Versions enregistrées",
+    "noVersionsCopy": "Aucune version trouvée. Copiez",
+    "noVersionsTo": "dans le dossier firmware ; les versions sont enregistrées automatiquement.",
+    "version": "Version",
+    "type": "Type",
+    "editVersion": "Modifier la version",
+    "deleteVersion": "Supprimer la version",
+    "noChargerConnected": "Aucune station de charge connectée",
+    "noMowerConnected": "Aucune tondeuse connectée",
+    "deviceOffline": "Appareil hors ligne",
+    "alreadyActive": "Déjà la version active",
+    "downgradeBang": "Rétrogradation !",
+    "commandSent": "Commande envoyée",
+    "sendError": "Erreur lors de l'envoi",
+    "busy": "En cours…",
+    "current": "actuelle",
+    "downgrade": "rétrogradation",
+    "downloading": "Téléchargement…",
+    "updateDone": "Mise à jour terminée",
+    "updateFailed": "Échec de la mise à jour"
   }
 }

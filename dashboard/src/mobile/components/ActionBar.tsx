@@ -27,7 +27,7 @@ export function ActionBar({ sn, online, activity }: Props) {
       await sendCommand(sn, command);
       toast(`${label} ✓`, 'success');
     } catch {
-      toast(`${label} failed`, 'error');
+      toast(t('mobile.actionFailed', { label }), 'error');
     }
     setSending(null);
   };

@@ -1,12 +1,13 @@
 {
   "login": {
     "title": "Anmelden",
-    "subtitle": "Dieses Dashboard ist aus dem Internet erreichbar. Melde dich mit deinem OpenNova-App-Konto an, um fortzufahren.",
+    "subtitle": "Dieses Dashboard ist aus dem Internet erreichbar. Melden Sie sich mit Ihrem OpenNova-App-Konto an, um fortzufahren.",
     "email": "E-Mail",
     "password": "Passwort",
     "submit": "Anmelden",
     "signingIn": "Anmeldung läuft…",
-    "error": "Ungültige E-Mail oder Passwort"
+    "error": "Ungültige E-Mail oder Passwort",
+    "failedStatus": "Anmeldung fehlgeschlagen ({{status}})"
   },
   "update": {
     "title": "Server-Update verfügbar",
@@ -20,7 +21,10 @@
     "dashboard": "Dashboard",
     "server": "Server",
     "serverOffline": "Server offline",
-    "connectionTitle": "Verbindung zum OpenNova-Server"
+    "connectionTitle": "Verbindung zum OpenNova-Server",
+    "serverVersion": "Serverversion",
+    "diagnostics": "Diagnose & Logs",
+    "adminPanel": "Admin-Bereich"
   },
   "sidebar": {
     "devices": "Geräte",
@@ -40,7 +44,9 @@
     "loading": "Lade…",
     "failed": "Fehlgeschlagen",
     "failedToLoad": "Laden fehlgeschlagen",
-    "close": "Schließen"
+    "close": "Schließen",
+    "collapse": "Einklappen",
+    "expand": "Ausklappen"
   },
   "time": {
     "justNow": "gerade eben",
@@ -72,7 +78,8 @@
     "mowSpeed": "Mähgeschwindigkeit",
     "area": "Fläche",
     "error": "Fehler",
-    "errorCode": "Code: {{code}}"
+    "errorCode": "Code: {{code}}",
+    "unknownError": "Unbekannter Fehler"
   },
   "log": {
     "title": "MQTT-Protokoll",
@@ -81,7 +88,8 @@
     "autoScrollOn": "Auto-Scroll EIN",
     "autoScrollOff": "Auto-Scroll AUS",
     "waiting": "Warte auf MQTT-Verkehr...",
-    "noMatches": "Keine Treffer"
+    "noMatches": "Keine Treffer",
+    "waitingBle": "Warte auf BLE-Aktivität..."
   },
   "devices": {
     "charger": "Ladestation",
@@ -105,7 +113,15 @@
     "confirmRemove": "{{sn}} vom Dashboard entfernen?",
     "loading": "Geräte werden geladen...",
     "waitingForDevices": "Warte auf Geräte...",
-    "schedule": "Zeitplan"
+    "schedule": "Zeitplan",
+    "unbound": {
+      "title": "Geräte gefunden, noch nicht verknüpft",
+      "intro": "Die folgenden Geräte sind mit Ihrem MQTT-Server verbunden, aber noch nicht mit Ihrem Konto verknüpft. Geben Sie ihnen einen Namen und klicken Sie auf „Verknüpfen“, um sie hinzuzufügen.",
+      "namePlaceholder": "Name (optional)",
+      "bind": "Verknüpfen",
+      "binding": "Verknüpfe...",
+      "bindFailed": "Verknüpfen fehlgeschlagen"
+    }
   },
   "controls": {
     "startMowing": "Mähen starten",
@@ -180,7 +196,7 @@
     "bladeStarting": "Messer startet (zum Stoppen tippen)",
     "bladeDockedHint": "Auf der Ladestation nicht verfügbar",
     "bladeHeightTitle": "Schnitthöhe",
-    "bladeHeightDesc": "Wähle die Höhe, bevor das Messer startet.",
+    "bladeHeightDesc": "Wählen Sie die Höhe, bevor das Messer startet.",
     "bladeStart": "Messer starten",
     "offline": "Gerät offline",
     "patrol": "Randpatrouille",
@@ -200,7 +216,7 @@
     "previewPath": "Mähweg-Vorschau",
     "previewNoArea": "Wählen Sie zuerst einen Arbeitsbereich",
     "mowError": {
-      "not_localized": "der Mäher konnte seine Position nicht bestimmen; fahre eine Runde und starte erneut",
+      "not_localized": "der Mäher konnte seine Position nicht bestimmen; fahren Sie eine Runde und starten Sie erneut",
       "invalid_map": "unbekannte Zone",
       "drive_script_missing": "das Fahrskript fehlt auf dem Mäher",
       "no_unicom": "zu dieser Zone wurde kein Kanal aufgezeichnet"
@@ -212,12 +228,16 @@
     "longPauseResumeBody": "Nach einer langen Pause kann die Lokalisierung abgedriftet sein und der Mäher könnte die Karte verlassen. Trotzdem fortsetzen?",
     "resumeAnyway": "Trotzdem fortsetzen",
     "safetyStopTitle": "Automatisch gestoppt",
-    "safetyStopBody": "Nach dem Fortsetzen meldete der Mäher, dass er außerhalb der Karte fuhr. Er wurde gestoppt und die Störung gelöscht. Setze ihn zurück in den Mähbereich und starte erneut.",
+    "safetyStopBody": "Nach dem Fortsetzen meldete der Mäher, dass er außerhalb der Karte fuhr. Er wurde gestoppt und die Störung gelöscht. Setzen Sie ihn zurück in den Mähbereich und starten Sie erneut.",
     "heightMismatchTitle": "Schnitthöhe weicht ab",
-    "heightMismatchBody": "Du hast {{expected}} cm eingestellt, der Mäher schneidet aber auf {{actual}} cm.",
+    "heightMismatchBody": "Sie haben {{expected}} cm eingestellt, der Mäher schneidet aber auf {{actual}} cm.",
     "continueAnyway": "Trotzdem fortfahren",
     "reanchorRequiredTitle": "Neu verankern erforderlich",
-    "reanchorRequiredBody": "Die Karte wurde wiederhergestellt, der Rahmen ist aber noch nicht geprüft. Verankere den Mäher erneut an der Ladestation, bevor du mähst."
+    "reanchorRequiredBody": "Die Karte wurde wiederhergestellt, der Rahmen ist aber noch nicht geprüft. Verankern Sie den Mäher erneut an der Ladestation, bevor Sie mähen.",
+    "previewSavedOnly": "Die Vorschau funktioniert nur für gespeicherte Arbeitsbereiche; Muster werden gemäht, lassen sich aber nicht in der Vorschau anzeigen.",
+    "dragWindow": "Zum Verschieben ziehen",
+    "edgeCutHint": "Der Kantenschnitt folgt der Grenze des Arbeitsbereichs mit der gewählten Schnitthöhe. Die Karte ist fest auf {{map}} eingestellt; das Verlassen der Ladestation wird automatisch erkannt.",
+    "noOffset": "Kein Versatz"
   },
   "camera": {
     "title": "Kamera",
@@ -230,7 +250,8 @@
     "frontHd": "Front HD",
     "tofGray": "ToF Grau",
     "tofDepth": "ToF Tiefe",
-    "aruco": "ArUco"
+    "aruco": "ArUco",
+    "dragHint": "Zum Verschieben ziehen"
   },
   "map": {
     "workArea": "Arbeitsbereich",
@@ -239,7 +260,7 @@
     "hideTrail": "GPS-Spur ausblenden",
     "showTrail": "GPS-Spur anzeigen",
     "drawNew": "Neuen Arbeitsbereich zeichnen",
-    "drawStockNotice": "Stock-Firmware: hier gezeichnete Bereiche erreichen den Mäher nicht. Lege den Bereich in der OpenNova-App an (per Bluetooth abfahren).",
+    "drawStockNotice": "Stock-Firmware: hier gezeichnete Bereiche erreichen den Mäher nicht. Legen Sie den Bereich in der OpenNova-App an (per Bluetooth abfahren).",
     "draw": "Zeichnen",
     "calibrate": "Kalibrieren",
     "hideHeatmap": "Heatmap ausblenden",
@@ -393,17 +414,20 @@
       "coverageStart": "Mäher startet hier",
       "coverageRefresh": "Vom Mäher aktualisieren",
       "unsupportedFirmware": "Kartenänderungen anwenden erfordert die OpenNova-Custom-Firmware. Auf Stock-Firmware „Karte bearbeiten“ in der App nutzen und den geänderten Abschnitt abfahren.",
-      "stockNotice": "Stock-Firmware: Änderungen können von hier nicht zum Mäher. Nutze „Karte bearbeiten“ in der OpenNova-App (den geänderten Abschnitt abfahren)."
+      "stockNotice": "Stock-Firmware: Änderungen können von hier nicht zum Mäher. Nutzen Sie „Karte bearbeiten“ in der OpenNova-App (den geänderten Abschnitt abfahren).",
+      "revertTitle": "Änderungen zurücknehmen",
+      "discardTitle": "Entwürfe verwerfen",
+      "pasteDismiss": "Zwischenablage leeren"
     },
     "missedPoint": "Verpasster Punkt",
     "sourceMower": "vom Mäher gefahren",
     "sourceDrawn": "im Dashboard gezeichnet",
     "sourceImport": "importiert",
     "slotHint": "Wird {{slot}} auf dem Mäher",
-    "channelNameAuto": "Der Name ergibt sich aus den verbundenen Bereichen (z. B. map2tomap1_0_unicom). Ein Kanal zur Ladestation beginnt an der Station, oder gib den Namen ein (z. B. map0tocharge_unicom).",
+    "channelNameAuto": "Der Name ergibt sich aus den verbundenen Bereichen (z. B. map2tomap1_0_unicom). Ein Kanal zur Ladestation beginnt an der Station, oder geben Sie den Namen ein (z. B. map0tocharge_unicom).",
     "pathTotal": "{{m}} m gesamt",
     "channelPromptTitle": "{{name}} verbinden",
-    "channelPromptBody": "Der Mäher erreicht {{slot}} nur, wenn ein Kanal dorthin führt. Zeichne eine Linie von {{slot}} zu einem bestehenden Bereich oder zur Ladestation.",
+    "channelPromptBody": "Der Mäher erreicht {{slot}} nur, wenn ein Kanal dorthin führt. Zeichnen Sie eine Linie von {{slot}} zu einem bestehenden Bereich oder zur Ladestation.",
     "channelPromptDraw": "Kanal zeichnen",
     "channelPromptLater": "Später",
     "deleteFailed": "Löschen der Karte fehlgeschlagen.",
@@ -440,11 +464,95 @@
     "droneRemovePoint": "Punkt entfernen",
     "droneResidualInfo": "Abweichung: so weit liegt dieser Fotopunkt noch von seinem Kartenpunkt entfernt. Bei 2 oder 4 Punkten ist sie immer 0; bei mehr sehen Sie, wie gut das Foto als Ganzes passt. Ein großer Wert ist meist ein falsch angeklickter Punkt oder ein Dach oder eine Baumkrone.",
     "droneMeanResidual": "im Mittel {{cm}} cm",
-    "dronePointsSliders": "Während des Anklickens bestimmen die Punkte die Platzierung; die Regler funktionieren danach wieder."
+    "dronePointsSliders": "Während des Anklickens bestimmen die Punkte die Platzierung; die Regler funktionieren danach wieder.",
+    "base": {
+      "title": "Hintergrund",
+      "satellite": "Satellit",
+      "drone": "Drohnenfoto",
+      "droneMissing": "Noch kein Drohnenfoto hochgeladen",
+      "render": "3D-Render",
+      "day": "Tag",
+      "night": "Abend",
+      "renderMake": "3D-Render erstellen…",
+      "renderAgain": "Neu generieren…",
+      "renderStale": "Die Karte wurde nach diesem Render geändert.",
+      "noKey": "Legen Sie zuerst unter Einstellungen → 3D-Render einen Schlüssel fest.",
+      "noBase": "Für diesen Standort sind keine Luftbilder verfügbar; laden Sie ein Drohnenfoto hoch.",
+      "failed": "Render fehlgeschlagen",
+      "renderBusy": "3D-Render wird erstellt…",
+      "renderStepBase": "Luftbild wird abgerufen…",
+      "renderStepComposite": "Karte wird auf das Luftbild gelegt…",
+      "renderStepDay": "Tagesversion wird gezeichnet…",
+      "renderStepNight": "Abendversion wird gezeichnet…",
+      "renderWait": "Dies dauert meist 1 bis 3 Minuten; das Fenster schließt sich automatisch.",
+      "renderFrom": "3D-Render erstellen aus",
+      "renderFromAerial": "Luftbild (Satellit)",
+      "renderFromDrone": "Eigenes Drohnenfoto",
+      "renderMadeFrom": "Aktueller Render: {{src}}",
+      "renderFit": "Einpassen",
+      "renderNotMade": "noch nicht erstellt"
+    },
+    "render": {
+      "noKey": "Legen Sie zuerst unter Einstellungen → 3D-Render einen Schlüssel fest.",
+      "noBase": "Für diesen Standort sind keine Luftbilder verfügbar; laden Sie ein Drohnenfoto hoch.",
+      "failed": "Render fehlgeschlagen",
+      "notMadeTitle": "Noch nicht erstellt",
+      "missingFlat": "Es gibt noch kein Draufsicht-Rendering. Erstellen Sie eines über \"Neues 3D-Rendering\" mit der Ansicht Draufsicht.",
+      "missingIso": "Es gibt noch kein Schrägansicht-Rendering. Erstellen Sie eines über \"Neues 3D-Rendering\" mit der Ansicht Schräg.",
+      "framing": "Ansicht",
+      "flat": "Draufsicht",
+      "flatDesc": "Umfasst, was Sie gerade auf der Karte sehen. Zonen, Mäher und Bahnen darüber.",
+      "iso": "Schräg",
+      "isoDesc": "3D-Bild von der Seite, mit Mäher und Bahnen darauf.",
+      "light": "Licht",
+      "auto": "Auto",
+      "autoHint": "Tag oder Abend nach Sonnenauf- und -untergang am Mäher",
+      "newTitle": "Neues 3D-Rendering",
+      "source": "Erstellt aus",
+      "aerial": "Luftbild",
+      "aerialDesc": "Funktioniert überall, das Bild ist 1 bis 3 Jahre alt.",
+      "drone": "Drohnenfoto",
+      "droneDesc": "Dein eigenes Foto: schärfer und aktuell.",
+      "costNote": "Dauert 1 bis 3 Minuten und kostet ein Guthaben oder API-Guthaben. Es werden eine Tag- und eine Abendversion erstellt.",
+      "replaceNote": "Ersetzt das vorhandene Rendering in dieser Ansicht.",
+      "make": "Rendering erstellen"
+    },
+    "dronePlaceFailed": "Platzierung nicht gespeichert",
+    "droneManageHint": "Hochladen oder ersetzen: Einstellungen › Drohnenfoto.",
+    "tiles": {
+      "esri": "Esri Satellit (global)",
+      "google": "Google Satellit (hochauflösend, inoffiziell)",
+      "pdok": "PDOK Luftbild (NL, ~8 cm)",
+      "usgs": "USGS Luftbild (USA)",
+      "street": "Straßenkarte (OSM)"
+    },
+    "celebration": {
+      "title": "Mähen abgeschlossen!",
+      "allLanes": "100%: alle Bahnen gemäht",
+      "area": "{{area}} m² erledigt"
+    },
+    "noGo": {
+      "saved": "Sperrzone gespeichert",
+      "saveFailed": "Sperrzone speichern fehlgeschlagen",
+      "deleted": "Sperrzone gelöscht",
+      "deleteFailed": "Löschen fehlgeschlagen",
+      "firstCorner": "Klicken Sie auf die erste Ecke des Sperrzonen-Rechtecks",
+      "secondCorner": "Klicken Sie zum Abschließen auf die gegenüberliegende Ecke"
+    },
+    "lastMowed": "Zuletzt gemäht: {{date}}",
+    "navigationTarget": "Navigationsziel",
+    "mowingComplete": "Mähen abgeschlossen!",
+    "allLanesDone": "alle Bahnen gemäht",
+    "areaFinished": "{{area}} m² fertig"
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",
-    "terrainStockNotice": "3D-Gelände braucht die OpenNova Custom-Firmware auf dem Mäher; mit Stock-Firmware wird nichts gescannt."
+    "terrainStockNotice": "3D-Gelände braucht die OpenNova Custom-Firmware auf dem Mäher; mit Stock-Firmware wird nichts gescannt.",
+    "betaWarning": {
+      "line1": "Dies ist BETA / experimentelle Custom-Firmware.",
+      "line2": "Die Installation kann den Mäher unbrauchbar machen (bricken).",
+      "line3": "Sie können ALLE Ihre Karten verlieren."
+    }
   },
   "terrain": {
     "title": "Gelände",
@@ -488,7 +596,14 @@
     "moveButton": "Verschieben",
     "moveActive": "Pfeiltasten = verschieben (Shift = großer Schritt, Esc = fertig)",
     "followLabel": "Mäher folgen",
-    "cameraLabel": "Kamera"
+    "cameraLabel": "Kamera",
+    "rotationLabel": "Drehung",
+    "loading": "Gelände wird geladen…",
+    "empty": "Noch keine Geländedaten. Die Karte wächst beim Mähen von selbst.",
+    "loadFailed": "Gelände konnte nicht geladen werden",
+    "legendTitle": "Objekte",
+    "groupObstacle": "Hindernis",
+    "groupObject": "Objekt"
   },
   "schedule": {
     "title": "Mähpläne",
@@ -569,6 +684,15 @@
       "skipped": "nicht gestartet",
       "failed": "Start fehlgeschlagen",
       "missed": "verpasst"
+    },
+    "cuttingHeightDown": "Schnitthöhe verringern",
+    "cuttingHeightUp": "Schnitthöhe erhöhen",
+    "pathDirectionDown": "Richtung nach unten drehen",
+    "pathDirectionUp": "Richtung nach oben drehen",
+    "timeWheel": {
+      "hour": "Stunde",
+      "minute": "Minute",
+      "period": "AM oder PM"
     }
   },
   "rain": {
@@ -578,7 +702,9 @@
     "warningTitle": "Regen vorhergesagt",
     "warningDesc": "Regen gegen {{time}} ({{mm}} mm, {{prob}}%). Trotzdem mähen?",
     "ignoreSession": "Regen diese Sitzung ignorieren",
-    "ignoreSessionHint": "Der Mäher pausiert bei Regen nicht automatisch, bis diese Sitzung endet."
+    "ignoreSessionHint": "Der Mäher pausiert bei Regen nicht automatisch, bis diese Sitzung endet.",
+    "badge": "Regen",
+    "badgePaused": "Pausiert (Regen)"
   },
   "reanchor": {
     "title": "Neu verankern",
@@ -592,10 +718,10 @@
     "onDock": "An der Station",
     "offDock": "Nicht an der Station",
     "busy": "Läuft...",
-    "runningHint": "Der Mäher fährt selbst; behalte ihn im Auge.",
-    "needsDriveHint": "Fahre mit dem Joystick ~1 m gerade zurück; es geht automatisch weiter, sobald die Lokalisierung einrastet.",
-    "needsPositionHint": "Fahre den Mäher ~50 cm gerade vor die Station und drücke \"Andocken starten\".",
-    "manualBackupHint": "Dock den Mäher manuell mit dem Joystick und drücke Überprüfen.",
+    "runningHint": "Der Mäher fährt selbst; behalten Sie ihn im Auge.",
+    "needsDriveHint": "Fahren Sie mit dem Joystick ~1 m gerade zurück; es geht automatisch weiter, sobald die Lokalisierung einrastet.",
+    "needsPositionHint": "Fahren Sie den Mäher ~50 cm gerade vor die Station und drücken Sie \"Andocken starten\".",
+    "manualBackupHint": "Docken Sie den Mäher manuell mit dem Joystick an und drücken Sie Überprüfen.",
     "btnStart": "Verankern starten",
     "btnDock": "Andocken starten",
     "btnVerify": "Überprüfen",
@@ -696,7 +822,7 @@
     },
     "mowDefaults": {
       "title": "Mäh-Standardwerte",
-      "help": "Füllt das Start-Sheet vor, damit du das nicht jedes Mal neu einstellst.",
+      "help": "Füllt das Start-Sheet vor, damit Sie das nicht jedes Mal neu einstellen müssen.",
       "cuttingHeight": "Schnitthöhe",
       "direction": "Standardrichtung",
       "saved": "Gespeichert"
@@ -718,7 +844,7 @@
     },
     "notifications": {
       "title": "Benachrichtigungen",
-      "help": "Konfiguriere, wo du über Mäh-Events benachrichtigt werden möchtest. Der serverseitige Konfigurations-Endpoint folgt in einer späteren Phase — diese Kanäle sind heute zur Referenz aufgeführt.",
+      "help": "Konfigurieren Sie, wo Sie über Mäh-Events benachrichtigt werden möchten. Der serverseitige Konfigurations-Endpoint folgt in einer späteren Phase — diese Kanäle sind heute zur Referenz aufgeführt.",
       "push": "Push (Mobile App, Expo)",
       "ntfy": "ntfy",
       "ha": "Home Assistant Webhook",
@@ -736,6 +862,116 @@
       "help": "Unfertige Funktionen, die sich ändern oder ausfallen können. Standardmäßig aus.",
       "enable": "Experimentelle Funktionen aktivieren",
       "note": "Schaltet derzeit den Tab Gelände frei."
+    },
+    "mower": {
+      "cuttingHeight": "Schnitthöhe",
+      "obstacle": "Hindernisvermeidung",
+      "sensitivity": {
+        "low": "Aus (nur Gelände)",
+        "lowDesc": "Nur Segmentierung, keine Objekterkennung (max. Abdeckung)",
+        "medium": "Objekten ausweichen",
+        "mediumDesc": "Regelmäßige Objekterkennung beim Mähen",
+        "high": "Objekten ausweichen (häufig)",
+        "highDesc": "Häufige Objekterkennung (beste Vermeidung)"
+      },
+      "direction": "Mährichtung",
+      "directionHint": "Streifen zeigen, wie der Mäher fährt",
+      "directionDown": "Richtung nach unten drehen",
+      "directionUp": "Richtung nach oben drehen",
+      "joystickSpeed": "Joystick-Höchstgeschwindigkeit",
+      "joystickHandling": "Joystick-Steuerung",
+      "level": {
+        "low": "Niedrig",
+        "medium": "Mittel",
+        "high": "Hoch"
+      },
+      "rain": "Wetter & Zeiten",
+      "rainPause": "Bei Regen pausieren",
+      "rainSummary": "≥ {{mm}} mm oder ≥ {{prob}}% innerhalb von {{h}}",
+      "rainMm": "Min. Niederschlag",
+      "rainProb": "Min. Wahrscheinlichkeit",
+      "rainHours": "Vorausschau",
+      "nightGuard": "Nicht im Dunkeln mähen",
+      "nightGuardOn": "Geplante Mähvorgänge zwischen Sonnenuntergang und Sonnenaufgang werden übersprungen (schützt Igel)",
+      "nightGuardOff": "Geplante Mähvorgänge dürfen nachts mähen",
+      "frostGuard": "Nicht bei Frost mähen",
+      "frostGuardOn": "Geplante Mähvorgänge werden unter {{c}} °C übersprungen",
+      "frostGuardOff": "Geplante Mähvorgänge ignorieren die Temperatur",
+      "frostThreshold": "Überspringen unter",
+      "other": "Sonstiges",
+      "headlight": "Scheinwerfer",
+      "brightness": "Helligkeit",
+      "speaker": "Lautsprecher",
+      "timezone": "Zeitzone",
+      "save": "Einstellungen speichern",
+      "saving": "Speichern…",
+      "saved": "Einstellungen gespeichert",
+      "saveFailed": "Einstellungen konnten nicht gespeichert werden",
+      "offline": "Mäher ist offline, verbinden Sie ihn zum Speichern.",
+      "offlinePending": "Mäher offline: Änderungen werden gespeichert, sobald er wieder verbunden ist.",
+      "savedAuto": "Änderungen automatisch gespeichert",
+      "autoSaveHint": "Änderungen werden automatisch gespeichert",
+      "recovery": "Wiederherstellung",
+      "recalibrate": "Ladeposition neu kalibrieren",
+      "recalibrateDesc": "Überschreibt map_info.json mit der aktuellen Position. Stellen Sie den Mäher zuerst auf die Ladestation (er muss LADEN).",
+      "recalibrateConfirm": "Die Ladeposition mit der AKTUELLEN Position des Mähers überschreiben? Der Mäher muss physisch auf der Ladestation stehen und laden, sonst driftet die künftige Abdeckung.",
+      "recalibrateForce": "Akkustatus ist \"{{state}}\" (erwartet: LADEN). Sicherheitsprüfung trotzdem überspringen?",
+      "recalibrated": "Ladeposition neu kalibriert",
+      "recalibrateFailed": "Neukalibrierung fehlgeschlagen",
+      "restart": "Mäher neu starten",
+      "restartDesc": "Startet die Mäher-Software neu (kein Reboot). Behebt festgefahrene Zustände; nach ca. 1 Min. wieder online.",
+      "restartConfirm": "Die Mäher-Software neu starten (kein vollständiger Reboot)? Das behebt festgefahrene Zustände, und der Mäher ist nach etwa einer Minute wieder online. Funktioniert nur im Leerlauf oder beim Laden.",
+      "restarting": "Mäher startet neu, nach ca. 1 Min. wieder online",
+      "restartFailed": "Neustart fehlgeschlagen",
+      "maxSpeed": "Max. Geschwindigkeit",
+      "maxSpeedHint": "Geschwindigkeit beim autonomen Mähen",
+      "chargeThreshold": "Akkustand für Rückkehr",
+      "chargeThresholdHint": "Zum Laden fahren, wenn der Akku unter diesen Wert fällt",
+      "reboot": "Mäher rebooten",
+      "rebootDesc": "Vollständiger Neustart des Betriebssystems. Einige Minuten offline; bei festgefahrenen Zuständen zuerst Neu starten verwenden.",
+      "rebootConfirm": "Den Mäher rebooten (vollständiger Neustart des Betriebssystems)? Er ist einige Minuten offline. Bei festgefahrenen Zuständen zuerst Neu starten verwenden.",
+      "rebooting": "Reboot gesendet, der Mäher ist einige Minuten offline",
+      "rebootFailed": "Reboot fehlgeschlagen",
+      "recalibrateTitle": "Ladeposition neu kalibrieren",
+      "recalibrateForceTitle": "Lädt nicht",
+      "restartTitle": "Mäher-Software neu starten",
+      "rebootTitle": "Mäher neu starten"
+    },
+    "help": {
+      "title": "Hilfe",
+      "report": "Problem melden",
+      "reportDesc": "Öffnet ein GitHub-Issue mit bereits ausgefüllter Server- und Firmware-Version"
+    },
+    "render": {
+      "title": "3D-Render",
+      "help": "Erstellt aus der Karte des Mähers ein 3D-Bild Ihres eigenen Gartens. Kostet pro Render etwa 20 Cent bei OpenAI.",
+      "modeOwn": "Eigener Schlüssel eingerichtet",
+      "modeRelay": "Guthaben-Token eingerichtet",
+      "modeNone": "Noch nichts eingerichtet",
+      "ownKey": "Eigener OpenAI-Schlüssel",
+      "ownKeyHint": "Kein ChatGPT-Abo nötig: Ein API-Konto mit einem kleinen Prepaid-Guthaben reicht aus.",
+      "token": "Guthaben-Token (über OpenNova)",
+      "save": "Speichern",
+      "clear": "Entfernen",
+      "privacy": "Hinweis: Bei einem Render wird ein Luftbild Ihres Gartens an OpenAI gesendet. Tun Sie dies nur, wenn Sie damit einverstanden sind.",
+      "credits": "{{n}} Renders übrig"
+    },
+    "on": "An",
+    "timezoneSaveFailed": "Zeitzone konnte nicht gespeichert werden",
+    "pinQueryFailed": "PIN-Abfrage fehlgeschlagen",
+    "pinSetFailed": "PIN setzen fehlgeschlagen",
+    "pinVerifyFailed": "PIN-Prüfung fehlgeschlagen",
+    "pinSendFailed": "Senden fehlgeschlagen",
+    "pinSendRaw": "Rohtyp senden",
+    "drone": {
+      "title": "Drohnenfoto",
+      "help": "Ein eigenes Foto senkrecht von oben, unter der Karte: schärfer als das Luftbild, praktisch zum Einzeichnen von Zonen und als Quelle für das 3D-Rendering. Platzieren und anzeigen geht auf der Karte, über Ansicht › Drohnenfoto.",
+      "failed": "Das hat nicht geklappt",
+      "copyTitle": "Drohnenfoto übernehmen",
+      "placed": "Auf der Karte platziert",
+      "notPlaced": "Noch nicht platziert: Karte › Ansicht › Drohnenfoto › Platzieren",
+      "none": "Noch kein Drohnenfoto für diesen Mäher.",
+      "copyFrom": "Von {{name}} übernehmen"
     }
   },
   "ai": {
@@ -780,7 +1016,20 @@
     "height": "{{cm}} cm",
     "status": "Status",
     "date": "Datum",
-    "loadMore": "Mehr laden"
+    "loadMore": "Mehr laden",
+    "summary": {
+      "week": "Diese Woche",
+      "month": "Dieser Monat",
+      "year": "Dieses Jahr",
+      "blades": "Messer",
+      "bladesSince": "Mähstunden seit dem Austausch am {{date}}",
+      "bladesNever": "Noch kein Austausch erfasst; alle Mähstunden werden gezählt",
+      "markReplaced": "Als ersetzt markieren"
+    },
+    "result": {
+      "complete": "Abgeschlossen",
+      "cancelled": "Abgebrochen"
+    }
   },
   "charts": {
     "title": "Signalverlauf",
@@ -800,7 +1049,8 @@
     "rotation": "Drehung",
     "startPattern": "Muster starten",
     "patternMode": "Muster",
-    "mapMode": "Kartenbereich"
+    "mapMode": "Kartenbereich",
+    "numbered": "Muster {{id}}"
   },
   "ble": {
     "addDevice": "Gerät hinzufügen",
@@ -818,7 +1068,8 @@
     "manualEntry": "MAC manuell eingeben",
     "scanFailed": "BLE-Scan fehlgeschlagen",
     "tryAgain": "Erneut versuchen",
-    "close": "Schließen"
+    "close": "Schließen",
+    "registerFailed": "Registrierung fehlgeschlagen"
   },
   "mobile": {
     "activity": {
@@ -850,7 +1101,20 @@
     "startMowing": "Mähen starten",
     "starting": "Starten...",
     "sessionEnds": "Mähsitzung endet um",
-    "mapObjects": "Kartenobjekte"
+    "mapObjects": "Kartenobjekte",
+    "demoMode": "Demomodus",
+    "demoModeOn": "Demomodus AN",
+    "demoModeOff": "Demomodus AUS",
+    "demoModeToggleFailed": "Demomodus konnte nicht umgeschaltet werden",
+    "demoBanner": "DEMOMODUS: Befehle werden simuliert",
+    "debugMode": "Debugmodus",
+    "debugBattery": "Batterie:",
+    "actionFailed": "{{label}} fehlgeschlagen",
+    "novabotMower": "Novabot-Mäher",
+    "defaultMowerName": "OpenNova-Mäher",
+    "mowerImageAlt": "Mäher",
+    "mowerCamera": "Mäherkamera",
+    "toggleTheme": "Design wechseln"
   },
   "firmwareRequired": {
     "progress": "Aktualisierung: {{pct}}%.",
@@ -913,20 +1177,46 @@
     "logs": {
       "title": "Server-Log",
       "empty": "— leer —",
-      "search": "Filtern (z.B. start_run, error, LFIN)"
+      "search": "Filtern (z.B. start_run, error, LFIN)",
+      "enlarge": "Vergrößern",
+      "dragHint": "Ziehen zum Verschieben, Ecke ziehen zum Vergrößern",
+      "mower": "Mäher",
+      "charger": "Ladestation",
+      "rest": "Sonstige",
+      "autoScroll": "Auto-Scroll",
+      "floatingOpen": "In einem schwebenden Fenster geöffnet."
     }
   },
   "pages": {
-    "selectMower": "Wähle einen Mäher.",
-    "selectMowerForMap": "Wähle einen Mäher, um die Karte zu sehen."
+    "selectMower": "Wählen Sie einen Mäher.",
+    "selectMowerForMap": "Wählen Sie einen Mäher, um die Karte zu sehen."
   },
   "chips": {
     "offline": "offline",
-    "noMowers": "Keine Mäher"
+    "noMowers": "Keine Mäher",
+    "network": "Netzwerk",
+    "other": "Sonstiges",
+    "updated": "Aktualisiert: {{time}}",
+    "noSensorData": "Noch keine Sensordaten.",
+    "noChargerTelemetry": "Noch keine Telemetrie der Ladestation.",
+    "sats": "Sats",
+    "temp": "Temp.",
+    "notOk": "Nicht OK",
+    "noRtk": "Kein RTK",
+    "sensorDetails": "Sensordetails von {{name}}",
+    "rtkFixQuality": "RTK-Fix-Qualität: {{quality}}",
+    "cpuTemp": "CPU-Temperatur: {{temp}}°C",
+    "cpuTempDanger": "GEFAHR: CPU-Temperatur {{temp}}°C (>= {{limit}}°C)",
+    "workStatus": "Arbeitsstatus: {{status}}",
+    "drivingSpeed": "Fahrgeschwindigkeit: {{speed}} m/s",
+    "waiting": "warte…"
   },
   "mower": {
     "longPause": {
       "banner": "Mäher pausiert seit {{minutes}} Minuten. Fortsetzen, stoppen oder zur Ladestation?"
+    },
+    "mdnsConflict": {
+      "banner": "Zweiter OpenNova-Server auf {{ips}} erkannt, der opennovabot.local ankündigt. Mäher können sich (versehentlich) damit statt mit diesem Server ({{self}}) verbinden. Läuft lokal npm run dev oder docker? Beenden Sie das, sonst folgen die Mäher diesem Server."
     }
   },
   "reanchorMsgAnchor": "Ursprung an der Ladestation setzen (pos.json neu schreiben)...",
@@ -957,7 +1247,9 @@
   "events": {
     "title": "Meldungen",
     "empty": "Noch keine Meldungen",
-    "justNow": "gerade eben"
+    "justNow": "gerade eben",
+    "minutesShort": "{{count}} Min.",
+    "hoursShort": "{{count}} Std."
   },
   "returnReason": {
     "why": "Warum steht er an der Station?",
@@ -968,13 +1260,13 @@
     "batteryTitle": "Lädt, Akku schwach",
     "batteryDesc": "Der Mäher lädt und setzt automatisch fort, sobald der Akku voll ist.",
     "timeTitle": "Zeitlimit erreicht",
-    "timeDesc": "Die eingestellte Mähzeit ist erreicht. Du kannst das Mähen fortsetzen.",
+    "timeDesc": "Die eingestellte Mähzeit ist erreicht. Sie können das Mähen fortsetzen.",
     "manualTitle": "Manuell zurückgeschickt",
-    "manualDesc": "Der Mäher wurde von Hand zur Ladestation geschickt. Du kannst das Mähen fortsetzen.",
+    "manualDesc": "Der Mäher wurde von Hand zur Ladestation geschickt. Sie können das Mähen fortsetzen.",
     "finishedTitle": "Mähen abgeschlossen",
     "finishedDesc": "Das Mähen ist fertig und der Mäher steht wieder an der Ladestation.",
     "errorTitle": "Wegen Störung zurückgekehrt",
-    "errorDesc": "Der Mäher ist wegen einer Störung zurückgekehrt. Behebe die Störung und versuche es erneut."
+    "errorDesc": "Der Mäher ist wegen einer Störung zurückgekehrt. Beheben Sie die Störung und versuchen Sie es erneut."
   },
   "diagnose": {
     "title": "Warum kommt er nicht online?",
@@ -1030,5 +1322,296 @@
     "rolled-back": "Zurückgesetzt auf {{version}}",
     "failed": "Update fehlgeschlagen",
     "stalled": "Der Neustart bleibt aus, OTA-Log prüfen"
+  },
+  "autoMap": {
+    "title": "Autonome Kartierung",
+    "modeTest": "Testfahrt (ohne Aufzeichnung)",
+    "modeRecord": "Karte erstellen",
+    "radiusLabel": "Geofence (m)",
+    "start": "Start",
+    "stop": "Stopp",
+    "accept": "Karte übernehmen",
+    "reject": "Verwerfen",
+    "newAttempt": "Neuer Versuch",
+    "retry": "Erneut versuchen",
+    "reviewBanner": "Der Mäher hat eine Karte erstellt. Prüfen Sie sie in der Kartenansicht und übernehmen oder verwerfen Sie sie.",
+    "reviewFailed": "Aktion fehlgeschlagen, bitte erneut versuchen.",
+    "stopFailed": "Stoppen fehlgeschlagen, bitte erneut versuchen.",
+    "done": "Fertig",
+    "rejected": "Verworfen",
+    "rejectedHint": "Sie können die Karte auf dem Mäher über die bestehende Kartenverwaltung löschen. Starten Sie danach einen neuen Versuch.",
+    "phase": {
+      "preflight": "Vorbereitung",
+      "preparing": "Vorbereitung",
+      "searchingBoundary": "Rasenkante suchen",
+      "following": "Kante folgen",
+      "recording": "Aufzeichnung",
+      "finishing": "Karte speichern",
+      "awaitingReview": "Wartet auf Prüfung",
+      "done": "Fertig",
+      "rejected": "Verworfen",
+      "error": "Fehler",
+      "aborted": "Abgebrochen"
+    },
+    "error": {
+      "unknown": "Unbekannter Fehler",
+      "preflightBattery": "Akku muss über 40 % liegen",
+      "preflightRtk": "Warten auf RTK Fixed",
+      "alreadyRunning": "Es läuft bereits eine Sitzung",
+      "geofence": "Geofence überschritten, Fahrt gestoppt",
+      "timeout": "Zeitlimit erreicht",
+      "relayMissing": "lawn_edge_relay läuft nicht auf dem Mäher",
+      "mapExists": "Auf diesem Mäher ist bereits eine Karte vorhanden. Autonome Kartierung funktioniert nur auf einem Mäher ohne Karte.",
+      "userStop": "Über die Stopp-Taste gestoppt",
+      "gpsStale": "GPS-Signal verloren, Fahrt gestoppt",
+      "noGpsFix": "Beim Start kein GPS-Fix erhalten",
+      "costmapParamFailed": "Einstellen der Costmap auf dem Mäher fehlgeschlagen",
+      "scanStartTimeout": "Der Mäher hat nicht auf den Start der Aufzeichnung reagiert",
+      "abortedDuringFinishing": "Beim Speichern der Karte gestoppt",
+      "orphanedByRestart": "Sitzung durch einen Serverneustart verloren",
+      "daemonTimeout": "Der Mäher-Daemon hat nicht reagiert"
+    }
+  },
+  "setup": {
+    "welcome": {
+      "title": "Willkommen bei OpenNova",
+      "subtitle": "Ihr persönlicher Cloud-Ersatz für Ihren Mähroboter",
+      "localTitle": "Vollständig lokal",
+      "localDesc": "Ihr Mäher und Ihre Ladestation verbinden sich mit diesem Container statt mit Servern in China.",
+      "privacyTitle": "Keine Datensammlung",
+      "privacyDesc": "Alle Ihre Daten bleiben in Ihrem eigenen Netzwerk. Kein Abo, keine Cloud-Abhängigkeit.",
+      "appTitle": "Gleiche App",
+      "appDesc": "Nutzen Sie die normale Novabot-App, nur die Verbindung läuft über Ihren Server.",
+      "start": "Los geht's"
+    },
+    "account": {
+      "title": "Konto erstellen",
+      "subtitle": "Erstellen Sie ein Konto, um loszulegen",
+      "intro": "Mit diesem Konto melden Sie sich auch in der Novabot-App an.",
+      "privacy": "Deine Daten bleiben lokal im Docker-Container und werden <b>nirgendwohin gesendet</b>.",
+      "privacyScope": "Dieses Konto dient nur dem Zugriff auf das Dashboard und die Novabot-App in Ihrem lokalen Netzwerk.",
+      "name": "Name",
+      "optional": "optional",
+      "namePlaceholder": "Dein Name",
+      "email": "E-Mail-Adresse",
+      "emailPlaceholder": "name@example.com",
+      "password": "Passwort",
+      "passwordPlaceholder": "Mindestens 6 Zeichen",
+      "confirm": "Passwort bestätigen",
+      "confirmPlaceholder": "Passwort wiederholen",
+      "errRequired": "Geben Sie Ihre E-Mail-Adresse und Ihr Passwort ein.",
+      "errMismatch": "Die Passwörter stimmen nicht überein.",
+      "errTooShort": "Das Passwort muss mindestens 6 Zeichen lang sein.",
+      "errGeneric": "Es ist ein Fehler aufgetreten.",
+      "errUnreachable": "Der Server ist nicht erreichbar.",
+      "creating": "Konto wird erstellt...",
+      "submit": "Konto erstellen",
+      "useInApp": "Melden Sie sich danach mit denselben Daten in der Novabot-App an."
+    },
+    "cert": {
+      "title": "Zertifikat installieren",
+      "detected": "Zertifikat erkannt!",
+      "redirecting": "Sie werden zum Dashboard weitergeleitet...",
+      "intro": "Die Novabot-App nutzt HTTPS. Installieren Sie das lokale CA-Zertifikat, damit die App sich verbinden kann.",
+      "download": "opennova-ca.crt herunterladen",
+      "macTitle": "Mac (inklusive iOS-App auf Apple Silicon)",
+      "mac": {
+        "s1": "Laden Sie opennova-ca.crt herunter und doppelklicken Sie darauf → die Schlüsselbundverwaltung öffnet sich",
+        "s2": "Das Zertifikat liegt jetzt im Schlüsselbund System, ist aber noch NICHT vertrauenswürdig",
+        "s3": "Doppelklicken Sie in der Liste auf \"OpenNova Local CA\"",
+        "s4": "Klappen Sie \"Vertrauen\" auf (klicken Sie auf das Dreieck)",
+        "s5": "Setzen Sie \"Bei Verwendung dieses Zertifikats\" auf \"Immer vertrauen\"",
+        "s6": "Schließen Sie das Fenster → geben Sie Ihr Mac-Passwort ein, wenn danach gefragt wird"
+      },
+      "macCheckAgain": "Klicken Sie unten auf \"Erneut prüfen\"",
+      "iphone": {
+        "s1": "Senden Sie die .crt-Datei an Ihr iPhone (AirDrop oder E-Mail)",
+        "s2": "Öffnen Sie die Datei → \"Profil geladen\" erscheint",
+        "s3": "Gehen Sie zu Einstellungen → Profil geladen → Installieren",
+        "s4": "Gehen Sie zu Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen",
+        "s5": "Aktivieren Sie \"OpenNova Local CA\""
+      },
+      "iphoneStrict": {
+        "s1": "Senden Sie die .crt-Datei an Ihr iPhone (AirDrop oder E-Mail)",
+        "s2": "Tippen Sie auf die Datei → oben erscheint \"Profil geladen\"",
+        "s3": "Gehen Sie zu Einstellungen → oben \"Profil geladen\" → Installieren → Installieren",
+        "s4": "⚠️ PFLICHT-ZUSATZSCHRITT: Gehen Sie zu Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen",
+        "s5": "Aktivieren Sie den Schalter bei \"OpenNova Local CA\" → Fortfahren",
+        "s6": "Ohne diesen Schritt funktioniert das Zertifikat nicht!"
+      },
+      "androidSend": {
+        "s1": "Senden Sie opennova-ca.crt an Ihr Android-Gerät",
+        "s2": "Gehen Sie zu Einstellungen → Sicherheit → Zertifikate installieren",
+        "s3": "Wählen Sie \"CA-Zertifikat\" und dann die Datei"
+      },
+      "androidDownload": {
+        "s1": "Laden Sie opennova-ca.crt auf Ihr Android-Gerät herunter",
+        "s2": "Gehen Sie zu Einstellungen → Sicherheit → Zertifikate installieren",
+        "s3": "Wählen Sie \"CA-Zertifikat\" und dann die Datei"
+      },
+      "autoDetect": "Automatische Erkennung...",
+      "autoDetectHint": "Das Dashboard macht automatisch weiter, sobald das Zertifikat vertrauenswürdig ist.",
+      "checking": "Wird geprüft...",
+      "checkManual": "Manuell prüfen",
+      "checkAgain": "Erneut prüfen",
+      "notTrusted": "Zertifikat noch nicht vertrauenswürdig. Installieren Sie es und versuchen Sie es erneut.",
+      "notTrustedIphone": "Zertifikat noch nicht vertrauenswürdig. Auf dem iPhone: Prüfen Sie, ob Sie den Schalter unter <b>Einstellungen → Allgemein → Info → Zertifikatsvertrauenseinstellungen</b> aktiviert haben.",
+      "scope": "Dieses Zertifikat gilt nur für *.lfibot.com in Ihrem lokalen Netzwerk."
+    },
+    "wizard": {
+      "title": "Einrichtung",
+      "port": "Port {{port}}",
+      "dnsBuiltin": "Integriert (dnsmasq)",
+      "dnsDisabled": "Deaktiviert (eigenes DNS)",
+      "dnsTest": "DNS-Test",
+      "dnsTestHint": "Prüft, ob <c>app.lfibot.com</c> korrekt auf Ihren Server zeigt.",
+      "dnsTestFailed": "DNS-Test fehlgeschlagen",
+      "testing": "Wird getestet...",
+      "dnsOk": "DNS funktioniert!",
+      "dnsFail": "DNS nicht erreichbar",
+      "testDns": "DNS testen",
+      "dnsPointsTo": "app.lfibot.com zeigt auf {{ip}}",
+      "tlsTitle": "TLS-Zertifikat (Novabot-App)",
+      "tlsIntro": "Die Novabot-App nutzt HTTPS. Installieren Sie das OpenNova-CA-Zertifikat einmalig auf Ihrem Gerät, damit die App sich verbinden kann.",
+      "macSimTitle": "Mac (inklusive iOS-Simulator)",
+      "macSim": {
+        "s1": "Laden Sie opennova-ca.crt über die Schaltfläche oben herunter",
+        "s2": "Doppelklicken Sie auf die Datei → die Schlüsselbundverwaltung öffnet sich",
+        "s3": "Wählen Sie den Schlüsselbund \"System\" → hinzufügen",
+        "s4": "Suchen Sie \"OpenNova Local CA\" → Doppelklick → Vertrauen → \"Immer vertrauen\"",
+        "s5": "Der iOS-Simulator übernimmt das Vertrauen automatisch von macOS"
+      },
+      "certScope": "Dieses Zertifikat gilt nur für <c>*.lfibot.com</c> in Ihrem lokalen Netzwerk. Es wird für nichts außerhalb des OpenNova-Servers verwendet.",
+      "dnsSetupTitle": "DNS einrichten",
+      "dnsSetupIntro": "Die Novabot-App und die Geräte müssen <c>*.lfibot.com</c> auf Ihrem lokalen Server erreichen können. Wählen Sie unten Ihre DNS-Lösung.",
+      "adguard": {
+        "s1": "Öffnen Sie AdGuard Home (meist auf Port 3000 Ihres DNS-Servers)",
+        "s2": "Gehen Sie zu Filter → DNS-Umschreibungen",
+        "s3": "Hinzufügen: Domain = *.lfibot.com, Antwort = {{ip}}",
+        "s4": "Klicken Sie auf \"Speichern\""
+      },
+      "pihole": {
+        "s1": "Verbinden Sie sich per SSH mit Ihrem Pi-hole-Server",
+        "s2": "Fügen Sie zu /etc/dnsmasq.d/99-novabot.conf hinzu:",
+        "s4": "Neu starten: pihole restartdns"
+      },
+      "router": {
+        "s1": "Öffnen Sie die Admin-Seite Ihres Routers (meist 192.168.0.1 oder 192.168.1.1)",
+        "s2": "Gehen Sie zu den DHCP-/LAN-Einstellungen",
+        "s3": "Setzen Sie den DNS-Server auf: {{ip}}",
+        "s4": "Speichern Sie und starten Sie Ihren Router neu",
+        "s5": "Das integrierte dnsmasq im Container übernimmt die Umschreibung"
+      },
+      "manualTitle": "Manuell pro Gerät",
+      "manual": {
+        "s1": "iOS: Einstellungen → WLAN → [Netzwerk] → DNS → Manuell → {{ip}}",
+        "s2": "Android: WLAN → [Netzwerk] → Erweitert → DNS → {{ip}}"
+      },
+      "dnsNote": "Dafür muss DISABLE_DNS=false in Ihrer .env stehen",
+      "copy": "Kopieren",
+      "copied": "Kopiert!",
+      "copyLine": "Zeile kopieren"
+    }
+  },
+  "workStatus": {
+    "0": "Inaktiv",
+    "1": "Fehlgeschlagen",
+    "2": "Abgebrochen",
+    "7": "Einmal fehlgeschlagen",
+    "8": "Einmal abgeschlossen",
+    "9": "Abgeschlossen",
+    "10": "Vom Benutzer gestoppt",
+    "11": "Laden durch Benutzer",
+    "12": "Akku schwach",
+    "13": "Fehlerstopp",
+    "14": "Zeitlimit",
+    "15": "Wiederherstellungsfehler",
+    "49": "Wird fortgesetzt",
+    "50": "Start angefordert",
+    "51": "Sensor-Initialisierung",
+    "53": "Karten-Initialisierung",
+    "54": "UTM-Initialisierung",
+    "55": "Lokalisierungs-Initialisierung",
+    "56": "Verlässt die Ladestation",
+    "57": "Systemprüfung",
+    "59": "Initialisierung erfolgreich",
+    "61": "Lokalisierungsfehler",
+    "62": "LoRa-Fehler",
+    "63": "Räder rutschen",
+    "64": "Außerhalb der Karte",
+    "90": "Mäht",
+    "91": "Weicht Hindernis aus",
+    "92": "Fährt",
+    "93": "Kantenschnitt",
+    "94": "Mäht verpasste Stellen nach",
+    "130": "Kartiert Arbeitsbereich",
+    "131": "Kartiert Hindernis",
+    "132": "Kartiert Verbindungsweg",
+    "133": "Kartiert Weg zur Ladestation",
+    "134": "Setzt Position der Ladestation",
+    "135": "Löscht Karte",
+    "136": "Löscht Hindernis",
+    "137": "Löscht Verbindungsweg",
+    "138": "Löscht Karte automatisch",
+    "139": "Automatisches Löschen fehlgeschlagen",
+    "140": "Automatisches Löschen fertig",
+    "141": "Kartiert Arbeitsbereich automatisch",
+    "142": "Kartiert Hindernis automatisch",
+    "143": "Bearbeitet Karte",
+    "169": "Kartierung pausiert",
+    "191": "Kehrt zur Ladestation zurück",
+    "192": "Sucht die Ladestation",
+    "193": "Richtet sich an der Ladestation aus",
+    "unknown": "Status {{n}}"
+  },
+  "tabs": {
+    "records": "Mähvorgänge"
+  },
+  "ota": {
+    "title": "Firmware-Update",
+    "deleteTitle": "Version löschen",
+    "deleteConfirm": "Möchten Sie {{version}} wirklich löschen?",
+    "deleteDetail": "Die Registrierung wird entfernt. Die Firmware-Datei bleibt im Ordner firmware/.",
+    "chargeNote": "Der Download startet erst, wenn der Mäher auf der Ladestation steht.",
+    "unknown": "unbekannt",
+    "betaTitle": "BETA-CUSTOM-FIRMWARE",
+    "betaBackupNote": "Vor dem Flashen wird automatisch ein frisches Backup erstellt.",
+    "betaConfirm": "Ich verstehe, trotzdem flashen",
+    "downgradeTitle": "Downgrade-Warnung",
+    "downgradeMessage": "Sie sind dabei, ein Downgrade durchzuführen:",
+    "flashAnyway": "Trotzdem flashen",
+    "sameTitle": "Gleiche Version",
+    "sameMessage": "{{device}} läuft bereits mit {{version}}.",
+    "sameDetail": "Möchten Sie dieselbe Version erneut flashen?",
+    "reflash": "Erneut flashen",
+    "updateTitle": "Firmware-Update",
+    "updateMessage": "{{device}} aktualisieren:",
+    "flash": "Flashen",
+    "currentVersions": "Aktuelle Versionen",
+    "noDevices": "Keine Geräte verbunden",
+    "filesIn": "Dateien in",
+    "noFilesCopy": "Kopieren Sie",
+    "noFilesTo": "nach",
+    "noFilesReload": "und laden Sie neu.",
+    "registeredVersions": "Registrierte Versionen",
+    "noVersionsCopy": "Keine Versionen gefunden. Kopieren Sie",
+    "noVersionsTo": "in den Firmware-Ordner; Versionen werden automatisch registriert.",
+    "version": "Version",
+    "type": "Typ",
+    "editVersion": "Version bearbeiten",
+    "deleteVersion": "Version löschen",
+    "noChargerConnected": "Keine Ladestation verbunden",
+    "noMowerConnected": "Kein Mäher verbunden",
+    "deviceOffline": "Gerät offline",
+    "alreadyActive": "Bereits aktive Version",
+    "downgradeBang": "Downgrade!",
+    "commandSent": "Befehl gesendet",
+    "sendError": "Fehler beim Senden",
+    "busy": "Läuft…",
+    "current": "aktuell",
+    "downgrade": "Downgrade",
+    "downloading": "Wird heruntergeladen…",
+    "updateDone": "Update abgeschlossen",
+    "updateFailed": "Update fehlgeschlagen"
   }
 }

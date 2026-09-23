@@ -49,7 +49,7 @@ export function PatternPicker({ selected, onSelect }: Props) {
                   ? 'border-purple-500 bg-purple-500/20 ring-1 ring-purple-400'
                   : 'border-gray-700 bg-gray-800/50'}
               `}
-              title={`Pattern ${id}`}
+              title={t('pattern.numbered', { id })}
             >
               <svg viewBox={`0 0 ${THUMB} ${THUMB}`} className="w-full h-full">
                 {paths?.map((d, j) => (

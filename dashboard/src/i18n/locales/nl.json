@@ -6,7 +6,8 @@
     "password": "Wachtwoord",
     "submit": "Inloggen",
     "signingIn": "Bezig met inloggen…",
-    "error": "Ongeldige e-mail of wachtwoord"
+    "error": "Ongeldige e-mail of wachtwoord",
+    "failedStatus": "Inloggen mislukt ({{status}})"
   },
   "update": {
     "title": "Server-update beschikbaar",
@@ -20,7 +21,10 @@
     "dashboard": "Dashboard",
     "server": "Server",
     "serverOffline": "Server offline",
-    "connectionTitle": "Verbinding met OpenNova server"
+    "connectionTitle": "Verbinding met OpenNova server",
+    "serverVersion": "Serverversie",
+    "diagnostics": "Diagnose & logs",
+    "adminPanel": "Beheerpaneel"
   },
   "sidebar": {
     "devices": "Apparaten",
@@ -95,7 +99,8 @@
       "charger": "Charger",
       "rest": "Overig",
       "autoScroll": "Auto-scrollen",
-      "search": "Filter (bijv. start_run, error, LFIN)"
+      "search": "Filter (bijv. start_run, error, LFIN)",
+      "floatingOpen": "Geopend in een zwevend venster."
     }
   },
   "common": {
@@ -110,7 +115,9 @@
     "loading": "Laden…",
     "failed": "Mislukt",
     "failedToLoad": "Laden mislukt",
-    "close": "Sluiten"
+    "close": "Sluiten",
+    "collapse": "Inklappen",
+    "expand": "Uitklappen"
   },
   "pages": {
     "selectMower": "Selecteer een maaier.",
@@ -118,11 +125,30 @@
   },
   "chips": {
     "offline": "offline",
-    "noMowers": "Geen maaiers"
+    "noMowers": "Geen maaiers",
+    "network": "Netwerk",
+    "other": "Overig",
+    "updated": "Bijgewerkt: {{time}}",
+    "noSensorData": "Nog geen sensordata.",
+    "noChargerTelemetry": "Nog geen laadstation-telemetrie.",
+    "sats": "Sats",
+    "temp": "Temp",
+    "notOk": "Niet OK",
+    "noRtk": "Geen RTK",
+    "sensorDetails": "Sensordetails van {{name}}",
+    "rtkFixQuality": "RTK-fixkwaliteit: {{quality}}",
+    "cpuTemp": "CPU-temperatuur: {{temp}}°C",
+    "cpuTempDanger": "GEVAAR: CPU-temperatuur {{temp}}°C (>= {{limit}}°C)",
+    "workStatus": "Werkstatus: {{status}}",
+    "drivingSpeed": "Rijsnelheid: {{speed}} m/s",
+    "waiting": "wachten…"
   },
   "mower": {
     "longPause": {
       "banner": "Maaier staat al {{minutes}} minuten gepauzeerd. Hervatten, stoppen of naar dock?"
+    },
+    "mdnsConflict": {
+      "banner": "Tweede OpenNova-server gedetecteerd op {{ips}} die opennovabot.local adverteert. Maaiers kunnen daar (per ongeluk) op verbinden i.p.v. deze server ({{self}}). Draai je lokaal npm run dev of docker? Stop dat, of de maaiers volgen die server."
     }
   },
   "time": {
@@ -155,7 +181,8 @@
     "mowSpeed": "Maaisnelheid",
     "area": "Oppervlak",
     "error": "Fout",
-    "errorCode": "Code: {{code}}"
+    "errorCode": "Code: {{code}}",
+    "unknownError": "Onbekende fout"
   },
   "log": {
     "title": "MQTT Log",
@@ -164,7 +191,8 @@
     "autoScrollOn": "Auto-scroll AAN",
     "autoScrollOff": "Auto-scroll UIT",
     "waiting": "Wacht op MQTT verkeer...",
-    "noMatches": "Geen resultaten"
+    "noMatches": "Geen resultaten",
+    "waitingBle": "Wachten op BLE-activiteit..."
   },
   "devices": {
     "charger": "Laadstation",
@@ -188,7 +216,15 @@
     "confirmRemove": "{{sn}} verwijderen van dashboard?",
     "loading": "Apparaten laden...",
     "waitingForDevices": "Wacht op apparaten...",
-    "schedule": "Schema"
+    "schedule": "Schema",
+    "unbound": {
+      "title": "Apparaten gevonden, nog niet gekoppeld",
+      "intro": "De onderstaande apparaten zijn verbonden met je MQTT-server maar nog niet aan je account gekoppeld. Geef ze een naam en klik op \"Koppel\" om ze toe te voegen.",
+      "namePlaceholder": "Naam (optioneel)",
+      "bind": "Koppel",
+      "binding": "Koppelen...",
+      "bindFailed": "Koppelen mislukt"
+    }
   },
   "controls": {
     "startMowing": "Start maaien",
@@ -301,7 +337,10 @@
     "heightMismatchBody": "Je hebt {{expected}} cm ingesteld, maar de maaier maait op {{actual}} cm.",
     "continueAnyway": "Toch doorgaan",
     "reanchorRequiredTitle": "Her-ankeren nodig",
-    "reanchorRequiredBody": "De kaart is teruggezet maar het frame is nog niet gecontroleerd. Anker de maaier opnieuw op het laadstation voordat je gaat maaien."
+    "reanchorRequiredBody": "De kaart is teruggezet maar het frame is nog niet gecontroleerd. Anker de maaier opnieuw op het laadstation voordat je gaat maaien.",
+    "dragWindow": "Sleep om te verplaatsen",
+    "edgeCutHint": "Randmaaien volgt de grens van het werkgebied op de gekozen maaihoogte. De kaart staat vast op {{map}}; het vertrek van het laadstation wordt automatisch herkend.",
+    "noOffset": "Geen verschuiving"
   },
   "camera": {
     "title": "Camera",
@@ -314,7 +353,8 @@
     "frontHd": "Front HD",
     "tofGray": "ToF Grijs",
     "tofDepth": "ToF Diepte",
-    "aruco": "ArUco"
+    "aruco": "ArUco",
+    "dragHint": "Sleep om te verplaatsen"
   },
   "map": {
     "workArea": "Werkgebied",
@@ -477,7 +517,10 @@
       "coverageStart": "Maaier start hier",
       "coverageRefresh": "Ververs vanaf maaier",
       "unsupportedFirmware": "Kaartwijzigingen toepassen vereist OpenNova custom firmware. Gebruik op stock firmware “Kaart bewerken” in de app en rij het gewijzigde stuk.",
-      "stockNotice": "Stock firmware: wijzigingen kunnen van hieruit niet naar de maaier. Gebruik “Kaart bewerken” in de OpenNova-app (rij het gewijzigde stuk)."
+      "stockNotice": "Stock firmware: wijzigingen kunnen van hieruit niet naar de maaier. Gebruik “Kaart bewerken” in de OpenNova-app (rij het gewijzigde stuk).",
+      "revertTitle": "Wijzigingen terugdraaien",
+      "discardTitle": "Concepten weggooien",
+      "pasteDismiss": "Klembord leegmaken"
     },
     "missedPoint": "Gemist punt",
     "sourceMower": "gereden door de maaier",
@@ -549,17 +592,70 @@
       "renderFromAerial": "Luchtfoto (satelliet)",
       "renderFromDrone": "Eigen dronefoto",
       "renderMadeFrom": "Huidige render: {{src}}",
-      "renderFit": "Passend maken"
+      "renderFit": "Passend maken",
+      "renderNotMade": "nog niet gemaakt"
     },
     "render": {
       "noKey": "Stel eerst een sleutel in bij Instellingen → 3D-render.",
       "noBase": "Geen luchtfoto beschikbaar voor deze locatie; upload een dronefoto.",
-      "failed": "Render mislukt"
-    }
+      "failed": "Render mislukt",
+      "notMadeTitle": "Nog niet gemaakt",
+      "missingFlat": "Er is nog geen bovenaanzicht-render. Maak er een via \"Nieuwe 3D-render\" met aanzicht Bovenaf.",
+      "missingIso": "Er is nog geen schuine render. Maak er een via \"Nieuwe 3D-render\" met aanzicht Schuin.",
+      "framing": "Aanzicht",
+      "flat": "Bovenaf",
+      "flatDesc": "Beslaat wat je nu op de kaart ziet. Zones, maaier en banen erbovenop.",
+      "iso": "Schuin",
+      "isoDesc": "3D-plaatje van opzij, met maaier en banen erop.",
+      "light": "Licht",
+      "auto": "Auto",
+      "autoHint": "Dag of avond volgens zonsopkomst en -ondergang bij de maaier",
+      "newTitle": "Nieuwe 3D-render",
+      "source": "Gemaakt van",
+      "aerial": "Luchtfoto",
+      "aerialDesc": "Werkt overal, beeld is 1 tot 3 jaar oud.",
+      "drone": "Dronefoto",
+      "droneDesc": "Je eigen foto: scherper en actueel.",
+      "costNote": "Duurt 1 tot 3 minuten en kost een credit of API-tegoed. Er worden een dag- en een avondversie gemaakt.",
+      "replaceNote": "Vervangt de bestaande render in dit aanzicht.",
+      "make": "Render maken"
+    },
+    "dronePlaceFailed": "Plaatsing niet opgeslagen",
+    "droneManageHint": "Uploaden of vervangen: Instellingen › Dronefoto.",
+    "tiles": {
+      "esri": "Esri satelliet (globaal)",
+      "google": "Google satelliet (hi-res, onofficieel)",
+      "pdok": "PDOK luchtfoto (NL, ~8 cm)",
+      "usgs": "USGS luchtfoto (VS)",
+      "street": "Straatkaart (OSM)"
+    },
+    "celebration": {
+      "title": "Maaien voltooid!",
+      "allLanes": "100%: alle banen gemaaid",
+      "area": "{{area}} m² afgerond"
+    },
+    "noGo": {
+      "saved": "No-go zone opgeslagen",
+      "saveFailed": "No-go zone opslaan mislukt",
+      "deleted": "No-go zone verwijderd",
+      "deleteFailed": "Verwijderen mislukt",
+      "firstCorner": "Klik de eerste hoek van de no-go rechthoek",
+      "secondCorner": "Klik de tegenoverliggende hoek om af te ronden"
+    },
+    "lastMowed": "Laatst gemaaid: {{date}}",
+    "navigationTarget": "Navigatiedoel",
+    "mowingComplete": "Maaien voltooid!",
+    "allLanesDone": "alle banen gemaaid",
+    "areaFinished": "{{area}} m² klaar"
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",
-    "terrainStockNotice": "3D-terrein heeft de OpenNova custom firmware op de maaier nodig; op stock firmware wordt niets gescand."
+    "terrainStockNotice": "3D-terrein heeft de OpenNova custom firmware op de maaier nodig; op stock firmware wordt niets gescand.",
+    "betaWarning": {
+      "line1": "Dit is BETA / experimentele custom firmware.",
+      "line2": "De installatie kan de maaier onbruikbaar maken (bricken).",
+      "line3": "Je kunt AL je kaarten verliezen."
+    }
   },
   "terrain": {
     "title": "Terrein",
@@ -604,7 +700,13 @@
     "moveButton": "Verplaatsen",
     "moveActive": "Pijltjestoetsen = verplaatsen (Shift = grote stap, Esc = klaar)",
     "followLabel": "Volg de maaier",
-    "cameraLabel": "Camera"
+    "cameraLabel": "Camera",
+    "loading": "Terrein laden…",
+    "empty": "Nog geen terreindata. De kaart groeit vanzelf tijdens het maaien.",
+    "loadFailed": "Terrein laden mislukt",
+    "legendTitle": "Objecten",
+    "groupObstacle": "Obstakel",
+    "groupObject": "Object"
   },
   "schedule": {
     "title": "Maaischema's",
@@ -685,6 +787,15 @@
       "skipped": "niet gestart",
       "failed": "start mislukt",
       "missed": "gemist"
+    },
+    "cuttingHeightDown": "Maaihoogte verlagen",
+    "cuttingHeightUp": "Maaihoogte verhogen",
+    "pathDirectionDown": "Richting omlaag draaien",
+    "pathDirectionUp": "Richting omhoog draaien",
+    "timeWheel": {
+      "hour": "Uur",
+      "minute": "Minuut",
+      "period": "AM of PM"
     }
   },
   "rain": {
@@ -694,7 +805,9 @@
     "warningTitle": "Regen voorspeld",
     "warningDesc": "Regen rond {{time}} ({{mm}} mm, {{prob}}%). Toch maaien?",
     "ignoreSession": "Negeer regen deze sessie",
-    "ignoreSessionHint": "De maaier pauzeert dan niet automatisch bij regen tot deze sessie eindigt."
+    "ignoreSessionHint": "De maaier pauzeert dan niet automatisch bij regen tot deze sessie eindigt.",
+    "badge": "Regen",
+    "badgePaused": "Gepauzeerd (regen)"
   },
   "autoMap": {
     "title": "Autonoom karteren",
@@ -949,7 +1062,11 @@
       "rebootDesc": "Volledige OS-herstart. Een paar minuten offline — gebruik eerst Herstarten bij vastgelopen toestanden.",
       "rebootConfirm": "De maaier rebooten (volledige OS-herstart)? Hij is een paar minuten offline. Gebruik eerst Herstarten bij vastgelopen toestanden.",
       "rebooting": "Reboot verstuurd — de maaier is een paar minuten offline",
-      "rebootFailed": "Reboot mislukt"
+      "rebootFailed": "Reboot mislukt",
+      "recalibrateTitle": "Laadpositie herkalibreren",
+      "recalibrateForceTitle": "Niet aan het laden",
+      "restartTitle": "Maaiersoftware herstarten",
+      "rebootTitle": "Maaier herstarten"
     },
     "help": {
       "title": "Help",
@@ -990,6 +1107,23 @@
       "clear": "Verwijderen",
       "privacy": "Let op: bij een render gaat een luchtfoto van je tuin naar OpenAI. Doe dit alleen als je dat goed vindt.",
       "credits": "{{n}} renders over"
+    },
+    "on": "Aan",
+    "timezoneSaveFailed": "Tijdzone opslaan mislukt",
+    "pinQueryFailed": "PIN opvragen mislukt",
+    "pinSetFailed": "PIN instellen mislukt",
+    "pinVerifyFailed": "PIN verifiëren mislukt",
+    "pinSendFailed": "Versturen mislukt",
+    "pinSendRaw": "Ruw type versturen",
+    "drone": {
+      "title": "Dronefoto",
+      "help": "Een eigen foto recht van boven, onder de kaart: scherper dan de luchtfoto, handig om zones op te tekenen en als bron voor de 3D-render. Plaatsen en tonen doe je op de kaart, via Weergave › Dronefoto.",
+      "failed": "Dat lukte niet",
+      "copyTitle": "Dronefoto overnemen",
+      "placed": "Geplaatst op de kaart",
+      "notPlaced": "Nog niet geplaatst: Kaart › Weergave › Dronefoto › Plaatsen",
+      "none": "Nog geen dronefoto voor deze maaier.",
+      "copyFrom": "Overnemen van {{name}}"
     }
   },
   "ai": {
@@ -1043,7 +1177,11 @@
     "height": "{{cm}} cm",
     "status": "Status",
     "date": "Datum",
-    "loadMore": "Meer laden"
+    "loadMore": "Meer laden",
+    "result": {
+      "complete": "Voltooid",
+      "cancelled": "Geannuleerd"
+    }
   },
   "charts": {
     "title": "Signaalgeschiedenis",
@@ -1063,7 +1201,8 @@
     "rotation": "Rotatie",
     "startPattern": "Start patroon",
     "patternMode": "Patroon",
-    "mapMode": "Kaartgebied"
+    "mapMode": "Kaartgebied",
+    "numbered": "Patroon {{id}}"
   },
   "ble": {
     "addDevice": "Apparaat toevoegen",
@@ -1081,7 +1220,8 @@
     "manualEntry": "MAC handmatig invoeren",
     "scanFailed": "BLE scan mislukt",
     "tryAgain": "Opnieuw proberen",
-    "close": "Sluiten"
+    "close": "Sluiten",
+    "registerFailed": "Registratie mislukt"
   },
   "mobile": {
     "activity": {
@@ -1113,7 +1253,20 @@
     "startMowing": "Start maaien",
     "starting": "Starten...",
     "sessionEnds": "Maaisessie eindigt om",
-    "mapObjects": "Kaartobjecten"
+    "mapObjects": "Kaartobjecten",
+    "demoMode": "Demomodus",
+    "demoModeOn": "Demomodus AAN",
+    "demoModeOff": "Demomodus UIT",
+    "demoModeToggleFailed": "Demomodus omschakelen mislukt",
+    "demoBanner": "DEMOMODUS: commando's worden gesimuleerd",
+    "debugMode": "Debugmodus",
+    "debugBattery": "Batterij:",
+    "actionFailed": "{{label}} mislukt",
+    "novabotMower": "Novabot-maaier",
+    "defaultMowerName": "OpenNova-maaier",
+    "mowerImageAlt": "Maaier",
+    "mowerCamera": "Maaiercamera",
+    "toggleTheme": "Thema wisselen"
   },
   "reanchorMsgAnchor": "Dockpositie opslaan...",
   "reanchorMsgCheck": "Controle: maaier op de dock en RTK Fixed?",
@@ -1143,7 +1296,9 @@
   "events": {
     "title": "Meldingen",
     "empty": "Nog geen meldingen",
-    "justNow": "zojuist"
+    "justNow": "zojuist",
+    "minutesShort": "{{count}} min",
+    "hoursShort": "{{count}} u"
   },
   "returnReason": {
     "why": "Waarom staat hij op het dock?",
@@ -1216,5 +1371,247 @@
     "rolled-back": "Teruggezet naar {{version}}",
     "failed": "Update mislukt",
     "stalled": "De herstart komt niet, controleer het OTA-log"
+  },
+  "setup": {
+    "welcome": {
+      "title": "Welkom bij OpenNova",
+      "subtitle": "Je persoonlijke cloudvervanging voor je robotmaaier",
+      "localTitle": "Volledig lokaal",
+      "localDesc": "Je maaier en laadstation verbinden met deze container in plaats van servers in China.",
+      "privacyTitle": "Geen dataverzameling",
+      "privacyDesc": "Al je gegevens blijven op je eigen netwerk. Geen abonnement, geen cloud afhankelijkheid.",
+      "appTitle": "Zelfde app",
+      "appDesc": "Gebruik de gewone Novabot app, alleen de verbinding gaat via jouw server.",
+      "start": "Aan de slag"
+    },
+    "account": {
+      "title": "Account aanmaken",
+      "subtitle": "Maak een account aan om te beginnen",
+      "intro": "Dit account gebruik je ook om in te loggen in de Novabot app.",
+      "privacy": "Je gegevens blijven lokaal in de Docker container en worden <b>nergens naartoe gestuurd</b>.",
+      "privacyScope": "Dit account is alleen voor toegang tot het dashboard en de Novabot app op je lokale netwerk.",
+      "name": "Naam",
+      "optional": "optioneel",
+      "namePlaceholder": "Jouw naam",
+      "email": "E-mailadres",
+      "emailPlaceholder": "jij@example.com",
+      "password": "Wachtwoord",
+      "passwordPlaceholder": "Minimaal 6 tekens",
+      "confirm": "Wachtwoord bevestigen",
+      "confirmPlaceholder": "Herhaal wachtwoord",
+      "errRequired": "Vul je e-mailadres en wachtwoord in.",
+      "errMismatch": "Wachtwoorden komen niet overeen.",
+      "errTooShort": "Wachtwoord moet minimaal 6 tekens bevatten.",
+      "errGeneric": "Er is een fout opgetreden.",
+      "errUnreachable": "Kan de server niet bereiken.",
+      "creating": "Account aanmaken...",
+      "submit": "Account aanmaken",
+      "useInApp": "Gebruik daarna dezelfde gegevens in de Novabot app om in te loggen."
+    },
+    "cert": {
+      "title": "Certificaat installeren",
+      "detected": "Certificaat gedetecteerd!",
+      "redirecting": "Je wordt doorgestuurd naar het dashboard...",
+      "intro": "De Novabot app gebruikt HTTPS. Installeer het lokale CA-certificaat zodat de app kan verbinden.",
+      "download": "Download opennova-ca.crt",
+      "macTitle": "Mac (inclusief iOS app op Apple Silicon)",
+      "mac": {
+        "s1": "Download opennova-ca.crt en dubbelklik → Keychain Access opent",
+        "s2": "Het cert staat nu in de System keychain maar is nog NIET vertrouwd",
+        "s3": "Dubbelklik op \"OpenNova Local CA\" in de lijst",
+        "s4": "Klap \"Trust\" open (klik op het driehoekje)",
+        "s5": "Zet \"When using this certificate\" op \"Always Trust\"",
+        "s6": "Sluit het venster → voer je Mac-wachtwoord in als gevraagd"
+      },
+      "macCheckAgain": "Klik hieronder op \"Controleer opnieuw\"",
+      "iphone": {
+        "s1": "Stuur het .crt bestand naar je iPhone (AirDrop of mail)",
+        "s2": "Open het bestand → \"Profiel gedownload\" verschijnt",
+        "s3": "Ga naar Instellingen → Profiel gedownload → Installeer",
+        "s4": "Ga naar Instellingen → Algemeen → Info → Vertrouwde certificaten",
+        "s5": "Zet \"OpenNova Local CA\" aan"
+      },
+      "iphoneStrict": {
+        "s1": "Stuur het .crt bestand naar je iPhone (AirDrop of mail)",
+        "s2": "Tik op het bestand → \"Profiel gedownload\" verschijnt bovenaan",
+        "s3": "Ga naar Instellingen → bovenaan \"Profiel gedownload\" → Installeer → Installeer",
+        "s4": "⚠️ VERPLICHTE EXTRA STAP: Ga naar Instellingen → Algemeen → Info → Certificaatvertrouwen",
+        "s5": "Zet de schakelaar bij \"OpenNova Local CA\" aan → Doorgaan",
+        "s6": "Zonder deze stap werkt het certificaat niet!"
+      },
+      "androidSend": {
+        "s1": "Stuur opennova-ca.crt naar je Android toestel",
+        "s2": "Ga naar Instellingen → Beveiliging → Certificaten installeren",
+        "s3": "Kies \"CA-certificaat\" en selecteer het bestand"
+      },
+      "androidDownload": {
+        "s1": "Download opennova-ca.crt op je Android toestel",
+        "s2": "Ga naar Instellingen → Beveiliging → Certificaten installeren",
+        "s3": "Kies \"CA-certificaat\" en selecteer het bestand"
+      },
+      "autoDetect": "Automatisch detecteren...",
+      "autoDetectHint": "Het dashboard gaat vanzelf verder zodra het certificaat vertrouwd is.",
+      "checking": "Controleren...",
+      "checkManual": "Controleer handmatig",
+      "checkAgain": "Controleer opnieuw",
+      "notTrusted": "Certificaat nog niet vertrouwd. Installeer het en probeer opnieuw.",
+      "notTrustedIphone": "Certificaat nog niet vertrouwd. Op iPhone: controleer of je de schakelaar bij <b>Instellingen → Algemeen → Info → Certificaatvertrouwen</b> hebt aangezet.",
+      "scope": "Dit certificaat is alleen geldig voor *.lfibot.com op je lokale netwerk."
+    },
+    "wizard": {
+      "title": "Setup",
+      "port": "poort {{port}}",
+      "dnsBuiltin": "Ingebouwd (dnsmasq)",
+      "dnsDisabled": "Uitgeschakeld (eigen DNS)",
+      "dnsTest": "DNS-test",
+      "dnsTestHint": "Test of <c>app.lfibot.com</c> correct naar je server verwijst.",
+      "dnsTestFailed": "DNS-test mislukt",
+      "testing": "Testen...",
+      "dnsOk": "DNS werkt!",
+      "dnsFail": "DNS niet bereikbaar",
+      "testDns": "Test DNS",
+      "dnsPointsTo": "app.lfibot.com verwijst naar {{ip}}",
+      "tlsTitle": "TLS-certificaat (Novabot App)",
+      "tlsIntro": "De Novabot app gebruikt HTTPS. Installeer het OpenNova CA-certificaat eenmalig op je apparaat zodat de app kan verbinden.",
+      "macSimTitle": "Mac (inclusief iOS Simulator)",
+      "macSim": {
+        "s1": "Download opennova-ca.crt via de knop hierboven",
+        "s2": "Dubbelklik op het bestand → Keychain Access opent",
+        "s3": "Kies \"System\" keychain → voeg toe",
+        "s4": "Zoek \"OpenNova Local CA\" → dubbelklik → Trust → \"Always Trust\"",
+        "s5": "iOS Simulator erft automatisch het vertrouwen van macOS"
+      },
+      "certScope": "Dit certificaat is alleen geldig voor <c>*.lfibot.com</c> op je lokale netwerk. Het wordt nergens voor gebruikt buiten de OpenNova server.",
+      "dnsSetupTitle": "DNS instellen",
+      "dnsSetupIntro": "De Novabot app en apparaten moeten <c>*.lfibot.com</c> kunnen bereiken op je lokale server. Kies hieronder je DNS oplossing.",
+      "adguard": {
+        "s1": "Open AdGuard Home (meestal op poort 3000 van je DNS server)",
+        "s2": "Ga naar Filters → DNS Rewrites",
+        "s3": "Voeg toe: domein = *.lfibot.com, antwoord = {{ip}}",
+        "s4": "Klik \"Opslaan\""
+      },
+      "pihole": {
+        "s1": "SSH naar je Pi-hole server",
+        "s2": "Voeg toe aan /etc/dnsmasq.d/99-novabot.conf:",
+        "s4": "Herstart: pihole restartdns"
+      },
+      "router": {
+        "s1": "Open je router admin pagina (meestal 192.168.0.1 of 192.168.1.1)",
+        "s2": "Ga naar DHCP / LAN instellingen",
+        "s3": "Stel de DNS server in op: {{ip}}",
+        "s4": "Sla op en herstart je router",
+        "s5": "De ingebouwde dnsmasq in de container handelt de rewrite af"
+      },
+      "manualTitle": "Handmatig per apparaat",
+      "manual": {
+        "s1": "iOS: Instellingen → WiFi → [netwerk] → DNS → Handmatig → {{ip}}",
+        "s2": "Android: WiFi → [netwerk] → Geavanceerd → DNS → {{ip}}"
+      },
+      "dnsNote": "Hiervoor moet DISABLE_DNS=false staan in je .env",
+      "copy": "Kopieer",
+      "copied": "Gekopieerd!",
+      "copyLine": "Kopieer regel"
+    }
+  },
+  "workStatus": {
+    "0": "Inactief",
+    "1": "Mislukt",
+    "2": "Geannuleerd",
+    "7": "Eenmaal mislukt",
+    "8": "Eenmaal voltooid",
+    "9": "Voltooid",
+    "10": "Gestopt door gebruiker",
+    "11": "Laden door gebruiker",
+    "12": "Accu bijna leeg",
+    "13": "Gestopt door fout",
+    "14": "Tijdslimiet",
+    "15": "Herstelfout",
+    "49": "Hervatten",
+    "50": "Start aangevraagd",
+    "51": "Sensoren initialiseren",
+    "53": "Kaart initialiseren",
+    "54": "UTM initialiseren",
+    "55": "Lokalisatie initialiseren",
+    "56": "Dock verlaten",
+    "57": "Systeemcontrole",
+    "59": "Initialisatie gelukt",
+    "61": "Lokalisatiefout",
+    "62": "LoRa-fout",
+    "63": "Wielen slippen",
+    "64": "Buiten de kaart",
+    "90": "Maaien",
+    "91": "Obstakel ontwijken",
+    "92": "Rijden",
+    "93": "Randen maaien",
+    "94": "Gemiste stukken opnieuw maaien",
+    "130": "Werkgebied in kaart brengen",
+    "131": "Obstakel in kaart brengen",
+    "132": "Pad in kaart brengen",
+    "133": "Pad naar dock in kaart brengen",
+    "134": "Dockpositie instellen",
+    "135": "Kaart verwijderen",
+    "136": "Obstakel verwijderen",
+    "137": "Pad verwijderen",
+    "138": "Kaart automatisch wissen",
+    "139": "Automatisch wissen mislukt",
+    "140": "Automatisch wissen klaar",
+    "141": "Werkgebied automatisch in kaart brengen",
+    "142": "Obstakel automatisch in kaart brengen",
+    "143": "Kaart bewerken",
+    "169": "In kaart brengen gepauzeerd",
+    "191": "Terug naar dock",
+    "192": "Dock zoeken",
+    "193": "Uitlijnen op dock",
+    "unknown": "Status {{n}}"
+  },
+  "tabs": {
+    "records": "Maaibeurten"
+  },
+  "ota": {
+    "title": "Firmware-update",
+    "deleteTitle": "Versie verwijderen",
+    "deleteConfirm": "Weet je zeker dat je {{version}} wilt verwijderen?",
+    "deleteDetail": "De registratie wordt verwijderd. Het firmware bestand blijft in de firmware/ map staan.",
+    "chargeNote": "De download start pas als de maaier op het laadstation staat.",
+    "unknown": "onbekend",
+    "betaTitle": "BETA CUSTOM FIRMWARE",
+    "betaBackupNote": "Er wordt automatisch een verse backup gemaakt voordat we flashen.",
+    "betaConfirm": "Ik begrijp het, flash toch",
+    "downgradeTitle": "Downgrade waarschuwing",
+    "downgradeMessage": "Je staat op het punt om te downgraden:",
+    "flashAnyway": "Toch flashen",
+    "sameTitle": "Zelfde versie",
+    "sameMessage": "{{device}} draait al {{version}}.",
+    "sameDetail": "Wil je dezelfde versie opnieuw flashen?",
+    "reflash": "Opnieuw flashen",
+    "updateTitle": "Firmware-update",
+    "updateMessage": "{{device}} updaten:",
+    "flash": "Flashen",
+    "currentVersions": "Huidige versies",
+    "noDevices": "Geen apparaten verbonden",
+    "filesIn": "Bestanden in",
+    "noFilesCopy": "Kopieer",
+    "noFilesTo": "naar",
+    "noFilesReload": "en herlaad.",
+    "registeredVersions": "Geregistreerde versies",
+    "noVersionsCopy": "Geen versies gevonden. Kopieer",
+    "noVersionsTo": "naar de firmware map, versies worden automatisch geregistreerd.",
+    "version": "Versie",
+    "type": "Type",
+    "editVersion": "Bewerk versie",
+    "deleteVersion": "Verwijder versie",
+    "noChargerConnected": "Geen laadstation verbonden",
+    "noMowerConnected": "Geen maaier verbonden",
+    "deviceOffline": "Apparaat offline",
+    "alreadyActive": "Al actieve versie",
+    "downgradeBang": "Downgrade!",
+    "commandSent": "Commando verstuurd",
+    "sendError": "Fout bij versturen",
+    "busy": "Bezig…",
+    "current": "huidig",
+    "downgrade": "downgrade",
+    "downloading": "Downloaden…",
+    "updateDone": "Update voltooid",
+    "updateFailed": "Update mislukt"
   }
 }

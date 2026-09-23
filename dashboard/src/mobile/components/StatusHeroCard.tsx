@@ -93,7 +93,7 @@ export function StatusHeroCard({ mower }: Props) {
       <div className="flex items-center gap-2 mb-5">
         <span className={`w-2 h-2 rounded-full ${mower.online ? 'bg-emerald-400' : 'bg-gray-300 dark:bg-gray-600'}`} />
         <h1 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          {mower.nickname || 'OpenNova Mower'}
+          {mower.nickname || t('mobile.defaultMowerName')}
         </h1>
       </div>
 
@@ -106,7 +106,7 @@ export function StatusHeroCard({ mower }: Props) {
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <img
             src={mower.online ? '/mower/novabot.png' : '/mower/mower_offline.png'}
-            alt="Mower"
+            alt={t('mobile.mowerImageAlt')}
             className="w-16 h-16 object-contain mb-0.5"
           />
           <div className="flex items-baseline gap-0.5">

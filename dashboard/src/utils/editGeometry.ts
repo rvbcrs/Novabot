@@ -147,52 +147,6 @@ export function maxDisplacement(edited: XY[], original: XY[]): number {
   return worst;
 }
 
-export interface MapSetInput {
-  work: { canonical: string; points: XY[] }[];
-  obstacles: { canonical: string; parentMap: string; points: XY[] }[];
-}
-export type ValidationCode = 'too_few_points' | 'self_intersect' | 'too_small' | 'outside_work' | 'unknown_parent' | 'large_displacement';
-export interface ValidationIssue { canonical: string; code: ValidationCode; message: string }
-export interface ValidationResult { ok: boolean; errors: ValidationIssue[]; warnings: ValidationIssue[] }
-
-export const MIN_OBSTACLE_AREA_M2 = 0.05; // kleine obstakels (paaltje/sproeier, ~0.2 m2) zijn legitiem
-export const MIN_WORK_AREA_M2 = 5;
-export const DISPLACEMENT_WARN_M = 1.0;
-
-/**
- * Valideer de volledige (merged) set. `originals` = canonical → originele punten
- * (alleen voor displacement-warning; lege Map = geen warning-check).
- */
-export function validateMapSet(input: MapSetInput, originals: Map<string, XY[]>, editedCanonicals?: Set<string>): ValidationResult {
-  const errors: ValidationIssue[] = [];
-  const warnings: ValidationIssue[] = [];
-  const isEdited = (canonical: string) => !editedCanonicals || editedCanonicals.has(canonical);
-  const checkCommon = (canonical: string, pts: XY[], minArea: number) => {
-    if (pts.length < 3) { errors.push({ canonical, code: 'too_few_points', message: 'Minimaal 3 punten nodig' }); return false; }
-    if (selfIntersects(pts)) { errors.push({ canonical, code: 'self_intersect', message: 'Lijn kruist zichzelf' }); return false; }
-    if (polygonArea(pts) < minArea) { errors.push({ canonical, code: 'too_small', message: `Oppervlak kleiner dan ${minArea} m²` }); return false; }
-    const orig = originals.get(canonical);
-    if (orig && maxDisplacement(pts, orig) > DISPLACEMENT_WARN_M) {
-      warnings.push({ canonical, code: 'large_displacement', message: `Verschuiving groter dan ${DISPLACEMENT_WARN_M} m — buiten ooit-gescand gebied is nav-gedrag onbewezen` });
-    }
-    return true;
-  };
-  for (const w of input.work) {
-    if (isEdited(w.canonical)) checkCommon(w.canonical, w.points, MIN_WORK_AREA_M2);
-  }
-  for (const o of input.obstacles) {
-    if (!isEdited(o.canonical)) continue;
-    if (!checkCommon(o.canonical, o.points, MIN_OBSTACLE_AREA_M2)) continue;
-    const parent = input.work.find(w => w.canonical === o.parentMap);
-    if (parent === undefined) {
-      errors.push({ canonical: o.canonical, code: 'unknown_parent', message: `Onbekende werkkaart ${o.parentMap}` });
-    } else if (!polygonContains(parent.points, o.points)) {
-      errors.push({ canonical: o.canonical, code: 'outside_work', message: `Obstacle steekt buiten ${o.parentMap}` });
-    }
-  }
-  return { ok: errors.length === 0, errors, warnings };
-}
-
 /**
  * Duw/trek-brush: verplaats punten binnen `radius` van `anchor` met `delta`,
  * cosinus-falloff naar de rand. Densify VOORAF (clients doen densifyPolygon

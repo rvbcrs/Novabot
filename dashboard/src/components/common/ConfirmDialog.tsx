@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   open: boolean;
@@ -15,6 +16,7 @@ interface Props {
 export function ConfirmDialog({
   open, title, message, confirmLabel = 'OK', cancelLabel, variant = 'danger', onConfirm, onCancel,
 }: Props) {
+  const { t } = useTranslation();
   const confirmRef = useRef<HTMLButtonElement>(null);
 
   // Focus confirm button when dialog opens
@@ -67,7 +69,7 @@ export function ConfirmDialog({
             onClick={onCancel}
             className="flex-1 py-2.5 bg-white/10 hover:bg-white/15 text-gray-300 text-sm font-medium rounded-xl transition-colors"
           >
-            {cancelLabel || 'Cancel'}
+            {cancelLabel || t('common.cancel')}
           </button>
           <button
             ref={confirmRef}

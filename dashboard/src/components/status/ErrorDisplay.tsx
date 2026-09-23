@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 // Codes the stock Novabot app NEVER surfaces and we hide here too. They
 // fire often, self-recover within seconds, and showing a full-screen
@@ -35,6 +36,7 @@ interface Props {
  * Hidden transient codes (LoRa flicker, perception/data loss, PIN) skipped.
  */
 export function ErrorDisplay({ errorCode, errorMsg, errorStatus }: Props) {
+  const { t } = useTranslation();
   const [activeError, setActiveError] = useState<{ code: string; message: string } | null>(null);
   const lastErrorRef = useRef<string | null>(null);
 
@@ -62,7 +64,7 @@ export function ErrorDisplay({ errorCode, errorMsg, errorStatus }: Props) {
     lastErrorRef.current = errorKey;
 
     const code = rawCode || rawStatus || '?';
-    const message = errorMsg || errorStatus || 'Unknown error';
+    const message = errorMsg || errorStatus || t('status.unknownError');
 
     if (DEFERRED_CODES.has(code)) {
       const timer = setTimeout(() => setActiveError({ code, message }), DEFERRED_DELAY_MS);
@@ -72,7 +74,7 @@ export function ErrorDisplay({ errorCode, errorMsg, errorStatus }: Props) {
     }
 
     setActiveError({ code, message });
-  }, [hasError, isBenign, rawCode, rawStatus, errorCode, errorMsg, errorStatus]);
+  }, [hasError, isBenign, rawCode, rawStatus, errorCode, errorMsg, errorStatus, t]);
 
   if (!activeError) return null;
 
@@ -103,7 +105,7 @@ export function ErrorDisplay({ errorCode, errorMsg, errorStatus }: Props) {
 
         {/* Error code */}
         <p className="text-center text-xs font-mono text-red-400/70 mb-1">
-          Error {activeError.code}
+          {t('status.error')} {activeError.code}
         </p>
 
         {/* Error message */}

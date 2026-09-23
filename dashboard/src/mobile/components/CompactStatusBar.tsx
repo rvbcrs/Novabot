@@ -77,7 +77,7 @@ export function CompactStatusBar({ mower }: Props) {
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-2 h-2 rounded-full flex-shrink-0 ${mower.online ? 'bg-emerald-400' : 'bg-gray-300 dark:bg-gray-600'}`} />
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
-            {mower.nickname || 'OpenNova Mower'}
+            {mower.nickname || t('mobile.defaultMowerName')}
           </span>
         </div>
 

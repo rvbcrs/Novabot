@@ -13,6 +13,7 @@ import {
   WifiOff, Satellite, Map as MapIcon, Cpu, Play, XCircle, type LucideIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import type { MowerEvent, MowerEventType } from '../../types';
 import { fetchMowerEvents } from '../../api/client';
 
@@ -37,13 +38,13 @@ const META: Record<MowerEventType, { icon: LucideIcon; tone: string }> = {
   firmware_required: { icon: ShieldAlert, tone: 'text-red-400' },
 };
 
-function relative(ts: number, t: (k: string, d: string) => string): string {
+function relative(ts: number, t: TFunction): string {
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return t('events.justNow', 'zojuist');
+  if (s < 60) return t('events.justNow', 'just now');
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min`;
+  if (m < 60) return t('events.minutesShort', { count: m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} u`;
+  if (h < 24) return t('events.hoursShort', { count: h });
   return new Date(ts).toLocaleDateString();
 }
 
@@ -85,8 +86,8 @@ export function NotificationBell({ sn, events, onBacklog }: Props) {
     <div className="relative">
       <button
         onClick={() => { setOpen(o => { if (!o) markSeen(); return !o; }); }}
-        title={t('events.title', 'Meldingen')}
-        aria-label={t('events.title', 'Meldingen')}
+        title={t('events.title', 'Notifications')}
+        aria-label={t('events.title', 'Notifications')}
         className="relative p-1.5 rounded-lg text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors"
       >
         <Bell className="w-4 h-4" />
@@ -106,11 +107,11 @@ export function NotificationBell({ sn, events, onBacklog }: Props) {
           <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto z-[2100]
                           rounded-xl bg-zinc-900 border border-zinc-700 shadow-2xl">
             <div className="px-3 py-2 border-b border-zinc-800 text-xs font-semibold text-zinc-400">
-              {t('events.title', 'Meldingen')}
+              {t('events.title', 'Notifications')}
             </div>
             {visible.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-zinc-500">
-                {t('events.empty', 'Nog geen meldingen')}
+                {t('events.empty', 'No notifications yet')}
               </div>
             ) : (
               visible.map(e => {

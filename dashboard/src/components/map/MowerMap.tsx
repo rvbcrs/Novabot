@@ -643,7 +643,8 @@ function UserInteractionTracker({ onInteract }: { onInteract: () => void }) {
 // = [zuid, west, noord, oost] (lat/lng); zonder bounds = globaal. Nieuwe landen
 // toevoegen = één entry erbij met de juiste WMTS-URL + bounds.
 interface TileLayerDef {
-  label: string;
+  /** i18n key for the layer name shown in the base-layer menu. */
+  labelKey: string;
   url: string;
   attribution: string;
   maxNativeZoom: number;
@@ -653,7 +654,7 @@ interface TileLayerDef {
 
 const TILE_LAYERS: Record<string, TileLayerDef> = {
   satellite: {
-    label: 'Esri satelliet (globaal)',
+    labelKey: 'map.tiles.esri',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
     maxNativeZoom: 19,
@@ -662,7 +663,7 @@ const TILE_LAYERS: Record<string, TileLayerDef> = {
   // Google satelliet — vaak hoge resolutie, maar ONOFFICIËLE tile-URL (Google
   // Maps ToS); kan zonder waarschuwing breken. Globaal, bewust niet default.
   google: {
-    label: 'Google satelliet (hi-res, onofficieel)',
+    labelKey: 'map.tiles.google',
     url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
     attribution: 'Imagery &copy; Google',
     maxNativeZoom: 20,
@@ -671,7 +672,7 @@ const TILE_LAYERS: Record<string, TileLayerDef> = {
   // ── Regionale hi-res (officiële open data) ──
   // PDOK Actueel orthoHR — officiële NL luchtfoto, ~8 cm. Alleen Nederland.
   pdok: {
-    label: 'PDOK luchtfoto (NL, ~8 cm)',
+    labelKey: 'map.tiles.pdok',
     url: 'https://service.pdok.nl/hwh/luchtfotorgb/wmts/v1_0/Actueel_orthoHR/EPSG:3857/{z}/{x}/{y}.jpeg',
     attribution: '&copy; <a href="https://www.pdok.nl">PDOK</a> / Beeldmateriaal Nederland',
     maxNativeZoom: 21,
@@ -680,7 +681,7 @@ const TILE_LAYERS: Record<string, TileLayerDef> = {
   },
   // USGS National Map imagery — officiële VS luchtfoto (NAIP), hi-res. Alleen VS.
   usgs: {
-    label: 'USGS imagery (VS)',
+    labelKey: 'map.tiles.usgs',
     url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Imagery &copy; USGS / The National Map',
     maxNativeZoom: 20,
@@ -688,7 +689,7 @@ const TILE_LAYERS: Record<string, TileLayerDef> = {
     bounds: [24.5, -125, 49.5, -66.9],
   },
   street: {
-    label: 'Straatkaart (OSM)',
+    labelKey: 'map.tiles.street',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     maxNativeZoom: 19,
@@ -806,7 +807,7 @@ function buildRenderOverlay(
   const m = Number.isFinite(mx) && Number.isFinite(my) && (mx !== 0 || my !== 0) ? { x: mx, y: my }
     : Number.isFinite(la) && Number.isFinite(lo) && la !== 0 ? toLocal(la, lo) : null;
   const theta = parseFloat(a.heading ?? '') || 0;   // ENU radians, 0 = east
-  const mower = m ? (() => { const [x, y] = px(m); return { x, y, nose: px({ x: m.x + 0.9 * Math.cos(theta), y: m.y + 0.9 * Math.sin(theta) }) }; })() : null;
+  const mower = m ? (() => { const [x, y] = px(m); return { x, y, nose: px({ x: m.x + 0.9 * Math.cos(theta), y: m.y + 0.9 * Math.sin(theta) }), heading: theta }; })() : null;
 
   const trail: Array<Array<[number, number]>> = [];
   let cur: Array<[number, number]> = []; let prev: { x: number; y: number } | null = null;
@@ -1037,6 +1038,7 @@ function ConfettiPiece({ color, left, delay, duration, size, wobble }: {
 }
 
 function CelebrationOverlay({ area, onDismiss }: { area: number; onDismiss: () => void }) {
+  const { t } = useTranslation();
   const pieces = useMemo(() =>
     Array.from({ length: 60 }, (_, i) => ({
       id: i,
@@ -1078,20 +1080,20 @@ function CelebrationOverlay({ area, onDismiss }: { area: number; onDismiss: () =
           <div className="text-5xl mb-3" style={{ animation: 'celebration-pulse 1.5s ease-in-out infinite' }}>
             🎉
           </div>
-          <h3 className="text-lg font-bold text-emerald-400 mb-1">Maaien voltooid!</h3>
+          <h3 className="text-lg font-bold text-emerald-400 mb-1">{t('map.celebration.title')}</h3>
           <p className="text-sm text-gray-400 mb-1">
-            100% — Alle banen gemaaid
+            {t('map.celebration.allLanes')}
           </p>
           {area > 0 && (
             <p className="text-xs text-gray-500 mb-4">
-              {area.toFixed(0)} m&sup2; afgerond
+              {t('map.celebration.area', { area: area.toFixed(0) })}
             </p>
           )}
           <button
             onClick={onDismiss}
             className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors shadow-lg shadow-emerald-900/40"
           >
-            Sluiten
+            {t('common.close')}
           </button>
         </div>
       </div>
@@ -3357,19 +3359,19 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         lng2: lng,
       }).then(() => {
         fetchVirtualWalls(sn).then(setWalls).catch(() => {});
-        toast(`✓ No-go zone saved`, 'success');
+        toast(`✓ ${t('map.noGo.saved')}`, 'success');
         setWallFirstCorner(null);
         setWallDrawMode(false);
-      }).catch(() => toast(`✗ No-go zone`, 'error'));
+      }).catch(() => toast(`✗ ${t('map.noGo.saveFailed')}`, 'error'));
     }
-  }, [sn, wallFirstCorner, toast]);
+  }, [sn, wallFirstCorner, toast, t]);
 
   const handleDeleteWall = useCallback((wallId: string) => {
     deleteVirtualWall(sn, wallId).then(() => {
       setWalls(prev => prev.filter(w => w.wall_id !== wallId));
-      toast(`✓ No-go zone deleted`, 'success');
-    }).catch(() => toast(`✗ Delete failed`, 'error'));
-  }, [sn, toast]);
+      toast(`✓ ${t('map.noGo.deleted')}`, 'success');
+    }).catch(() => toast(`✗ ${t('map.noGo.deleteFailed')}`, 'error'));
+  }, [sn, toast, t]);
 
   // Center of all polygon points (used as rotation/scale pivot). Skip
   // any non-finite vertex so a single NaN doesn't propagate into the
@@ -3496,9 +3498,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         </div>
         <div className="flex items-center gap-1 md:gap-3">
           {lastMowedDate && (
-            <span className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded bg-emerald-900/50 text-emerald-400" title={`Laatst gemaaid: ${lastMowedDate}`}>
+            <span className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded bg-emerald-900/50 text-emerald-400" title={t('map.lastMowed', { date: lastMowedDate })}>
               <CheckCircle2 className="w-3 h-3" />
-              <span className="hidden md:inline">Gemaaid</span>
+              <span className="hidden md:inline">{t('map.mowed')}</span>
             </span>
           )}
           {/* View/edit tools moved to the floating tool-rail (over the map). */}
@@ -4102,7 +4104,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             <Marker position={[navigateTarget.lat, navigateTarget.lng]} icon={targetIcon}>
               <Popup>
                 <div className="text-xs">
-                  <div className="font-semibold">Navigation target</div>
+                  <div className="font-semibold">{t('map.navigationTarget')}</div>
                   <div>{navigateTarget.lat.toFixed(6)}, {navigateTarget.lng.toFixed(6)}</div>
                 </div>
               </Popup>
@@ -4151,12 +4153,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               >
                 <Popup>
                   <div className="text-xs">
-                    <div className="font-semibold text-red-600">{w.wall_name || 'No-go zone'}</div>
+                    <div className="font-semibold text-red-600">{w.wall_name || t('map.noGoZone')}</div>
                     <button
                       onClick={() => handleDeleteWall(w.wall_id)}
                       className="mt-1 text-red-500 hover:text-red-400 underline"
                     >
-                      Delete
+                      {t('common.delete')}
                     </button>
                   </div>
                 </Popup>
@@ -4281,9 +4283,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       Not while an angled render replaces the map: no tiles, no choice. */}
                   {!(baseView === 'render' && !renderAsLayer) && (
                   <div className="relative">
-                    <button onClick={() => setRailTileSub(v => !v)} className={railRow(false)} title={TILE_LAYERS[tileLayer].label}>
+                    <button onClick={() => setRailTileSub(v => !v)} className={railRow(false)} title={t(TILE_LAYERS[tileLayer].labelKey)}>
                       <Layers className="w-4 h-4 opacity-70 shrink-0" />
-                      <span className="flex-1 text-left truncate">{cleanTileLabel(TILE_LAYERS[tileLayer].label)}</span>
+                      <span className="flex-1 text-left truncate">{cleanTileLabel(t(TILE_LAYERS[tileLayer].labelKey))}</span>
                       <ChevronRight className={`w-3.5 h-3.5 text-gray-500 transition-transform ${railTileSub ? 'rotate-90' : ''}`} />
                     </button>
                     {railTileSub && (
@@ -4296,8 +4298,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                             chargerGps?.lng ?? (lng ? parseFloat(lng) : null),
                           ))
                           .map((key) => (
-                            <button key={key} onClick={() => { changeTileLayer(key); setRailTileSub(false); }} className={railRow(key === tileLayer)} title={TILE_LAYERS[key].label}>
-                              <Layers className="w-4 h-4 opacity-70" />{cleanTileLabel(TILE_LAYERS[key].label)}
+                            <button key={key} onClick={() => { changeTileLayer(key); setRailTileSub(false); }} className={railRow(key === tileLayer)} title={t(TILE_LAYERS[key].labelKey)}>
+                              <Layers className="w-4 h-4 opacity-70" />{cleanTileLabel(t(TILE_LAYERS[key].labelKey))}
                             </button>
                           ))}
                       </div>
@@ -4859,12 +4861,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-red-700/50 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-56">
             <div className="flex items-center gap-2 mb-2">
               <Fence className="w-4 h-4 text-red-400" />
-              <span className="text-xs font-semibold text-red-400 uppercase tracking-wide">No-go zone</span>
+              <span className="text-xs font-semibold text-red-400 uppercase tracking-wide">{t('map.noGoZone')}</span>
             </div>
             <p className="text-[11px] text-gray-400 mb-2">
               {!wallFirstCorner
-                ? 'Click first corner of the no-go rectangle'
-                : 'Click opposite corner to complete'}
+                ? t('map.noGo.firstCorner')
+                : t('map.noGo.secondCorner')}
             </p>
             <button
               onClick={() => { setWallDrawMode(false); setWallFirstCorner(null); }}

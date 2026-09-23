@@ -73,9 +73,9 @@ export function BleScanner({ open, onClose }: Props) {
       setPhase('done');
     } catch (err) {
       setPhase('error');
-      setError((err as Error).message || 'Registration failed');
+      setError((err as Error).message || t('ble.registerFailed'));
     }
-  }, [sn, mac]);
+  }, [sn, mac, t]);
 
   if (!open) return null;
 

@@ -132,11 +132,11 @@ const NONE_OVERRIDE_VALUE = '__none__';
 // Kleurgroepen voor de legenda — labels per groep uit LABEL_COLORS (Global
 // Constraints): blauw=laadstation, groen=struik, oranje=obstakel,
 // neutraal=alle overige (niet-getagde) objecten.
-const COLOR_GROUPS: Array<{ id: string; label: string; color: string; labels: number[] | null }> = [
-  { id: 'charger', label: 'Laadstation', color: LABEL_COLORS[10], labels: [10] },
-  { id: 'bush', label: 'Struik', color: LABEL_COLORS[8], labels: [8] },
-  { id: 'obstacle', label: 'Obstakel', color: LABEL_COLORS[5], labels: [5, 6] },
-  { id: 'object', label: 'Object', color: LABEL_DEFAULT_COLOR, labels: null },
+const COLOR_GROUPS: Array<{ id: string; labelKey: string; color: string; labels: number[] | null }> = [
+  { id: 'charger', labelKey: 'terrain.classChargingStation', color: LABEL_COLORS[10], labels: [10] },
+  { id: 'bush', labelKey: 'terrain.classBush', color: LABEL_COLORS[8], labels: [8] },
+  { id: 'obstacle', labelKey: 'terrain.groupObstacle', color: LABEL_COLORS[5], labels: [5, 6] },
+  { id: 'object', labelKey: 'terrain.groupObject', color: LABEL_DEFAULT_COLOR, labels: null },
 ];
 const KNOWN_LABELS = new Set(COLOR_GROUPS.flatMap(g => g.labels ?? []));
 // 'Object' (label 1 e.a.) staat standaard UIT: de firmware-segmentatie
@@ -1308,12 +1308,12 @@ export default function TerrainPage({ sn, sensors }: { sn: string; sensors?: Rec
 
   return (
     <div className="h-full w-full relative">
-      {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center text-gray-400">Terrein laden…</div>}
-      {status === 'empty' && <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-center px-8">Nog geen terreindata — de kaart groeit vanzelf tijdens het maaien.</div>}
-      {status === 'error' && <div className="absolute inset-0 flex items-center justify-center text-red-400">Terrein laden mislukt</div>}
+      {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center text-gray-400">{t('terrain.loading')}</div>}
+      {status === 'empty' && <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-center px-8">{t('terrain.empty')}</div>}
+      {status === 'error' && <div className="absolute inset-0 flex items-center justify-center text-red-400">{t('terrain.loadFailed')}</div>}
       {status === 'ready' && hasObjects && (
         <div className="absolute top-3 right-3 bg-black/60 text-xs text-gray-200 rounded-lg p-3 space-y-1.5 backdrop-blur pointer-events-auto">
-          <div className="font-medium text-gray-300 mb-1">Objecten</div>
+          <div className="font-medium text-gray-300 mb-1">{t('terrain.legendTitle')}</div>
           {COLOR_GROUPS.map(group => (
             <label key={group.id} className="flex items-center gap-2 cursor-pointer select-none">
               <input
@@ -1329,7 +1329,7 @@ export default function TerrainPage({ sn, sensors }: { sn: string; sensors?: Rec
                 }}
               />
               <span className="inline-block w-3 h-3 rounded-sm" style={{ backgroundColor: group.color }} />
-              {group.label}
+              {t(group.labelKey)}
             </label>
           ))}
           <label className="flex items-center gap-2 cursor-pointer select-none">

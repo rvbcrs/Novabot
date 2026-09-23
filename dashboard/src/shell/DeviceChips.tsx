@@ -4,6 +4,7 @@ import {
   Activity, ChevronDown, Gauge, Zap, Radio,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Drawer } from './Drawer';
 import type { DeviceState } from '../types';
 import { fetchLoraStatus, type LoraStatus } from '../api/client';
@@ -58,13 +59,14 @@ function MowerIdentityRow({ online, name, sub }: { online: boolean; name: string
 
 // ── Sensor grouping ──────────────────────────────────────────────────────────
 
+// `label` is an i18n key.
 const GROUPS: Array<{ label: string; test: (key: string) => boolean }> = [
   {
-    label: 'Battery',
+    label: 'sensors.battery',
     test: k => k.startsWith('battery_'),
   },
   {
-    label: 'Localization',
+    label: 'sensors.localization',
     test: k =>
       k.startsWith('gps_') ||
       k.startsWith('rtk') ||
@@ -75,11 +77,11 @@ const GROUPS: Array<{ label: string; test: (key: string) => boolean }> = [
       k === 'altitude',
   },
   {
-    label: 'Network',
+    label: 'chips.network',
     test: k => k.startsWith('wifi_') || k.startsWith('cpu_') || k.startsWith('mqtt_'),
   },
   {
-    label: 'Work',
+    label: 'sensors.work',
     test: k =>
       k.startsWith('work_') ||
       k.startsWith('mowing_') ||
@@ -125,6 +127,7 @@ function TeleCell({
 // ── Sensor detail panel (rendered inside Drawer) ─────────────────────────────
 
 function SensorDetailPanel({ mower, openedAt }: { mower: DeviceState; openedAt: number }) {
+  const { t } = useTranslation();
   const s = mower.sensors;
   const allKeys = Object.keys(s).sort();
 
@@ -137,7 +140,7 @@ function SensorDetailPanel({ mower, openedAt }: { mower: DeviceState; openedAt: 
       .filter(k => group.test(k))
       .map(k => [k, s[k]] as [string, string]);
     if (entries.length > 0) {
-      sections.push({ label: group.label, entries });
+      sections.push({ label: t(group.label), entries });
       entries.forEach(([k]) => used.add(k));
     }
   }
@@ -146,7 +149,7 @@ function SensorDetailPanel({ mower, openedAt }: { mower: DeviceState; openedAt: 
     .filter(k => !used.has(k))
     .map(k => [k, s[k]] as [string, string]);
   if (otherEntries.length > 0) {
-    sections.push({ label: 'Other', entries: otherEntries });
+    sections.push({ label: t('chips.other'), entries: otherEntries });
   }
 
   return (
@@ -158,7 +161,7 @@ function SensorDetailPanel({ mower, openedAt }: { mower: DeviceState; openedAt: 
           <p className="text-[10px] font-mono text-zinc-600">{mower.macAddress}</p>
         )}
         <p className="text-[10px] text-zinc-600">
-          Updated: {new Date(openedAt).toISOString()}
+          {t('chips.updated', { time: new Date(openedAt).toISOString() })}
         </p>
       </div>
 
@@ -182,7 +185,7 @@ function SensorDetailPanel({ mower, openedAt }: { mower: DeviceState; openedAt: 
       ))}
 
       {allKeys.length === 0 && (
-        <p className="text-xs text-zinc-600 italic">No sensor data yet.</p>
+        <p className="text-xs text-zinc-600 italic">{t('chips.noSensorData')}</p>
       )}
     </div>
   );
@@ -224,37 +227,39 @@ function ChipRow({ chips }: { chips: ChipDef[] }) {
   );
 }
 
-function mowerChips(m: DeviceState): ChipDef[] {
+function mowerChips(m: DeviceState, t: TFunction): ChipDef[] {
   const s = m.sensors;
   const out: ChipDef[] = [
-    { icon: Activity, label: 'Status', value: m.online ? 'Online' : 'Offline', tone: m.online ? 'emerald' : 'zinc' },
+    { icon: Activity, label: t('sensors.status'), value: m.online ? t('common.online') : t('common.offline'), tone: m.online ? 'emerald' : 'zinc' },
   ];
   if (s.rtk_fix_quality) {
     const f = s.rtk_fix_quality;
     out.push({ icon: Satellite, label: 'RTK', value: f, tone: f === 'RTK Fixed' ? 'emerald' : f === 'RTK Float' ? 'amber' : 'zinc' });
   }
   const sats = parseInt(s.rtk_sat ?? '', 10);
-  if (isFinite(sats) && sats > 0) out.push({ icon: Satellite, label: 'Sats', value: sats, tone: sats >= 15 ? 'sky' : sats >= 8 ? 'amber' : 'red' });
+  if (isFinite(sats) && sats > 0) out.push({ icon: Satellite, label: t('chips.sats'), value: sats, tone: sats >= 15 ? 'sky' : sats >= 8 ? 'amber' : 'red' });
   const bat = parseInt(s.battery_power ?? s.battery_capacity ?? '', 10);
-  if (isFinite(bat) && bat > 0) out.push({ icon: BatteryMedium, label: 'Battery', value: `${bat}%`, tone: bat >= 20 ? 'emerald' : 'red' });
+  if (isFinite(bat) && bat > 0) out.push({ icon: BatteryMedium, label: t('sensors.battery'), value: `${bat}%`, tone: bat >= 20 ? 'emerald' : 'red' });
+  const wifi = parseInt(s.wifi_rssi ?? '', 10);
+  if (isFinite(wifi) && wifi !== 0) out.push({ icon: Wifi, label: t('sensors.wifi'), value: `${wifi}%`, tone: wifi >= 65 ? 'emerald' : wifi >= 40 ? 'amber' : 'red' });
   const temp = parseInt(s.cpu_temperature ?? '', 10);
-  if (isFinite(temp) && temp > 0) out.push({ icon: Thermometer, label: 'Temp', value: `${temp}°`, tone: temp >= 85 ? 'red' : 'zinc' });
+  if (isFinite(temp) && temp > 0) out.push({ icon: Thermometer, label: t('chips.temp'), value: `${temp}°`, tone: temp >= 85 ? 'red' : 'zinc' });
   return out;
 }
 
-function chargerChips(c: DeviceState): ChipDef[] {
+function chargerChips(c: DeviceState, t: TFunction): ChipDef[] {
   const s = c.sensors;
   const out: ChipDef[] = [];
   if (s.charger_status) {
     const st = s.charger_status;
-    out.push({ icon: Zap, label: 'Charger', value: st, tone: st === 'Operational' ? 'emerald' : st === 'Idle' ? 'amber' : 'zinc' });
+    out.push({ icon: Zap, label: t('devices.charger'), value: st, tone: st === 'Operational' ? 'emerald' : st === 'Idle' ? 'amber' : 'zinc' });
   }
   if (s.rtk_ok != null && s.rtk_ok !== '') {
-    out.push({ icon: Satellite, label: 'RTK', value: s.rtk_ok === '1' ? 'OK' : 'Not OK', tone: s.rtk_ok === '1' ? 'emerald' : 'red' });
+    out.push({ icon: Satellite, label: 'RTK', value: s.rtk_ok === '1' ? 'OK' : t('chips.notOk'), tone: s.rtk_ok === '1' ? 'emerald' : 'red' });
   }
   const sats = parseInt(s.gps_satellites ?? '', 10);
-  if (isFinite(sats)) out.push({ icon: Satellite, label: 'GPS Sat', value: sats, tone: sats >= 15 ? 'sky' : sats >= 8 ? 'amber' : 'red' });
-  if (s.mower_status) out.push({ icon: Radio, label: 'Mower (LoRa)', value: s.mower_status, tone: 'zinc' });
+  if (isFinite(sats)) out.push({ icon: Satellite, label: t('sensors.gpsSat'), value: sats, tone: sats >= 15 ? 'sky' : sats >= 8 ? 'amber' : 'red' });
+  if (s.mower_status) out.push({ icon: Radio, label: t('sensors.mowerLora'), value: s.mower_status, tone: 'zinc' });
   return out;
 }
 
@@ -293,14 +298,14 @@ function SummaryPanel({
   setMode: (m: 'summary' | 'advanced') => void;
 }) {
   const { t } = useTranslation();
-  const chCh = charger ? chargerChips(charger) : [];
+  const chCh = charger ? chargerChips(charger, t) : [];
   return (
     <div className="space-y-4">
       {/* ── MOWER group ── */}
       <div className="space-y-2">
-        <p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-wider">Mower</p>
+        <p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-wider">{t('devices.mower')}</p>
         <DeviceIdentity device={mower} online={mower.online} version={mower.sensors.sw_version} />
-        <ChipRow chips={mowerChips(mower)} />
+        <ChipRow chips={mowerChips(mower, t)} />
 
         {/* Configuration */}
         {lora && (
@@ -334,11 +339,11 @@ function SummaryPanel({
       {/* ── CHARGER group ── */}
       {charger && (
         <div className="space-y-2 pt-3 border-t border-zinc-800">
-          <p className="text-[10px] font-semibold text-amber-400/80 uppercase tracking-wider">Charger</p>
+          <p className="text-[10px] font-semibold text-amber-400/80 uppercase tracking-wider">{t('devices.charger')}</p>
           <DeviceIdentity device={charger} online={charger.online} version={charger.sensors.version} />
           {chCh.length > 0
             ? <ChipRow chips={chCh} />
-            : <p className="text-[10px] text-zinc-600 italic">No charger telemetry yet.</p>}
+            : <p className="text-[10px] text-zinc-600 italic">{t('chips.noChargerTelemetry')}</p>}
         </div>
       )}
 
@@ -494,7 +499,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
   // ── Online chip ─────────────────────────────────────────────────────────────
   const rtkLabel = hasRtkFixQuality
     ? rtkFixQuality!
-    : mowerRtkKnown ? (mowerRtk ? 'RTK' : 'No RTK') : null;
+    : mowerRtkKnown ? (mowerRtk ? 'RTK' : t('chips.noRtk')) : null;
   const rtkColor = hasRtkFixQuality
     ? rtkFixQualityColor
     : (mowerRtk ? '#34d399' : '#6b7280');
@@ -534,14 +539,14 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
     <button
       onClick={openDrawer}
             className="group inline-flex flex-wrap items-stretch min-h-8 max-w-full rounded-xl bg-zinc-900/60 border border-zinc-700/70 hover:border-zinc-600 overflow-hidden transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-            aria-label={`${mower.nickname ?? mower.sn} sensor details`}
+            aria-label={t('chips.sensorDetails', { name: mower.nickname ?? mower.sn })}
           >
             {/* Online dot — pulses while actively mowing/edge-cutting */}
             <span className="inline-flex items-center px-2.5 border-r border-zinc-700/40">
               <span
                 className={`w-2 h-2 rounded-full bg-emerald-400${isMowing ? ' animate-pulse' : ''}`}
                 style={{ boxShadow: '0 0 0 3px rgba(52,211,153,.18)' }}
-                title={isMowing ? (workStatusLabel(workStatus) || 'Mowing') : t('drawer.summary.online')}
+                title={isMowing ? (workStatusLabel(workStatus) || workStatusLabel(90)) : t('drawer.summary.online')}
               />
             </span>
 
@@ -553,7 +558,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                     value={`${battery}%`}
                     color={battery >= 20 ? 'text-emerald-300' : 'text-red-400'}
                     iconColor={battery >= 20 ? 'text-emerald-400/80' : 'text-red-400'}
-                    label={`Battery: ${battery}%${isCharging ? ' (charging)' : ''}`}
+                    label={isCharging ? t('devices.batteryCharging', { pct: battery }) : t('devices.batteryLabel', { pct: battery })}
                   />
                 )}
 
@@ -563,7 +568,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                     value={mowerSats}
                     color={mowerSats >= 15 ? 'text-sky-300' : mowerSats >= 8 ? 'text-yellow-300' : 'text-red-400'}
                     iconColor={mowerSats >= 15 ? 'text-sky-400/80' : mowerSats >= 8 ? 'text-yellow-400/80' : 'text-red-400'}
-                    label={`RTK satellites: ${mowerSats}`}
+                    label={t('devices.rtkLabel', { sats: mowerSats })}
                   />
                 )}
 
@@ -571,7 +576,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                 {rtkLabel && (
                   <span
                     className="inline-flex items-center gap-1.5 px-2.5 border-r border-zinc-700/40"
-                    title={`RTK fix quality: ${rtkLabel}`}
+                    title={t('chips.rtkFixQuality', { quality: rtkLabel })}
                   >
                     <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: rtkColor }} />
                     <span className="text-xs font-semibold" style={{ color: rtkColor }}>{rtkLabel}</span>
@@ -584,7 +589,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                     value={`${wifiRssi}%`}
                     color={wifiRssi >= 65 ? 'text-emerald-300' : wifiRssi >= 40 ? 'text-yellow-300' : 'text-red-400'}
                     iconColor={wifiRssi >= 65 ? 'text-emerald-400/80' : wifiRssi >= 40 ? 'text-yellow-400/80' : 'text-red-400'}
-                    label={`WiFi: ${wifiRssi}%`}
+                    label={t('devices.wifiLabel', { rssi: wifiRssi })}
                   />
                 )}
 
@@ -594,7 +599,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                     value={`${cpuTemp}°`}
                     color={cpuTemp >= DANGER_TEMP_C ? 'text-red-400' : cpuTemp < 50 ? 'text-zinc-200' : cpuTemp < 65 ? 'text-yellow-300' : 'text-red-400'}
                     iconColor={cpuTemp >= DANGER_TEMP_C ? 'text-red-400' : cpuTemp < 50 ? 'text-zinc-500' : cpuTemp < 65 ? 'text-yellow-400/80' : 'text-red-400'}
-                    label={cpuTemp >= DANGER_TEMP_C ? `DANGER - CPU temp ${cpuTemp}°C (>= ${DANGER_TEMP_C}°C)` : `CPU temp: ${cpuTemp}°C`}
+                    label={cpuTemp >= DANGER_TEMP_C ? t('chips.cpuTempDanger', { temp: cpuTemp, limit: DANGER_TEMP_C }) : t('chips.cpuTemp', { temp: cpuTemp })}
                     blink={cpuTemp >= DANGER_TEMP_C}
                   />
                 )}
@@ -605,7 +610,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                     value={workStatusLabel(workStatus)}
                     color="text-emerald-300"
                     iconColor="text-emerald-400/80"
-                    label={`Work status: ${workStatus}`}
+                    label={t('chips.workStatus', { status: workStatus })}
                   />
                 )}
 
@@ -615,12 +620,12 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                     value={`${driveSpeed.toFixed(1)} m/s`}
                     color="text-sky-300"
                     iconColor="text-sky-400/80"
-                    label={`Driving speed: ${driveSpeed.toFixed(2)} m/s`}
+                    label={t('chips.drivingSpeed', { speed: driveSpeed.toFixed(2) })}
                   />
                 )}
               </>
             ) : (
-              <span className="inline-flex items-center px-2.5 text-zinc-600 text-[10px] italic">waiting…</span>
+              <span className="inline-flex items-center px-2.5 text-zinc-600 text-[10px] italic">{t('chips.waiting')}</span>
             )}
 
             <span className="inline-flex items-center px-1.5 text-zinc-500 group-hover:text-zinc-300">

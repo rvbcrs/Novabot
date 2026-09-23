@@ -28,7 +28,7 @@ export function LiveStatusCard({ sn }: Props) {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'load failed');
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
     }
     load();

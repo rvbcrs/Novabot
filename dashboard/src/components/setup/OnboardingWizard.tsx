@@ -3,7 +3,14 @@ import {
   Leaf, ShieldCheck, Download, CheckCircle, Lock, Mail, User,
   Eye, EyeOff, ChevronDown, ChevronUp, Loader2, ArrowRight,
 } from 'lucide-react';
+import { useTranslation, Trans } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { createFirstUser, checkCertTrusted } from '../../api/client';
+
+/** Translate a numbered list of steps: `${prefix}.s1` … `${prefix}.s${n}`. */
+function stepList(t: TFunction, prefix: string, n: number): string[] {
+  return Array.from({ length: n }, (_, i) => t(`${prefix}.s${i + 1}`));
+}
 
 type Step = 'welcome' | 'account' | 'cert' | 'done';
 
@@ -63,6 +70,7 @@ function ProgressBar({ step, skipAccount }: { step: Step; skipAccount: boolean }
 // ─────────────────────────────────────────────
 
 function WelcomeStep({ onNext }: { onNext: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="text-center space-y-6">
       <div className="flex justify-center">
@@ -72,27 +80,27 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
       </div>
 
       <div>
-        <h1 className="text-3xl font-bold text-white">Welkom bij OpenNova</h1>
+        <h1 className="text-3xl font-bold text-white">{t('setup.welcome.title')}</h1>
         <p className="text-gray-400 mt-2 text-sm leading-relaxed">
-          Je persoonlijke cloudvervanging voor je robotmaaier
+          {t('setup.welcome.subtitle')}
         </p>
       </div>
 
       <div className="text-left bg-gray-900/60 border border-gray-800 rounded-xl p-5 space-y-3">
         <Feature
           icon="🌿"
-          title="Volledig lokaal"
-          desc="Je maaier en laadstation verbinden met deze container in plaats van servers in China."
+          title={t('setup.welcome.localTitle')}
+          desc={t('setup.welcome.localDesc')}
         />
         <Feature
           icon="🔒"
-          title="Geen dataverzameling"
-          desc="Al je gegevens blijven op je eigen netwerk. Geen abonnement, geen cloud afhankelijkheid."
+          title={t('setup.welcome.privacyTitle')}
+          desc={t('setup.welcome.privacyDesc')}
         />
         <Feature
           icon="📡"
-          title="Zelfde app"
-          desc="Gebruik de gewone Novabot app — alleen de verbinding gaat via jouw server."
+          title={t('setup.welcome.appTitle')}
+          desc={t('setup.welcome.appDesc')}
         />
       </div>
 
@@ -100,7 +108,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
         onClick={onNext}
         className="w-full flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white font-medium py-3 rounded-xl transition-colors text-sm"
       >
-        Aan de slag
+        {t('setup.welcome.start')}
         <ArrowRight className="w-4 h-4" />
       </button>
     </div>
@@ -124,6 +132,7 @@ function Feature({ icon, title, desc }: { icon: string; title: string; desc: str
 // ─────────────────────────────────────────────
 
 function AccountStep({ onNext }: { onNext: () => void }) {
+  const { t } = useTranslation();
   const [email, setEmail]       = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -135,17 +144,17 @@ function AccountStep({ onNext }: { onNext: () => void }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!email.trim() || !password) { setError('Vul je e-mailadres en wachtwoord in.'); return; }
-    if (password !== confirm)        { setError('Wachtwoorden komen niet overeen.'); return; }
-    if (password.length < 6)         { setError('Wachtwoord moet minimaal 6 tekens bevatten.'); return; }
+    if (!email.trim() || !password) { setError(t('setup.account.errRequired')); return; }
+    if (password !== confirm)        { setError(t('setup.account.errMismatch')); return; }
+    if (password.length < 6)         { setError(t('setup.account.errTooShort')); return; }
 
     setLoading(true);
     try {
       const result = await createFirstUser(email.trim(), password, username.trim() || undefined);
       if (result.ok) { onNext(); }
-      else           { setError(result.error ?? 'Er is een fout opgetreden.'); }
+      else           { setError(result.error ?? t('setup.account.errGeneric')); }
     } catch {
-      setError('Kan de server niet bereiken.');
+      setError(t('setup.account.errUnreachable'));
     } finally {
       setLoading(false);
     }
@@ -154,37 +163,37 @@ function AccountStep({ onNext }: { onNext: () => void }) {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-white">Account aanmaken</h2>
+        <h2 className="text-xl font-bold text-white">{t('setup.account.title')}</h2>
         <p className="text-sm text-gray-400 mt-1">
-          Dit account gebruik je ook om in te loggen in de Novabot app.
+          {t('setup.account.intro')}
         </p>
       </div>
 
       <div className="flex items-start gap-2.5 bg-blue-950/40 border border-blue-800/40 rounded-lg px-3.5 py-3 mb-5">
         <ShieldCheck className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-blue-300 leading-relaxed">
-          Je gegevens blijven lokaal in de Docker container en worden <strong>nergens naartoe gestuurd</strong>.
+          <Trans i18nKey="setup.account.privacy" components={{ b: <strong /> }} />
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="Naam" hint="optioneel">
-          <FieldInput icon={User} type="text" value={username} onChange={setUsername} placeholder="Jouw naam" />
+        <Field label={t('setup.account.name')} hint={t('setup.account.optional')}>
+          <FieldInput icon={User} type="text" value={username} onChange={setUsername} placeholder={t('setup.account.namePlaceholder')} />
         </Field>
-        <Field label="E-mailadres">
-          <FieldInput icon={Mail} type="email" value={email} onChange={setEmail} placeholder="jij@example.com" required />
+        <Field label={t('setup.account.email')}>
+          <FieldInput icon={Mail} type="email" value={email} onChange={setEmail} placeholder={t('setup.account.emailPlaceholder')} required />
         </Field>
-        <Field label="Wachtwoord">
+        <Field label={t('setup.account.password')}>
           <div className="relative">
-            <FieldInput icon={Lock} type={showPw ? 'text' : 'password'} value={password} onChange={setPassword} placeholder="Minimaal 6 tekens" required />
+            <FieldInput icon={Lock} type={showPw ? 'text' : 'password'} value={password} onChange={setPassword} placeholder={t('setup.account.passwordPlaceholder')} required />
             <button type="button" onClick={() => setShowPw(v => !v)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400">
               {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
         </Field>
-        <Field label="Wachtwoord bevestigen">
-          <FieldInput icon={Lock} type={showPw ? 'text' : 'password'} value={confirm} onChange={setConfirm} placeholder="Herhaal wachtwoord" required />
+        <Field label={t('setup.account.confirm')}>
+          <FieldInput icon={Lock} type={showPw ? 'text' : 'password'} value={confirm} onChange={setConfirm} placeholder={t('setup.account.confirmPlaceholder')} required />
         </Field>
 
         {error && (
@@ -198,7 +207,7 @@ function AccountStep({ onNext }: { onNext: () => void }) {
           disabled={loading}
           className="w-full flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white font-medium py-3 rounded-xl transition-colors text-sm mt-2"
         >
-          {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Aanmaken...</> : <>Account aanmaken <ArrowRight className="w-4 h-4" /></>}
+          {loading ? <><Loader2 className="w-4 h-4 animate-spin" />{t('setup.account.creating')}</> : <>{t('setup.account.submit')} <ArrowRight className="w-4 h-4" /></>}
         </button>
       </form>
     </div>
@@ -244,6 +253,7 @@ function FieldInput({ icon: Icon, type, value, onChange, placeholder, required }
 // ─────────────────────────────────────────────
 
 function CertStep({ onComplete }: { onComplete: () => void }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<'waiting' | 'detected' | 'manual-fail'>('waiting');
   const [openGuide, setOpenGuide] = useState<string | null>('mac');
   const [manualChecking, setManualChecking] = useState(false);
@@ -304,12 +314,12 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
           }
         </div>
         <h2 className="text-xl font-bold text-white">
-          {detected ? 'Certificaat gedetecteerd!' : 'Certificaat installeren'}
+          {detected ? t('setup.cert.detected') : t('setup.cert.title')}
         </h2>
         <p className="text-sm text-gray-400 mt-1 leading-relaxed">
           {detected
-            ? 'Je wordt doorgestuurd naar het dashboard...'
-            : 'De Novabot app gebruikt HTTPS. Installeer het lokale CA-certificaat zodat de app kan verbinden.'
+            ? t('setup.cert.redirecting')
+            : t('setup.cert.intro')
           }
         </p>
       </div>
@@ -323,46 +333,28 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
             className="flex items-center justify-center gap-2.5 w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition-colors mb-5 text-sm"
           >
             <Download className="w-4 h-4" />
-            Download opennova-ca.crt
+            {t('setup.cert.download')}
           </a>
 
           {/* Installatie gidsen */}
           <div className="space-y-2 mb-5">
             <Guide
-              title="Mac (inclusief iOS app op Apple Silicon)"
+              title={t('setup.cert.macTitle')}
               open={openGuide === 'mac'}
               onToggle={() => setOpenGuide(g => g === 'mac' ? null : 'mac')}
-              steps={[
-                'Download opennova-ca.crt en dubbelklik → Keychain Access opent',
-                'Het cert staat nu in de System keychain maar is nog NIET vertrouwd',
-                'Dubbelklik op "OpenNova Local CA" in de lijst',
-                'Klap "Trust" open (klik op het driehoekje)',
-                'Zet "When using this certificate" op "Always Trust"',
-                'Sluit het venster → voer je Mac-wachtwoord in als gevraagd',
-              ]}
+              steps={stepList(t, 'setup.cert.mac', 6)}
             />
             <Guide
               title="iPhone / iPad"
               open={openGuide === 'iphone'}
               onToggle={() => setOpenGuide(g => g === 'iphone' ? null : 'iphone')}
-              steps={[
-                'Stuur het .crt bestand naar je iPhone (AirDrop of mail)',
-                'Tik op het bestand → "Profiel gedownload" verschijnt bovenaan',
-                'Ga naar Instellingen → bovenaan "Profiel gedownload" → Installeer → Installeer',
-                '⚠️ VERPLICHTE EXTRA STAP: Ga naar Instellingen → Algemeen → Info → Certificaatvertrouwen',
-                'Zet de schakelaar bij "OpenNova Local CA" aan → Doorgaan',
-                'Zonder deze stap werkt het certificaat niet!',
-              ]}
+              steps={stepList(t, 'setup.cert.iphoneStrict', 6)}
             />
             <Guide
               title="Android"
               open={openGuide === 'android'}
               onToggle={() => setOpenGuide(g => g === 'android' ? null : 'android')}
-              steps={[
-                'Stuur opennova-ca.crt naar je Android toestel',
-                'Ga naar Instellingen → Beveiliging → Certificaten installeren',
-                'Kies "CA-certificaat" en selecteer het bestand',
-              ]}
+              steps={stepList(t, 'setup.cert.androidSend', 3)}
             />
           </div>
 
@@ -371,9 +363,9 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
             <div className="flex items-center gap-2.5 mb-3">
               <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
               <div>
-                <p className="text-xs text-gray-300 font-medium">Automatisch detecteren...</p>
+                <p className="text-xs text-gray-300 font-medium">{t('setup.cert.autoDetect')}</p>
                 <p className="text-[11px] text-gray-500 mt-0.5">
-                  Het dashboard gaat vanzelf verder zodra het certificaat vertrouwd is.
+                  {t('setup.cert.autoDetectHint')}
                 </p>
               </div>
             </div>
@@ -383,20 +375,18 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
               className="w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 transition-colors"
             >
               <Loader2 className={`w-3.5 h-3.5 ${manualChecking ? 'animate-spin' : 'opacity-0'}`} />
-              {manualChecking ? 'Controleren...' : 'Controleer handmatig'}
+              {manualChecking ? t('setup.cert.checking') : t('setup.cert.checkManual')}
             </button>
           </div>
 
           {status === 'manual-fail' && (
             <div className="bg-red-950/30 border border-red-800/30 rounded-xl px-4 py-3 text-xs text-red-300 leading-relaxed">
-              Certificaat nog niet vertrouwd. Op iPhone: controleer of je de schakelaar bij
-              {' '}<strong>Instellingen → Algemeen → Info → Certificaatvertrouwen</strong>{' '}
-              hebt aangezet.
+              <Trans i18nKey="setup.cert.notTrustedIphone" components={{ b: <strong /> }} />
             </div>
           )}
 
           <p className="text-center text-[11px] text-gray-600 mt-4">
-            Dit certificaat is alleen geldig voor *.lfibot.com op je lokale netwerk.
+            {t('setup.cert.scope')}
           </p>
         </>
       )}

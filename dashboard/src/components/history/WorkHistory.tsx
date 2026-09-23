@@ -85,6 +85,7 @@ export function WorkHistory({ sn }: Props) {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   const s = status.toUpperCase();
   const style = s === 'COMPLETE'
     ? 'bg-emerald-500/15 text-emerald-300 border-emerald-600/30'
@@ -93,7 +94,7 @@ function StatusBadge({ status }: { status: string }) {
     : 'bg-gray-700/40 text-gray-400 border-gray-600/40';
   return (
     <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${style}`}>
-      {status}
+      {s === 'COMPLETE' ? t('history.result.complete') : s === 'CANCELLED' ? t('history.result.cancelled') : status}
     </span>
   );
 }

@@ -7,8 +7,9 @@ import {
   fetchOtaVersions, fetchFirmwareFiles, updateOtaVersion, deleteOtaVersion, triggerOta,
   type OtaVersion, type FirmwareFile,
 } from '../../api/client';
+import { useTranslation } from 'react-i18next';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
-import { BETA_FIRMWARE_WARNING_LINES } from '../../utils/betaFirmware';
+import { betaFirmwareWarningLines } from '../../utils/betaFirmware';
 
 interface Props {
   devices: Map<string, DeviceState>;
@@ -43,6 +44,7 @@ interface ConfirmDialog {
 }
 
 export function OtaManager({ devices, otaProgress }: Props) {
+  const { t } = useTranslation();
   const [versions, setVersions] = useState<OtaVersion[]>([]);
   const [files, setFiles] = useState<FirmwareFile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,11 +69,11 @@ export function OtaManager({ devices, otaProgress }: Props) {
 
   const handleDelete = (id: number, version: string) => {
     setConfirmDialog({
-      title: 'Versie verwijderen',
-      message: `Weet je zeker dat je ${version} wilt verwijderen?`,
-      detail: 'De registratie wordt verwijderd. Het firmware bestand blijft in de firmware/ map staan.',
+      title: t('ota.deleteTitle'),
+      message: t('ota.deleteConfirm', { version }),
+      detail: t('ota.deleteDetail'),
       variant: 'danger',
-      confirmLabel: 'Verwijderen',
+      confirmLabel: t('common.delete'),
       onConfirm: async () => {
         setConfirmDialog(null);
         await deleteOtaVersion(id);
@@ -105,16 +107,16 @@ export function OtaManager({ devices, otaProgress }: Props) {
     const isMower = device?.deviceType === 'mower';
     const isCharging = String(device?.sensors?.recharge_status) === '1';
     const chargeNote = isMower && !isCharging
-      ? '\n\nDe download start pas als de maaier op het laadstation staat.'
+      ? `\n\n${t('ota.chargeNote')}`
       : '';
 
     if (isMower && isOpenNovaFirmware(targetVersion)) {
       setConfirmDialog({
-        title: '⚠️ BETA CUSTOM FIRMWARE',
-        message: BETA_FIRMWARE_WARNING_LINES.join('\n'),
-        detail: `${deviceVersion ?? 'onbekend'}  →  ${targetVersion}\n\nEr wordt automatisch een verse backup gemaakt voordat we flashen.${chargeNote}`,
+        title: `⚠️ ${t('ota.betaTitle')}`,
+        message: betaFirmwareWarningLines().join('\n'),
+        detail: `${deviceVersion ?? t('ota.unknown')}  →  ${targetVersion}\n\n${t('ota.betaBackupNote')}${chargeNote}`,
         variant: 'beta',
-        confirmLabel: 'Ik begrijp het, flash toch',
+        confirmLabel: t('ota.betaConfirm'),
         onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
       });
       return;
@@ -122,30 +124,30 @@ export function OtaManager({ devices, otaProgress }: Props) {
 
     if (isDowngrade) {
       setConfirmDialog({
-        title: 'Downgrade waarschuwing',
-        message: `Je staat op het punt om te downgraden:`,
+        title: t('ota.downgradeTitle'),
+        message: t('ota.downgradeMessage'),
         detail: `${deviceVersion}  \u2192  ${targetVersion}${chargeNote}`,
         variant: 'warning',
-        confirmLabel: 'Toch flashen',
+        confirmLabel: t('ota.flashAnyway'),
         onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
       });
     } else if (isSame) {
       setConfirmDialog({
-        title: 'Zelfde versie',
-        message: `${deviceName} draait al ${deviceVersion}.`,
-        detail: `Wil je dezelfde versie opnieuw flashen?${chargeNote}`,
+        title: t('ota.sameTitle'),
+        message: t('ota.sameMessage', { device: deviceName, version: deviceVersion }),
+        detail: `${t('ota.sameDetail')}${chargeNote}`,
         variant: 'info',
-        confirmLabel: 'Opnieuw flashen',
+        confirmLabel: t('ota.reflash'),
         onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
       });
     } else {
       // Upgrade — show confirmation with version info
       setConfirmDialog({
-        title: 'Firmware update',
-        message: `${deviceName} updaten:`,
-        detail: `${deviceVersion ?? 'onbekend'}  \u2192  ${targetVersion}${chargeNote}`,
+        title: t('ota.updateTitle'),
+        message: t('ota.updateMessage', { device: deviceName }),
+        detail: `${deviceVersion ?? t('ota.unknown')}  \u2192  ${targetVersion}${chargeNote}`,
         variant: 'info',
-        confirmLabel: 'Flashen',
+        confirmLabel: t('ota.flash'),
         onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
       });
     }
@@ -231,7 +233,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
                 onClick={() => setConfirmDialog(null)}
                 className="flex-1 text-xs py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
               >
-                Annuleren
+                {t('common.cancel')}
               </button>
               <button
                 onClick={confirmDialog.onConfirm}
@@ -256,7 +258,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-2">
           <HardDrive className="w-4 h-4 text-orange-400" />
-          <span className="text-sm font-medium">Firmware Update</span>
+          <span className="text-sm font-medium">{t('ota.title')}</span>
         </div>
         <button onClick={load} className="text-gray-500 hover:text-gray-300 p-1 rounded">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -267,10 +269,10 @@ export function OtaManager({ devices, otaProgress }: Props) {
 
         {/* Current device firmware versions */}
         <div>
-          <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">Huidige versies</div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">{t('ota.currentVersions')}</div>
           <div className="space-y-1">
             {sortedDevices.length === 0 && (
-              <p className="text-xs text-gray-600 italic">Geen apparaten verbonden</p>
+              <p className="text-xs text-gray-600 italic">{t('ota.noDevices')}</p>
             )}
             {sortedDevices.map(d => {
               const version = d.sensors.sw_version ?? d.sensors.version ?? null;
@@ -281,7 +283,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <span className={`text-[9px] px-1 rounded font-medium ${isCharger ? 'bg-yellow-900/50 text-yellow-400' : 'bg-emerald-900/50 text-emerald-400'}`}>
-                        {isCharger ? 'Charger' : 'Maaier'}
+                        {isCharger ? t('devices.charger') : t('devices.mower')}
                       </span>
                       <span className="text-[10px] text-gray-400 font-mono">{d.nickname ?? d.sn}</span>
                     </div>
@@ -298,12 +300,12 @@ export function OtaManager({ devices, otaProgress }: Props) {
         {/* Firmware files in firmware/ directory */}
         <div>
           <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">
-            Bestanden in <code className="text-gray-400">firmware/</code>
+            {t('ota.filesIn')} <code className="text-gray-400">firmware/</code>
           </div>
           {files.length === 0 ? (
             <p className="text-xs text-gray-600 italic leading-snug">
-              Kopieer <code className="text-gray-500">.bin</code> / <code className="text-gray-500">.deb</code> naar{' '}
-              <code className="text-gray-500">opennova-server/firmware/</code> en herlaad.
+              {t('ota.noFilesCopy')} <code className="text-gray-500">.bin</code> / <code className="text-gray-500">.deb</code> {t('ota.noFilesTo')}{' '}
+              <code className="text-gray-500">opennova-server/firmware/</code> {t('ota.noFilesReload')}
             </p>
           ) : (
             <div className="space-y-1">
@@ -321,11 +323,11 @@ export function OtaManager({ devices, otaProgress }: Props) {
 
         {/* Registered OTA versions (auto-detected from firmware directory) */}
         <div>
-          <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">Geregistreerde versies</div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">{t('ota.registeredVersions')}</div>
 
           {versions.length === 0 && (
             <p className="text-xs text-gray-600 italic leading-snug">
-              Geen versies gevonden. Kopieer <code className="text-gray-500">.bin</code> / <code className="text-gray-500">.deb</code> naar de firmware map — versies worden automatisch geregistreerd.
+              {t('ota.noVersionsCopy')} <code className="text-gray-500">.bin</code> / <code className="text-gray-500">.deb</code> {t('ota.noVersionsTo')}
             </p>
           )}
 
@@ -345,7 +347,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
                     <div className="space-y-2">
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-[9px] text-gray-500 uppercase tracking-wide">Versie</label>
+                          <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('ota.version')}</label>
                           <input
                             type="text"
                             value={editForm.version}
@@ -354,14 +356,14 @@ export function OtaManager({ devices, otaProgress }: Props) {
                           />
                         </div>
                         <div>
-                          <label className="text-[9px] text-gray-500 uppercase tracking-wide">Type</label>
+                          <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('ota.type')}</label>
                           <select
                             value={editForm.device_type}
                             onChange={e => setEditForm(f => ({ ...f, device_type: e.target.value }))}
                             className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200"
                           >
-                            <option value="charger">Laadstation</option>
-                            <option value="mower">Maaier</option>
+                            <option value="charger">{t('devices.charger')}</option>
+                            <option value="mower">{t('devices.mower')}</option>
                           </select>
                         </div>
                       </div>
@@ -370,14 +372,14 @@ export function OtaManager({ devices, otaProgress }: Props) {
                           onClick={() => setEditingId(null)}
                           className="flex-1 text-xs py-1 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
                         >
-                          Annuleren
+                          {t('common.cancel')}
                         </button>
                         <button
                           onClick={handleSaveEdit}
                           disabled={!editForm.version}
                           className="flex-1 text-xs py-1 rounded bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-40 transition-colors"
                         >
-                          Opslaan
+                          {t('common.save')}
                         </button>
                       </div>
                     </div>
@@ -392,21 +394,21 @@ export function OtaManager({ devices, otaProgress }: Props) {
                           ? 'bg-yellow-900/50 text-yellow-400'
                           : 'bg-emerald-900/50 text-emerald-400'
                       }`}>
-                        {v.device_type === 'charger' ? 'Laadstation' : 'Maaier'}
+                        {v.device_type === 'charger' ? t('devices.charger') : t('devices.mower')}
                       </span>
                     </div>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => handleStartEdit(v)}
                         className="text-gray-600 hover:text-orange-400 p-0.5 transition-colors"
-                        title="Bewerk versie"
+                        title={t('ota.editVersion')}
                       >
                         <Pencil className="w-3 h-3" />
                       </button>
                       <button
                         onClick={() => handleDelete(v.id, v.version)}
                         className="text-gray-600 hover:text-red-400 p-0.5 transition-colors"
-                        title="Verwijder versie"
+                        title={t('ota.deleteVersion')}
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
@@ -423,7 +425,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
                   {/* Trigger buttons per device */}
                   {relevantDevices.length === 0 ? (
                     <p className="text-[10px] text-gray-600">
-                      Geen {v.device_type === 'charger' ? 'laadstation' : 'maaier'} verbonden
+                      {v.device_type === 'charger' ? t('ota.noChargerConnected') : t('ota.noMowerConnected')}
                     </p>
                   ) : (
                     <div className="space-y-1">
@@ -449,18 +451,18 @@ export function OtaManager({ devices, otaProgress }: Props) {
                                     : 'bg-orange-700/80 text-white hover:bg-orange-600 disabled:opacity-40'
                                   : 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
                               }`}
-                              title={!d.online ? 'Apparaat offline' : isCurrent ? 'Al actieve versie' : isDowngrade ? 'Downgrade!' : undefined}
+                              title={!d.online ? t('ota.deviceOffline') : isCurrent ? t('ota.alreadyActive') : isDowngrade ? t('ota.downgradeBang') : undefined}
                             >
                               {state === 'done' ? (
-                                <><Check className="w-3 h-3" />Commando verstuurd</>
+                                <><Check className="w-3 h-3" />{t('ota.commandSent')}</>
                               ) : state === 'error' ? (
-                                <><AlertCircle className="w-3 h-3" />Fout bij versturen</>
+                                <><AlertCircle className="w-3 h-3" />{t('ota.sendError')}</>
                               ) : (
                                 <>
                                   {isDowngrade ? <AlertTriangle className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
-                                  {state === 'sending' ? 'Bezig…' : `Flash → ${d.nickname ?? d.sn}`}
-                                  {isCurrent && <span className="ml-1 opacity-60">(huidig)</span>}
-                                  {isDowngrade && !isCurrent && <span className="ml-1 opacity-70">(downgrade)</span>}
+                                  {state === 'sending' ? t('ota.busy') : `${t('ota.flash')} → ${d.nickname ?? d.sn}`}
+                                  {isCurrent && <span className="ml-1 opacity-60">({t('ota.current')})</span>}
+                                  {isDowngrade && !isCurrent && <span className="ml-1 opacity-70">({t('ota.downgrade')})</span>}
                                 </>
                               )}
                             </button>
@@ -495,6 +497,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
  * showing the phase and how long it has been in it.
  */
 function OtaProgressRow({ progress }: { progress: OtaProgress | undefined }) {
+  const { t } = useTranslation();
   const session = progress?.session;
   const phaseLabel = useOtaPhaseLabel(session);
   const now = useNow(!!progress);
@@ -506,7 +509,7 @@ function OtaProgressRow({ progress }: { progress: OtaProgress | undefined }) {
   const isDone = phase ? phase === 'done' : progress.status === 'success';
   const isFail = phase ? phase === 'failed' || phase === 'rolled-back' || phase === 'stalled'
     : progress.status === 'failed' || progress.status === 'error';
-  const label = phaseLabel || (progress.status === 'upgrade' ? 'Downloading…' : isDone ? 'Update voltooid' : isFail ? 'Update mislukt' : progress.status);
+  const label = phaseLabel || (progress.status === 'upgrade' ? t('ota.downloading') : isDone ? t('ota.updateDone') : isFail ? t('ota.updateFailed') : progress.status);
   const showPct = progress.percentage != null && (!phase || phase === 'downloading' || phase === 'unpacking' || phase === 'installing');
   const pulse = phase === 'awaiting-reboot' || phase === 'rebooting' || phase === 'back';
   return (

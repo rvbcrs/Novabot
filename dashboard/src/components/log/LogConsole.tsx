@@ -236,7 +236,7 @@ export function LogConsole({ logs, bleLogs = [] }: Props) {
         {filtered.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-600 text-xs">
             {totalActive === 0
-              ? (tab === 'mqtt' ? t('log.waiting') : 'Waiting for BLE activity...')
+              ? (tab === 'mqtt' ? t('log.waiting') : t('log.waitingBle'))
               : t('log.noMatches')
             }
           </div>

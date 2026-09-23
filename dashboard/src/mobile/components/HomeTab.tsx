@@ -126,9 +126,9 @@ export function HomeTab({ mower }: Props) {
     try {
       const r = await setDemoMode(mower.sn, !demoActive);
       setDemoActive(r.demoMode);
-      toast(r.demoMode ? 'Demo mode ON' : 'Demo mode OFF', 'success');
+      toast(r.demoMode ? t('mobile.demoModeOn') : t('mobile.demoModeOff'), 'success');
     } catch {
-      toast('Failed to toggle demo mode', 'error');
+      toast(t('mobile.demoModeToggleFailed'), 'error');
     }
   };
 
@@ -139,7 +139,7 @@ export function HomeTab({ mower }: Props) {
       await sendCommand(mower.sn, command);
       toast(`${label} ✓`, 'success');
     } catch {
-      toast(`${label} failed`, 'error');
+      toast(t('mobile.actionFailed', { label }), 'error');
     }
     setSending(null);
   };
@@ -185,7 +185,7 @@ export function HomeTab({ mower }: Props) {
             <h1 className="text-sm font-semibold text-gray-900 dark:text-white truncate">
               {m.nickname || 'OpenNova'}
             </h1>
-            <p className="text-[11px] text-gray-400 dark:text-gray-500">Novabot Mower</p>
+            <p className="text-[11px] text-gray-400 dark:text-gray-500">{t('mobile.novabotMower')}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -203,13 +203,13 @@ export function HomeTab({ mower }: Props) {
       {debugOpen && (
         <div className="mx-4 mb-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Debug Mode</span>
+            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">{t('mobile.debugMode')}</span>
             {debugActivity && (
               <button
                 onClick={() => setDebugActivity(null)}
                 className="text-[10px] text-amber-500 underline"
               >
-                Reset
+                {t('common.reset')}
               </button>
             )}
           </div>
@@ -224,12 +224,12 @@ export function HomeTab({ mower }: Props) {
                     : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
                 }`}
               >
-                {a}
+                {t(`mobile.activity.${a}`)}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-2 mt-2">
-            <span className="text-[10px] text-amber-600 dark:text-amber-400">Battery:</span>
+            <span className="text-[10px] text-amber-600 dark:text-amber-400">{t('mobile.debugBattery')}</span>
             <input
               type="range"
               min={0}
@@ -241,14 +241,14 @@ export function HomeTab({ mower }: Props) {
             <span className="text-[10px] text-amber-600 dark:text-amber-400 tabular-nums w-8 text-right">{debugBattery}%</span>
           </div>
           <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-200 dark:border-amber-800/50">
-            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Demo Mode</span>
+            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">{t('mobile.demoMode')}</span>
             <button
               onClick={toggleDemo}
               className={`relative w-10 h-5 rounded-full transition-colors ${
                 demoActive ? 'bg-amber-500' : 'bg-gray-300 dark:bg-gray-600'
               }`}
             >
-              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+              <span className={`absolute top-0.5 left-0 w-4 h-4 rounded-full bg-white shadow transition-transform ${
                 demoActive ? 'translate-x-5' : 'translate-x-0.5'
               }`} />
             </button>
@@ -260,7 +260,7 @@ export function HomeTab({ mower }: Props) {
       {demoActive && (
         <div className="mx-4 mb-1 px-3 py-1.5 rounded-lg bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700/50 text-center">
           <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-            DEMO MODE — Commands are simulated
+            {t('mobile.demoBanner')}
           </span>
         </div>
       )}

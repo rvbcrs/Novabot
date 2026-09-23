@@ -166,7 +166,7 @@ function ShellInner() {
   ) : null;
 
   if (loading) {
-    return <div className="p-8 text-zinc-500">Loading…</div>;
+    return <div className="p-8 text-zinc-500">{t('common.loading')}</div>;
   }
 
   return (
@@ -267,7 +267,7 @@ function ShellInner() {
         {tab === 'settings' && <SettingsPage mower={activeMower} />}
         {tab === 'terrain' && (
           activeMower ? (
-            <Suspense fallback={<div className="p-8 text-zinc-500">Loading…</div>}>
+            <Suspense fallback={<div className="p-8 text-zinc-500">{t('common.loading')}</div>}>
               <TerrainPage sn={activeMower.sn} sensors={activeMower.sensors} />
             </Suspense>
           ) : (

@@ -1,3 +1,5 @@
+import i18n from '../i18n';
+
 // Human labels for the mower's numeric work_status codes. Mirrors
 // WORK_STATUS_LABELS in server/src/mqtt/sensorData.ts so the dashboard never
 // shows a bare number when the socket snapshot carries the raw code.
@@ -68,6 +70,19 @@ export function workStatusLabel(raw: string | number | null | undefined): string
   const n = parseInt(s, 10);
   // Only treat it as a code when the WHOLE string is the number (so "State 90"
   // or "Idle" pass through unchanged).
-  if (Number.isNaN(n) || String(n) !== s) return s;
-  return WORK_STATUS_LABELS[n] ?? `State ${n}`;
+  if (Number.isNaN(n) || String(n) !== s) {
+    // The server may already have turned the code into its English label
+    // ("Mowing"); translate that too, anything else passes through untouched.
+    const code = CODE_BY_LABEL.get(s);
+    return code != null ? translateCode(code) : s;
+  }
+  return WORK_STATUS_LABELS[n] != null ? translateCode(n) : i18n.t('workStatus.unknown', { n });
+}
+
+const CODE_BY_LABEL = new Map<string, number>(
+  Object.entries(WORK_STATUS_LABELS).map(([code, label]) => [label, Number(code)]),
+);
+
+function translateCode(code: number): string {
+  return i18n.t(`workStatus.${code}`, { defaultValue: WORK_STATUS_LABELS[code] });
 }

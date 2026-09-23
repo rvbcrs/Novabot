@@ -41,9 +41,9 @@ export function MdnsConflictBanner() {
           ips,
           self: conflict?.self ?? '?',
           defaultValue:
-            'Tweede OpenNova-server gedetecteerd op {{ips}} die opennovabot.local adverteert. ' +
-            'Maaiers kunnen daar (per ongeluk) op verbinden i.p.v. deze server ({{self}}). ' +
-            'Draai je lokaal npm run dev of docker? Stop dat, of de maaiers volgen die server.',
+            'A second OpenNova server was detected at {{ips}} advertising opennovabot.local. ' +
+            'Mowers can (accidentally) connect to it instead of this server ({{self}}). ' +
+            'Running npm run dev or docker locally? Stop it, or the mowers will follow that server.',
         })}
       </span>
     </div>

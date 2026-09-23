@@ -124,7 +124,7 @@ export function SettingsPanel({ sn, online, sensors }: Props) {
       setSaved(para);
       toast(t('settings.saved', 'Instellingen opgeslagen'), 'success');
     } catch {
-      toast(t('settings.saved', 'Instellingen opgeslagen') + ' — failed', 'error');
+      toast(t('settings.mower.saveFailed', 'Kon instellingen niet opslaan'), 'error');
     }
     setBusy(false);
   }, [sn, para, t, toast]);
@@ -334,7 +334,7 @@ function TimezonePanel({ sn, disabled }: { sn: string; disabled: boolean }) {
       await sendCommand(sn, { set_cfg_info: { cfg_value: 1, tz } });
       toast(t('settings.timezoneSaved', 'Tijdzone opgeslagen'), 'success');
     } catch {
-      toast(t('settings.timezoneSaved', 'Tijdzone opgeslagen') + ' — failed', 'error');
+      toast(t('settings.timezoneSaveFailed', 'Tijdzone opslaan mislukt'), 'error');
     }
     setBusy(false);
   }, [sn, tz, t, toast]);
@@ -359,7 +359,7 @@ function TimezonePanel({ sn, disabled }: { sn: string; disabled: boolean }) {
           disabled={disabled || busy}
           className="text-xs px-3 py-1.5 rounded bg-sky-700 text-sky-100 hover:bg-sky-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          {t('settings.apply', 'Toepassen')}
+          {t('controls.apply', 'Toepassen')}
         </button>
       </div>
     </div>
@@ -484,6 +484,7 @@ function ToggleRow({ icon: Icon, label, active, disabled, onToggle }: {
   disabled: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <button
       onClick={onToggle}
@@ -497,7 +498,7 @@ function ToggleRow({ icon: Icon, label, active, disabled, onToggle }: {
       <Icon className={`w-4.5 h-4.5 flex-shrink-0 ${active ? 'text-yellow-300' : 'text-gray-500'}`} />
       <span className="text-sm font-medium">{label}</span>
       <span className={`ml-auto text-[10px] uppercase tracking-wider font-semibold ${active ? 'text-yellow-400' : 'text-gray-600'}`}>
-        {active ? 'ON' : 'OFF'}
+        {active ? t('settings.on') : t('settings.off')}
       </span>
     </button>
   );
@@ -561,7 +562,7 @@ function PinPanel({ sn, online }: { sn: string; online: boolean }) {
       // Response arrives via socket — timeout fallback
       setTimeout(() => setBusy(prev => { if (prev) { setLastResponse(t('settings.pinNoResponse')); return false; } return prev; }), 5000);
     } catch {
-      toast('Query failed', 'error');
+      toast(t('settings.pinQueryFailed'), 'error');
       setBusy(false);
     }
   }, [sn, t, toast]);
@@ -575,7 +576,7 @@ function PinPanel({ sn, online }: { sn: string; online: boolean }) {
       toast(t('settings.pinSent'), 'info');
       setTimeout(() => setBusy(prev => { if (prev) { setLastResponse(t('settings.pinNoResponse')); return false; } return prev; }), 5000);
     } catch {
-      toast('Set failed', 'error');
+      toast(t('settings.pinSetFailed'), 'error');
       setBusy(false);
     }
   }, [sn, newPin, t, toast]);
@@ -590,7 +591,7 @@ function PinPanel({ sn, online }: { sn: string; online: boolean }) {
       toast(t('settings.pinSent'), 'info');
       setTimeout(() => setBusy(prev => { if (prev) { setLastResponse(t('settings.pinNoResponse')); return false; } return prev; }), 5000);
     } catch {
-      toast('Verify failed', 'error');
+      toast(t('settings.pinVerifyFailed'), 'error');
       setBusy(false);
     }
   }, [sn, newPin, currentPin, t, toast]);
@@ -606,7 +607,7 @@ function PinPanel({ sn, online }: { sn: string; online: boolean }) {
       toast(`${t('settings.pinSent')} (type=${typeNum})`, 'info');
       setTimeout(() => setBusy(prev => { if (prev) { setLastResponse(t('settings.pinNoResponse')); return false; } return prev; }), 5000);
     } catch {
-      toast('Send failed', 'error');
+      toast(t('settings.pinSendFailed'), 'error');
       setBusy(false);
     }
   }, [sn, newPin, currentPin, rawType, t, toast]);
@@ -687,7 +688,7 @@ function PinPanel({ sn, online }: { sn: string; online: boolean }) {
             onClick={handleRawSend}
             disabled={disabled}
             className="text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-white hover:bg-gray-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Send raw type"
+            title={t('settings.pinSendRaw')}
           >
             <Send className="w-3 h-3" />
           </button>
@@ -751,7 +752,7 @@ function PerceptionPanel({ sn, online }: { sn: string; online: boolean }) {
           setPerceptionModeState(mode);
           toast(`${t('ai.perceptionMode')}: ${modeName}`, 'success');
         } else {
-          toast(`${t('ai.perceptionMode')} — ${e.data?.error ?? 'failed'}`, 'error');
+          toast(`${t('ai.perceptionMode')}: ${e.data?.error ?? t('common.failed')}`, 'error');
         }
         setBusy(false);
       }
@@ -764,7 +765,7 @@ function PerceptionPanel({ sn, online }: { sn: string; online: boolean }) {
           setSemanticModeState(mode);
           toast(`${t('ai.semanticMode')}: ${modeName}`, 'success');
         } else {
-          toast(`${t('ai.semanticMode')} — ${e.data?.error ?? 'failed'}`, 'error');
+          toast(`${t('ai.semanticMode')}: ${e.data?.error ?? t('common.failed')}`, 'error');
         }
         setBusy(false);
       }
@@ -794,7 +795,7 @@ function PerceptionPanel({ sn, online }: { sn: string; online: boolean }) {
       // Response arrives via socket — timeout fallback
       setTimeout(() => setBusy(prev => prev ? false : prev), 8000);
     } catch {
-      toast(`${t('ai.perceptionMode')} — failed`, 'error');
+      toast(`${t('ai.perceptionMode')}: ${t('common.failed')}`, 'error');
       setBusy(false);
     }
   }, [sn, t, toast]);
@@ -805,7 +806,7 @@ function PerceptionPanel({ sn, online }: { sn: string; online: boolean }) {
       await setSemanticMode(sn, mode);
       setTimeout(() => setBusy(prev => prev ? false : prev), 8000);
     } catch {
-      toast(`${t('ai.semanticMode')} — failed`, 'error');
+      toast(`${t('ai.semanticMode')}: ${t('common.failed')}`, 'error');
       setBusy(false);
     }
   }, [sn, t, toast]);

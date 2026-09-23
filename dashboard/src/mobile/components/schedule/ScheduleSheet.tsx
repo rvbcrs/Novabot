@@ -368,7 +368,7 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
                 aria-checked={rainPause}
               >
                 <span
-                  className={`block w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition-transform ${
+                  className={`block w-5 h-5 bg-white rounded-full shadow absolute top-0.5 left-0 transition-transform ${
                     rainPause ? 'translate-x-[22px]' : 'translate-x-0.5'
                   }`}
                 />
@@ -390,7 +390,7 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
                   aria-checked={enabled}
                 >
                   <span
-                    className={`block w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition-transform ${
+                    className={`block w-5 h-5 bg-white rounded-full shadow absolute top-0.5 left-0 transition-transform ${
                       enabled ? 'translate-x-[22px]' : 'translate-x-0.5'
                     }`}
                   />

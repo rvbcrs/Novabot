@@ -26,7 +26,7 @@ export function DockDriftCard({ sn }: { sn: string | null }) {
         const fresh = await fetchDockDrift(sn as string);
         if (!cancelled) { setData(fresh); setError(null); }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'load failed');
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
     }
     load();

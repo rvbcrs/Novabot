@@ -179,7 +179,7 @@ export function CameraStream({ sn, online, mowerIp, onClose }: Props) {
             {imageSrc && (
               <img
                 src={imageSrc}
-                alt="Mower camera"
+                alt={t('camera.title')}
                 className={`w-full ${expanded ? 'h-full object-contain' : ''}`}
               />
             )}

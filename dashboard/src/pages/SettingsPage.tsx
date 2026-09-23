@@ -194,9 +194,11 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   return (
     <button
       onClick={() => onChange(!on)}
-      className={`w-10 h-5 rounded-full relative transition-colors ${on ? 'bg-emerald-600' : 'bg-gray-700'}`}
+      role="switch"
+      aria-checked={on}
+      className={`w-10 h-5 shrink-0 rounded-full relative transition-colors ${on ? 'bg-emerald-600' : 'bg-gray-700'}`}
     >
-      <span className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform ${on ? 'translate-x-5' : 'translate-x-0.5'}`} />
+      <span className={`w-4 h-4 rounded-full bg-white absolute top-0.5 left-0 transition-transform ${on ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
   );
 }

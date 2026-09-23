@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Leaf, Lock, Mail, User, ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { useTranslation, Trans } from 'react-i18next';
 import { createFirstUser } from '../../api/client';
 
 interface Props {
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export function FirstRunSetup({ onComplete }: Props) {
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -20,15 +22,15 @@ export function FirstRunSetup({ onComplete }: Props) {
     setError(null);
 
     if (!email.trim() || !password) {
-      setError('Vul je e-mailadres en wachtwoord in.');
+      setError(t('setup.account.errRequired'));
       return;
     }
     if (password !== confirm) {
-      setError('Wachtwoorden komen niet overeen.');
+      setError(t('setup.account.errMismatch'));
       return;
     }
     if (password.length < 6) {
-      setError('Wachtwoord moet minimaal 6 tekens bevatten.');
+      setError(t('setup.account.errTooShort'));
       return;
     }
 
@@ -38,10 +40,10 @@ export function FirstRunSetup({ onComplete }: Props) {
       if (result.ok) {
         onComplete();
       } else {
-        setError(result.error ?? 'Er is een fout opgetreden.');
+        setError(result.error ?? t('setup.account.errGeneric'));
       }
     } catch {
-      setError('Kan de server niet bereiken.');
+      setError(t('setup.account.errUnreachable'));
     } finally {
       setLoading(false);
     }
@@ -56,16 +58,16 @@ export function FirstRunSetup({ onComplete }: Props) {
           <div className="w-16 h-16 bg-emerald-900/40 rounded-2xl flex items-center justify-center mb-4 border border-emerald-800/40">
             <Leaf className="w-8 h-8 text-emerald-400" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Welkom bij OpenNova</h1>
-          <p className="text-sm text-gray-400 mt-1 text-center">Maak een account aan om te beginnen</p>
+          <h1 className="text-2xl font-bold text-white">{t('setup.welcome.title')}</h1>
+          <p className="text-sm text-gray-400 mt-1 text-center">{t('setup.account.subtitle')}</p>
         </div>
 
         {/* Privacy melding */}
         <div className="flex items-start gap-2.5 bg-blue-950/40 border border-blue-800/40 rounded-lg px-3.5 py-3 mb-6">
           <ShieldCheck className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
           <p className="text-xs text-blue-300 leading-relaxed">
-            Je gegevens blijven lokaal in de Docker container en worden <strong>nergens naartoe gestuurd</strong>.
-            Dit account is alleen voor toegang tot het dashboard en de Novabot app op je lokale netwerk.
+            <Trans i18nKey="setup.account.privacy" components={{ b: <strong /> }} />{' '}
+            {t('setup.account.privacyScope')}
           </p>
         </div>
 
@@ -73,28 +75,28 @@ export function FirstRunSetup({ onComplete }: Props) {
         <form onSubmit={handleSubmit} className="space-y-4">
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5">Naam <span className="text-gray-600">(optioneel)</span></label>
+            <label className="block text-xs text-gray-400 mb-1.5">{t('setup.account.name')} <span className="text-gray-600">({t('setup.account.optional')})</span></label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
               <input
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                placeholder="Jouw naam"
+                placeholder={t('setup.account.namePlaceholder')}
                 className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-emerald-600 transition-colors"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5">E-mailadres</label>
+            <label className="block text-xs text-gray-400 mb-1.5">{t('setup.account.email')}</label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
               <input
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="jij@example.com"
+                placeholder={t('setup.account.emailPlaceholder')}
                 required
                 className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-emerald-600 transition-colors"
               />
@@ -102,14 +104,14 @@ export function FirstRunSetup({ onComplete }: Props) {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5">Wachtwoord</label>
+            <label className="block text-xs text-gray-400 mb-1.5">{t('setup.account.password')}</label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="Minimaal 6 tekens"
+                placeholder={t('setup.account.passwordPlaceholder')}
                 required
                 className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-9 pr-10 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-emerald-600 transition-colors"
               />
@@ -124,14 +126,14 @@ export function FirstRunSetup({ onComplete }: Props) {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1.5">Wachtwoord bevestigen</label>
+            <label className="block text-xs text-gray-400 mb-1.5">{t('setup.account.confirm')}</label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={confirm}
                 onChange={e => setConfirm(e.target.value)}
-                placeholder="Herhaal wachtwoord"
+                placeholder={t('setup.account.confirmPlaceholder')}
                 required
                 className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-emerald-600 transition-colors"
               />
@@ -149,12 +151,12 @@ export function FirstRunSetup({ onComplete }: Props) {
             disabled={loading}
             className="w-full bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm py-2.5 rounded-lg transition-colors mt-2"
           >
-            {loading ? 'Account aanmaken...' : 'Account aanmaken'}
+            {loading ? t('setup.account.creating') : t('setup.account.submit')}
           </button>
         </form>
 
         <p className="text-center text-xs text-gray-600 mt-6">
-          Gebruik daarna dezelfde gegevens in de Novabot app om in te loggen.
+          {t('setup.account.useInApp')}
         </p>
       </div>
     </div>

@@ -44,7 +44,7 @@ export function BottomTabBar({ active, onTabChange, showCamera = true }: Props) 
       <button
         onClick={toggle}
         className="w-12 flex flex-col items-center justify-center gap-0.5 pt-2 pb-1 transition-colors"
-        aria-label="Toggle theme"
+        aria-label={t('mobile.toggleTheme')}
       >
         <ThemeIcon className="w-5 h-5 text-gray-400 dark:text-gray-500" />
       </button>
