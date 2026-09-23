@@ -1579,6 +1579,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [renderMakerOpen, setRenderMakerOpen] = useState(false);
   const renderCorners = renderFraming === 'flat' ? shownRender?.meta.corners ?? null : null;
   const renderAsLayer = baseView === 'render' && !!shownRender && !!renderCorners && renderCorners.length === 4;
+  // The angled render covers the map and brings its own zoom buttons; Leaflet's
+  // would zoom the hidden map underneath.
+  const renderCoversMap = baseView === 'render' && !!shownRender && !renderAsLayer;
+  useEffect(() => {
+    const el = leafletMapRef.current?.zoomControl?.getContainer();
+    if (el) el.style.display = renderCoversMap ? 'none' : '';
+  }, [renderCoversMap]);
   const chooseRenderFraming = useCallback((f: GardenRenderFraming) => {
     if (!renderState?.framings[f]) {
       void dialog.alert({
@@ -1593,6 +1600,24 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     localStorage.setItem('map.renderFraming', f);
     chooseBaseView('render');
   }, [renderState, chooseBaseView, dialog, t]);
+
+  // "Try it" in What's new: show that render, or offer to make it. The request
+  // waits for the render state when it arrives before that is loaded.
+  const [renderOpenRequest, setRenderOpenRequest] = useState<GardenRenderFraming | null>(null);
+  useEffect(() => {
+    const open = (ev: Event) => setRenderOpenRequest((ev as CustomEvent<{ framing?: GardenRenderFraming }>).detail?.framing ?? 'iso');
+    window.addEventListener('opennova:open-render', open);
+    return () => window.removeEventListener('opennova:open-render', open);
+  }, []);
+  useEffect(() => {
+    const f = renderOpenRequest;
+    if (!f || !renderState) return;
+    setRenderOpenRequest(null);
+    if (renderState.framings[f]) { chooseRenderFraming(f); return; }
+    setRenderFraming(f);
+    localStorage.setItem('map.renderFraming', f);
+    setRenderMakerOpen(true);
+  }, [renderOpenRequest, renderState, chooseRenderFraming]);
   useEffect(() => {
     if (!sn) return;
     const socket = getSocket();

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Server, ServerOff, Plus, Activity, ScrollText, Stethoscope, ShieldCheck } from 'lucide-react';
+import { Server, ServerOff, Plus, Activity, ScrollText, Sparkles, Stethoscope, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BleScanner } from '../components/ble/BleScanner';
 import { RainBadge } from './RainBadge';
@@ -7,6 +7,7 @@ import { NotificationBell } from '../components/common/NotificationBell';
 import { DiagnosisPanel } from '../components/dashboard/DiagnosisPanel';
 import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
 import { getServerVersion, fetchReleaseNotes, type ReleaseNotesEntry } from '../api/client';
+import { pendingWhatsNew } from '../whatsNew';
 import type { MowerEvent } from '../types';
 
 const LANGS = ['nl', 'en', 'fr', 'de'] as const;
@@ -19,9 +20,12 @@ interface Props {
   activeOnline: boolean;
   mowerEvents: MowerEvent[];
   onEventBacklog: (e: MowerEvent) => void;
+  onOpenWhatsNew: () => void;
 }
 
-export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnline, mowerEvents, onEventBacklog }: Props) {
+const PILL = 'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-zinc-700/70 bg-zinc-800/60 text-xs font-medium text-zinc-300 hover:text-white hover:border-emerald-500/60 hover:bg-zinc-800 transition-colors';
+
+export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnline, mowerEvents, onEventBacklog, onOpenWhatsNew }: Props) {
   const { t, i18n } = useTranslation();
   const [showBle, setShowBle] = useState(false);
   const [version, setVersion] = useState('');
@@ -57,17 +61,23 @@ export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnl
               >
                 v{version}
               </span>
-              {notes.length > 0 && (
-                <button
-                  onClick={() => setShowNotes(true)}
-                  title={t('releaseNotes.title', 'Release notes')}
-                  aria-label={t('releaseNotes.title', 'Release notes')}
-                  className="p-0.5 rounded text-zinc-600 hover:text-emerald-400 transition-colors"
-                >
-                  <ScrollText className="w-3 h-3" />
-                </button>
-              )}
             </span>
+          )}
+        </div>
+        {/* What's new + release notes: labelled pills, not hidden icons. */}
+        <div className="hidden sm:flex items-center gap-1.5 ml-2">
+          <button onClick={onOpenWhatsNew} className={PILL} title={t('whatsNew.heading')}>
+            <span className="relative">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              {pendingWhatsNew().length > 0 && <span className="absolute -top-1 -right-1 w-1.5 h-1.5 rounded-full bg-emerald-400" />}
+            </span>
+            <span className="hidden lg:inline">{t('whatsNew.button')}</span>
+          </button>
+          {notes.length > 0 && (
+            <button onClick={() => setShowNotes(true)} className={PILL} title={t('releaseNotes.title', 'Release notes')}>
+              <ScrollText className="w-3.5 h-3.5 text-zinc-400" />
+              <span className="hidden lg:inline">{t('releaseNotes.title', 'Release notes')}</span>
+            </button>
           )}
         </div>
       </div>

@@ -1565,7 +1565,10 @@
     "unknown": "Status {{n}}"
   },
   "tabs": {
-    "records": "Maaibeurten"
+    "records": "Maaibeurten",
+    "map": "Kaart",
+    "schedule": "Schema",
+    "settings": "Instellingen"
   },
   "ota": {
     "title": "Firmware-update",
@@ -1613,5 +1616,16 @@
     "downloading": "Downloaden…",
     "updateDone": "Update voltooid",
     "updateFailed": "Update mislukt"
+  },
+  "whatsNew": {
+    "heading": "Nieuw in OpenNova",
+    "tryIt": "Probeer het",
+    "next": "Volgende",
+    "done": "Klaar",
+    "render3d": {
+      "title": "Je tuin als 3D AI-render",
+      "body": "Maak van je tuin een 3D-render, van bovenaf of schuin, bij dag of bij avond. Je zones, obstakels en de maaier staan er live op. Kies hem onder Ondergrond in de kaartbalk. Let op: de render wordt door AI getekend op basis van de luchtfoto, dus hij lijkt op je tuin maar klopt niet tot in elk detail met de werkelijkheid."
+    },
+    "button": "Nieuw"
   }
 }

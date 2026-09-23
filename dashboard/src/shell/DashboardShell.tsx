@@ -25,6 +25,8 @@ import { UpdateBanner } from './UpdateBanner';
 import { FirmwareRequiredBanner } from './FirmwareRequiredBanner';
 import { ErrorDisplay } from '../components/status/ErrorDisplay';
 import { useExperimental } from '../utils/experimental';
+import { WhatsNewModal } from '../components/common/WhatsNewModal';
+import { WHATS_NEW, pendingWhatsNew, markWhatsNewSeen, type WhatsNewAction } from '../whatsNew';
 
 // Lazy-loaded so three.js (the 3D terrain viewer) stays out of the main bundle.
 const TerrainPage = lazy(() => import('../pages/TerrainPage'));
@@ -41,10 +43,10 @@ function ShellInner() {
   // Settings, mirroring the app's Experimental Features switch.
   const experimental = useExperimental();
   const TABS: Array<{ id: Tab; label: string; icon?: React.ComponentType<{ className?: string }> }> = [
-    { id: 'map', label: 'Map', icon: MapIcon },
-    { id: 'schedule', label: 'Schedule', icon: CalendarClock },
-    { id: 'records', label: 'Records', icon: ClipboardList },
-    { id: 'settings', label: 'Settings', icon: SettingsIcon },
+    { id: 'map', label: t('tabs.map'), icon: MapIcon },
+    { id: 'schedule', label: t('tabs.schedule'), icon: CalendarClock },
+    { id: 'records', label: t('tabs.records'), icon: ClipboardList },
+    { id: 'settings', label: t('tabs.settings'), icon: SettingsIcon },
     ...(experimental
       ? [{ id: 'terrain' as Tab, label: t('terrain.title'), icon: Mountain }]
       : []),
@@ -56,6 +58,16 @@ function ShellInner() {
     if (!experimental && tab === 'terrain') setTab('map');
   }, [experimental, tab]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [whatsNew, setWhatsNew] = useState(pendingWhatsNew);
+  const closeWhatsNew = (action?: WhatsNewAction) => {
+    markWhatsNewSeen(whatsNew.map(e => e.id));
+    setWhatsNew([]);
+    if (action === 'angled-render') {
+      setTab('map');
+      // The map may mount on this same render; let it attach its listener first.
+      setTimeout(() => window.dispatchEvent(new CustomEvent('opennova:open-render', { detail: { framing: 'iso' } })), 50);
+    }
+  };
   // The enlarged server-log lives here (not in the drawer) so it stays open
   // when the drawer closes; only its own ✕ dismisses it.
   const [logFloating, setLogFloating] = useState(false);
@@ -179,6 +191,7 @@ function ShellInner() {
         activeOnline={activeMower?.online ?? false}
         mowerEvents={mowerEvents}
         onEventBacklog={addMowerEvents}
+        onOpenWhatsNew={() => setWhatsNew(WHATS_NEW)}
       />
 
       {/* Single row: device identity + live telemetry (left) and the tab nav
@@ -285,6 +298,8 @@ function ShellInner() {
 
       {/* Floating server-log window — top-level so it survives the drawer. */}
       <FloatingServerLog open={logFloating} onClose={() => setLogFloating(false)} />
+
+      {whatsNew.length > 0 && <WhatsNewModal entries={whatsNew} onClose={closeWhatsNew} />}
     </div>
   );
 }

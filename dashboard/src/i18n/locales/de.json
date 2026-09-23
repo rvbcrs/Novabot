@@ -1565,7 +1565,10 @@
     "unknown": "Status {{n}}"
   },
   "tabs": {
-    "records": "Mähvorgänge"
+    "records": "Mähvorgänge",
+    "map": "Karte",
+    "schedule": "Zeitplan",
+    "settings": "Einstellungen"
   },
   "ota": {
     "title": "Firmware-Update",
@@ -1613,5 +1616,16 @@
     "downloading": "Wird heruntergeladen…",
     "updateDone": "Update abgeschlossen",
     "updateFailed": "Update fehlgeschlagen"
+  },
+  "whatsNew": {
+    "heading": "Neu in OpenNova",
+    "tryIt": "Ausprobieren",
+    "next": "Weiter",
+    "done": "Fertig",
+    "render3d": {
+      "title": "Ihr Garten als 3D-KI-Render",
+      "body": "Verwandeln Sie Ihren Garten in einen 3D-Render, von oben oder schräg, bei Tag oder am Abend. Ihre Zonen, Hindernisse und der Mäher erscheinen live darauf. Wählen Sie ihn unter Hintergrund in der Kartenleiste. Hinweis: Der Render wird von einer KI anhand des Luftbilds gezeichnet. Er ähnelt Ihrem Garten, stimmt aber nicht in jedem Detail mit der Wirklichkeit überein."
+    },
+    "button": "Neu"
   }
 }

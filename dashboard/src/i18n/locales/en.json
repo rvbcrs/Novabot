@@ -1567,7 +1567,10 @@
     "unknown": "State {{n}}"
   },
   "tabs": {
-    "records": "Records"
+    "records": "Records",
+    "map": "Map",
+    "schedule": "Schedule",
+    "settings": "Settings"
   },
   "ota": {
     "title": "Firmware update",
@@ -1615,5 +1618,16 @@
     "downloading": "Downloading…",
     "updateDone": "Update complete",
     "updateFailed": "Update failed"
+  },
+  "whatsNew": {
+    "heading": "New in OpenNova",
+    "tryIt": "Try it",
+    "next": "Next",
+    "done": "Done",
+    "render3d": {
+      "title": "Your garden as a 3D AI render",
+      "body": "Turn your garden into a 3D render, top-down or angled, by day or in the evening. Your zones, obstacles and the mower appear on it live. Pick it under Base layer in the map toolbar. Note: the render is drawn by AI from the aerial photo, so it looks like your garden but does not match reality in every detail."
+    },
+    "button": "What's new"
   }
 }

@@ -1565,7 +1565,10 @@
     "unknown": "État {{n}}"
   },
   "tabs": {
-    "records": "Tontes"
+    "records": "Tontes",
+    "map": "Carte",
+    "schedule": "Planning",
+    "settings": "Réglages"
   },
   "ota": {
     "title": "Mise à jour du firmware",
@@ -1613,5 +1616,16 @@
     "downloading": "Téléchargement…",
     "updateDone": "Mise à jour terminée",
     "updateFailed": "Échec de la mise à jour"
+  },
+  "whatsNew": {
+    "heading": "Nouveau dans OpenNova",
+    "tryIt": "Essayer",
+    "next": "Suivant",
+    "done": "Terminé",
+    "render3d": {
+      "title": "Votre jardin en rendu 3D par IA",
+      "body": "Transformez votre jardin en rendu 3D, vu de dessus ou en perspective, de jour comme en soirée. Vos zones, obstacles et la tondeuse y apparaissent en direct. Choisissez-le sous Fond de carte dans la barre de la carte. Remarque : le rendu est dessiné par une IA à partir de la photo aérienne. Il ressemble à votre jardin, mais ne correspond pas à la réalité dans chaque détail."
+    },
+    "button": "Nouveautés"
   }
 }
