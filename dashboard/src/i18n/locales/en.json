@@ -456,7 +456,27 @@
     "droneRemovePoint": "Remove point",
     "droneResidualInfo": "Deviation: how far that photo point still is from its map point. With 2 or 4 points it is always 0; with more you see how well the photo fits as a whole. A large number is usually a misclicked point, or a roof or treetop.",
     "droneMeanResidual": "average {{cm}} cm",
-    "dronePointsSliders": "While picking, the points define the placement; the sliders work again afterwards."
+    "dronePointsSliders": "While picking, the points define the placement; the sliders work again afterwards.",
+    "base": {
+      "title": "Base layer",
+      "satellite": "Satellite",
+      "drone": "Drone photo",
+      "droneMissing": "No drone photo uploaded yet",
+      "render": "3D render",
+      "day": "day",
+      "night": "evening",
+      "renderMake": "Create 3D render…",
+      "renderAgain": "Generate again…",
+      "renderStale": "The map changed after this render.",
+      "noKey": "Set a key first under Settings → 3D render.",
+      "noBase": "No aerial imagery for this location; upload a drone photo.",
+      "failed": "Render failed"
+    },
+    "render": {
+      "noKey": "Set a key first under Settings → 3D render.",
+      "noBase": "No aerial imagery for this location; upload a drone photo.",
+      "failed": "Render failed"
+    }
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

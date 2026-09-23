@@ -3922,6 +3922,88 @@ interface WorkRecordRow {
   path_direction: number | null;
 }
 
+// ── Garden render (3D visualisation of the real garden) ──────────────────
+// The model call costs money and leaves the machine, so it only ever runs from
+// this explicit POST; everything else just serves what was generated.
+
+// GET /api/dashboard/render/:sn — what exists, and which variant fits now.
+dashboardRouter.get('/render/:sn', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const gr = await import('../services/gardenRender.js');
+  const meta = gr.readRenderMeta(sn);
+  res.json({
+    available: !!meta,
+    meta,
+    stale: gr.isStale(sn, meta),
+    variant: meta ? await gr.variantForNow(sn) : null,
+    credentials: gr.getCredentials().mode,
+    hasDronePhoto: !!(await import('./droneOverlay.js')).readMeta(sn),
+  });
+});
+
+// GET /api/dashboard/render/:sn/image?variant=auto|day|night — the picture.
+dashboardRouter.get('/render/:sn/image', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const gr = await import('../services/gardenRender.js');
+  const asked = String(req.query.variant ?? 'auto');
+  const variant = asked === 'day' || asked === 'night' ? asked : await gr.variantForNow(sn);
+  const file = gr.renderPath(sn, variant);
+  if (!fs.existsSync(file)) { res.status(404).json({ error: 'no render' }); return; }
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Render-Variant', variant);
+  res.send(fs.readFileSync(file));
+});
+
+// GET /api/dashboard/render/:sn/composite — the geometry we send to the model,
+// useful on its own (exact zone on the aerial) and for debugging a bad render.
+dashboardRouter.get('/render/:sn/composite', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const gr = await import('../services/gardenRender.js');
+  const file = path.resolve(process.env.STORAGE_PATH ?? './storage', 'renders', sn, 'composite.png');
+  if (fs.existsSync(file)) { res.setHeader('Content-Type', 'image/png'); res.send(fs.readFileSync(file)); return; }
+  try {
+    const base = await gr.baseImage(sn, req.query.source === 'drone' ? 'drone' : 'aerial');
+    if (!base) { res.status(409).json({ error: 'no_base_image' }); return; }
+    res.setHeader('Content-Type', 'image/png');
+    res.send(await gr.compositeImage(sn, base));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// POST /api/dashboard/render/:sn — generate both variants. Body: { source? }
+const renderLocks = new Set<string>();
+dashboardRouter.post('/render/:sn', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (renderLocks.has(sn)) { res.status(409).json({ error: 'busy' }); return; }
+  renderLocks.add(sn);
+  try {
+    const gr = await import('../services/gardenRender.js');
+    const body = req.body as { source?: 'aerial' | 'drone' };
+    const out = await gr.generateRenders(sn, { source: body?.source });
+    res.json(out);
+  } catch (err) {
+    const msg = (err as Error).message;
+    const status = msg === 'no_credentials' || msg === 'no_base_image' ? 409 : 502;
+    res.status(status).json({ ok: false, error: msg });
+  } finally {
+    renderLocks.delete(sn);
+  }
+});
+
+// GET/PUT /api/dashboard/render-settings — the key or relay token (never echoed).
+dashboardRouter.get('/render-settings', async (_req: Request, res: Response) => {
+  const gr = await import('../services/gardenRender.js');
+  res.json({ mode: gr.getCredentials().mode, model: process.env.RENDER_MODEL ?? 'gpt-image-2.5-sunburst' });
+});
+dashboardRouter.put('/render-settings', async (req: Request, res: Response) => {
+  const gr = await import('../services/gardenRender.js');
+  const body = req.body as { openaiKey?: string | null; relayToken?: string | null };
+  gr.setCredentials(body);
+  res.json({ mode: gr.getCredentials().mode });
+});
+
 // GET /api/dashboard/work-records/:sn/summary — totalen (week/maand/jaar/alles)
 // + mes-onderhoud. Kalendergrenzen in de server-TZ (container TZ).
 dashboardRouter.get('/work-records/:sn/summary', async (req: Request, res: Response) => {

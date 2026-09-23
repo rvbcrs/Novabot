@@ -7,6 +7,7 @@ import {
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Flame,
   Fence, Target, XCircle, CheckCircle2, Plus, Minus, Brush, Paintbrush, Eraser,
   Copy, ClipboardPaste, Spline, RefreshCw, Loader2, Move as MoveIcon, Camera, Eye, Image as ImageIcon,
+  Box, Sun, Moon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData, MapCalibration, GpsPoint } from '../../types';
@@ -14,7 +15,8 @@ import { DroneOverlayLayer } from './DroneOverlay';
 import { latLngToPhoto, photoToLatLng, distanceM, solvePlacement, insidePhoto, similarityCorners, derivedPlacement, rotateCorners, scaleCorners, type PhotoPixel, type PointPair } from '../../utils/droneOverlayMath';
 import {
   fetchDroneOverlay, uploadDroneOverlay, saveDroneOverlayPlacement, deleteDroneOverlay, copyDroneOverlay, droneOverlayImageUrl, fetchDevices,
-  type DroneOverlayMeta, type DroneOverlayPlacement, type DroneCorners,
+  fetchGardenRender, gardenRenderImageUrl, generateGardenRender,
+  type DroneOverlayMeta, type DroneOverlayPlacement, type DroneCorners, type GardenRenderState,
 } from '../../api/client';
 import {
   fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
@@ -1185,7 +1187,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [showCamera, setShowCamera] = useState(false);
   // Tool-bar flyout: which category popover is open (Weergave / Bewerken /
   // Coverage / Dock). null = none. Only one open at a time.
-  const [railFlyout, setRailFlyout] = useState<null | 'view' | 'edit' | 'coverage' | 'dock'>(null);
+  const [railFlyout, setRailFlyout] = useState<null | 'base' | 'view' | 'edit' | 'coverage' | 'dock'>(null);
   // Satellite-layer picker is a side submenu off the Weergave flyout (it stays
   // compact instead of listing every layer inline). Auto-closes with Weergave.
   const [railTileSub, setRailTileSub] = useState(false);
@@ -1484,6 +1486,42 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Eén foto per maaier op de server; hier alleen tonen, plaatsen en beheren.
   const [droneMeta, setDroneMeta] = useState<DroneOverlayMeta | null>(null);
   const [droneVisible, setDroneVisible] = useState(true);
+  // Which picture of the garden is on screen. Satellite is the map as it always
+  // was; drone is the same map with the photo on top; render swaps the map for
+  // the 3D visualisation, which is not georeferenced and so cannot be a layer.
+  type BaseView = 'satellite' | 'drone' | 'render';
+  const [baseView, setBaseView] = useState<BaseView>(() => {
+    const v = localStorage.getItem('map.baseView');
+    return v === 'drone' || v === 'render' ? v : 'satellite';
+  });
+  const [renderState, setRenderState] = useState<GardenRenderState | null>(null);
+  const [renderBusy, setRenderBusy] = useState(false);
+  const [renderNonce, setRenderNonce] = useState(() => String(Date.now()));
+  const chooseBaseView = useCallback((v: BaseView) => {
+    setBaseView(v);
+    localStorage.setItem('map.baseView', v);
+    if (v !== 'render') setDroneVisible(v === 'drone');
+  }, []);
+  useEffect(() => {
+    if (!sn) return;
+    fetchGardenRender(sn).then(setRenderState).catch(() => setRenderState(null));
+  }, [sn, renderNonce]);
+  const startRender = useCallback(async () => {
+    if (!sn || renderBusy) return;
+    setRenderBusy(true);
+    const r = await generateGardenRender(sn, renderState?.hasDronePhoto ? 'drone' : 'aerial');
+    setRenderBusy(false);
+    if (!r.ok) {
+      window.alert(r.error === 'no_credentials'
+        ? t('map.render.noKey', 'Stel eerst een sleutel in bij Instellingen → 3D-render.')
+        : r.error === 'no_base_image'
+          ? t('map.render.noBase', 'Geen luchtfoto beschikbaar voor deze locatie; upload een dronefoto.')
+          : `${t('map.render.failed', 'Render mislukt')}: ${r.error ?? ''}`);
+      return;
+    }
+    setRenderNonce(String(Date.now()));
+    chooseBaseView('render');
+  }, [sn, renderBusy, renderState, chooseBaseView, t]);
   /** Plaatsing die nog niet opgeslagen is; null = niet aan het plaatsen. */
   const [droneDraft, setDroneDraft] = useState<DroneOverlayPlacement | null>(null);
   const [droneBusy, setDroneBusy] = useState(false);
@@ -3457,6 +3495,22 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         </div>
       </div>
       <div className="relative flex-1 min-h-0">
+        {baseView === 'render' && sn && renderState?.available && (
+          <div className="absolute inset-0 z-[800] bg-gray-950 flex items-center justify-center">
+            <img
+              src={gardenRenderImageUrl(sn, renderNonce)}
+              alt={t('map.base.render', '3D-render')}
+              className="max-h-full max-w-full object-contain"
+            />
+            <div className="absolute bottom-3 left-3 flex items-center gap-2 text-[11px] text-gray-400 bg-gray-900/80 border border-gray-700 rounded-lg px-2.5 py-1.5">
+              {renderState.variant === 'night' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+              <span>{renderState.variant === 'night' ? t('map.base.night', 'avond') : t('map.base.day', 'dag')}</span>
+              <span className="text-gray-600">·</span>
+              <span>{renderState.meta?.attribution}</span>
+              {renderState.stale && <span className="text-amber-400">· {t('map.base.renderStale', 'Kaart is gewijzigd na deze render.')}</span>}
+            </div>
+          </div>
+        )}
         <MapContainer
           center={position}
           zoom={20}
@@ -3475,7 +3529,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           />
           {/* Capture the Leaflet instance so paste can read the view center (R6) */}
           <MapInstanceCapture mapRef={leafletMapRef} />
-          {droneMeta && droneVisible && dronePlacement && sn && (
+          {droneMeta && droneVisible && baseView !== 'render' && dronePlacement && sn && (
             <DroneOverlayLayer
               url={droneOverlayImageUrl(sn, droneMeta.updatedAt)}
               placement={dronePlacement}
@@ -4038,6 +4092,59 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 <div className="w-px self-stretch bg-gray-700/50 my-0.5" />
               </>
             )}
+            {/* ONDERGROND — satelliet / dronefoto / 3D-render */}
+            <div className="relative">
+              <button
+                onClick={() => setRailFlyout(f => (f === 'base' ? null : 'base'))}
+                className={railCat(railFlyout === 'base')}
+                title={t('map.base.title', 'Ondergrond')}
+              >
+                {baseView === 'render' ? <Box className="w-4 h-4" /> : baseView === 'drone' ? <ImageIcon className="w-4 h-4" /> : <Layers className="w-4 h-4" />}
+                <span className="hidden sm:inline">
+                  {baseView === 'render' ? t('map.base.render', '3D-render') : baseView === 'drone' ? t('map.base.drone', 'Dronefoto') : t('map.base.satellite', 'Satelliet')}
+                </span>
+                <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${railFlyout === 'base' ? 'rotate-180' : ''}`} />
+              </button>
+              {railFlyout === 'base' && (
+                <div className={railPanel}>
+                  <button onClick={() => { chooseBaseView('satellite'); setRailFlyout(null); }} className={railRow(baseView === 'satellite')}>
+                    <Layers className="w-4 h-4 opacity-70" />{t('map.base.satellite', 'Satelliet')}
+                  </button>
+                  <button
+                    onClick={() => { if (droneMeta) { chooseBaseView('drone'); setRailFlyout(null); } }}
+                    disabled={!droneMeta}
+                    className={`${railRow(baseView === 'drone')} ${droneMeta ? '' : 'opacity-40 cursor-not-allowed'}`}
+                    title={droneMeta ? undefined : t('map.base.droneMissing', 'Nog geen dronefoto geüpload')}
+                  >
+                    <ImageIcon className="w-4 h-4 opacity-70" />{t('map.base.drone', 'Dronefoto')}
+                  </button>
+                  <button
+                    onClick={() => { if (renderState?.available) { chooseBaseView('render'); setRailFlyout(null); } }}
+                    disabled={!renderState?.available}
+                    className={`${railRow(baseView === 'render')} ${renderState?.available ? '' : 'opacity-40 cursor-not-allowed'}`}
+                  >
+                    <Box className="w-4 h-4 opacity-70" />
+                    <span className="flex-1 text-left">{t('map.base.render', '3D-render')}</span>
+                    {renderState?.available && (
+                      <span className="text-[10px] text-gray-500">
+                        {renderState.variant === 'night' ? t('map.base.night', 'avond') : t('map.base.day', 'dag')}
+                      </span>
+                    )}
+                  </button>
+                  <div className={railHdr}>{t('map.base.render', '3D-render')}</div>
+                  <button onClick={() => { void startRender(); setRailFlyout(null); }} disabled={renderBusy} className={railRow(false)}>
+                    <RefreshCw className={`w-4 h-4 opacity-70 ${renderBusy ? 'animate-spin' : ''}`} />
+                    {renderState?.available
+                      ? t('map.base.renderAgain', 'Opnieuw genereren…')
+                      : t('map.base.renderMake', '3D-render maken…')}
+                  </button>
+                  {renderState?.stale && (
+                    <div className="px-2.5 pb-1.5 text-[11px] text-amber-400">{t('map.base.renderStale', 'Kaart is gewijzigd na deze render.')}</div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* WEERGAVE — tiles + display toggles */}
             <div className="relative">
               <button

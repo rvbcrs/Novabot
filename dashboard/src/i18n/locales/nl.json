@@ -524,7 +524,27 @@
     "droneRemovePoint": "Punt weghalen",
     "droneResidualInfo": "Afwijking: zo ver ligt dat fotopunt nog van zijn kaartpunt. Bij 2 of 4 punten is dat altijd 0; met meer punten zie je hoe goed de foto in zijn geheel past. Een groot getal is meestal een verkeerd aangeklikt punt, of een dak of boomtop.",
     "droneMeanResidual": "gemiddeld {{cm}} cm",
-    "dronePointsSliders": "Tijdens het aanwijzen bepalen de punten de plaatsing; de schuifjes werken daarna weer."
+    "dronePointsSliders": "Tijdens het aanwijzen bepalen de punten de plaatsing; de schuifjes werken daarna weer.",
+    "base": {
+      "title": "Ondergrond",
+      "satellite": "Satelliet",
+      "drone": "Dronefoto",
+      "droneMissing": "Nog geen dronefoto geüpload",
+      "render": "3D-render",
+      "day": "dag",
+      "night": "avond",
+      "renderMake": "3D-render maken…",
+      "renderAgain": "Opnieuw genereren…",
+      "renderStale": "Kaart is gewijzigd na deze render.",
+      "noKey": "Stel eerst een sleutel in bij Instellingen → 3D-render.",
+      "noBase": "Geen luchtfoto beschikbaar voor deze locatie; upload een dronefoto.",
+      "failed": "Render mislukt"
+    },
+    "render": {
+      "noKey": "Stel eerst een sleutel in bij Instellingen → 3D-render.",
+      "noBase": "Geen luchtfoto beschikbaar voor deze locatie; upload een dronefoto.",
+      "failed": "Render mislukt"
+    }
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

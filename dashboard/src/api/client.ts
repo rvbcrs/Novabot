@@ -1267,6 +1267,44 @@ export function droneOverlayImageUrl(sn: string, updatedAt: string): string {
   return `${BASE}/overlay/${encodeURIComponent(sn)}/image?v=${encodeURIComponent(updatedAt)}`;
 }
 
+// ── Garden render (3D visualisation) ───────────────────────────────────────
+
+export interface GardenRenderMeta {
+  createdAt: string; source: 'aerial' | 'drone'; attribution: string; mapRows: number; variants: string[];
+}
+export interface GardenRenderState {
+  available: boolean; meta: GardenRenderMeta | null; stale: boolean;
+  variant: 'day' | 'night' | null; credentials: 'own-key' | 'relay' | 'none'; hasDronePhoto: boolean;
+}
+
+export async function fetchGardenRender(sn: string): Promise<GardenRenderState> {
+  return (await get(`${BASE}/render/${encodeURIComponent(sn)}`)).json();
+}
+
+/** The picture itself; `v` busts the cache after a regenerate. */
+export function gardenRenderImageUrl(sn: string, v: string, variant: 'auto' | 'day' | 'night' = 'auto'): string {
+  return `${BASE}/render/${encodeURIComponent(sn)}/image?variant=${variant}&v=${encodeURIComponent(v)}`;
+}
+
+export async function generateGardenRender(sn: string, source?: 'aerial' | 'drone'): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${BASE}/render/${encodeURIComponent(sn)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source }),
+  });
+  const body = await res.json().catch(() => ({})) as { ok?: boolean; error?: string };
+  return { ok: res.ok && body.ok !== false, error: body.error };
+}
+
+export async function fetchRenderSettings(): Promise<{ mode: string; model: string }> {
+  return (await get(`${BASE}/render-settings`)).json();
+}
+
+export async function saveRenderSettings(body: { openaiKey?: string | null; relayToken?: string | null }): Promise<{ mode: string }> {
+  const res = await apiFetch(`${BASE}/render-settings`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
 export async function uploadDroneOverlay(
   sn: string, file: File, at: { lat: number; lng: number } | null,
 ): Promise<DroneOverlayMeta> {
