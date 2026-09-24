@@ -118,7 +118,7 @@ export function simplifyPolygon(pts: XY[], tolerance: number): XY[] {
  * Strikte tekentest: collinear/rakend = ongedefinieerd (orientatie-afhankelijk).
  * Bewust — float-drags raken dit praktisch nooit; NIET "fixen" in de RN-spiegel.
  */
-function segIntersects(a: XY, b: XY, c: XY, d: XY): boolean {
+export function segIntersects(a: XY, b: XY, c: XY, d: XY): boolean {
   const cross = (o: XY, p: XY, q: XY) => (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
   const d1 = cross(c, d, a), d2 = cross(c, d, b), d3 = cross(a, b, c), d4 = cross(a, b, d);
   return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));

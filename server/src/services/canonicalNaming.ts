@@ -40,7 +40,7 @@ export type NamingResult =
     }
   | { ok: false; error: string };
 
-interface WorkSlot {
+export interface WorkSlot {
   slot: number;
   poly: XY[];
 }
@@ -64,7 +64,7 @@ function parsePoints(raw: string | null): XY[] {
   }
 }
 
-function workSlots(sn: string): WorkSlot[] {
+export function workSlots(sn: string): WorkSlot[] {
   const out: WorkSlot[] = [];
   for (const row of mapRepo.findByMowerSnAndType(sn, 'work')) {
     const slot = slotOfWorkRow(row);
@@ -83,7 +83,7 @@ export function nextFreeWorkSlot(sn: string): number {
 }
 
 /** Laadstation in lokale meters: eerste punt van het to-charge kanaal, anders de live dock-pose. */
-function dockPoint(sn: string): XY | null {
+export function dockPoint(sn: string): XY | null {
   try {
     const anchor = getPolygonAnchor(sn);
     if (anchor) return { x: anchor.x, y: anchor.y };
@@ -100,7 +100,7 @@ function dist(a: XY, b: XY): number {
 }
 
 /** Kortste afstand van p tot de rand van poly (0 als p erbinnen ligt). */
-function distanceToPolygon(p: XY, poly: XY[]): number {
+export function distanceToPolygon(p: XY, poly: XY[]): number {
   if (poly.length < 3) return Infinity;
   if (pointInPolygon(p, poly)) return 0;
   let best = Infinity;
@@ -159,7 +159,7 @@ function nearestSlot(p: XY, slots: WorkSlot[]): number | null {
 }
 
 /** Volgende vrije index voor een kanaal tussen twee gebieden (mapAtomapB_K_unicom). */
-function nextChannelIndex(sn: string, from: number, to: number): number {
+export function nextChannelIndex(sn: string, from: number, to: number): number {
   const re = new RegExp(`^map${from}tomap${to}_(\\d+)_unicom$`);
   let next = 0;
   for (const row of mapRepo.findAllByMowerSnAndType(sn, 'unicom')) {
