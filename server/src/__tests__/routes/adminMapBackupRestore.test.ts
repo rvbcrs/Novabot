@@ -135,6 +135,7 @@ import * as anchor from '../../services/anchor.js';
 import * as mapSync from '../../mqtt/mapSync.js';
 import * as mapBackupModule from '../../services/mapBackup.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
+import { posJsonRequested } from '../../services/posJsonGate.js';
 
 // Grab typed references to the mocked functions
 const mockParseMapZip = vi.mocked(mapConverter.parseMapZip);
@@ -441,6 +442,9 @@ describe('POST /map-backups/:sn/:filename/restore-and-realign', () => {
       expect(res.body.anchor.x).toBeCloseTo(-1.21);
       expect(res.body.anchor.y).toBeCloseTo(0.48);
       expect(res.body.gps).toEqual({ lat: 52.14088864656, lng: 6.23103579689 });
+      // The pin now holds the docked mower's own GPS, so this push may write
+      // pos.json from it; ordinary pushes may not (services/posJsonGate.ts).
+      expect(posJsonRequested(SN)).toBe(true);
     },
   );
 

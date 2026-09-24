@@ -131,6 +131,7 @@ try { fs.mkdirSync(walkerBundlesDir, { recursive: true }); } catch { /* ignore â
 
 
 import { SERVER_VERSION } from '../services/serverVersion.js';
+import { requestPosJsonWrite } from '../services/posJsonGate.js';
 
 // GET /api/admin-status/overview
 adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
@@ -1519,6 +1520,9 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
       resolve({ ok: respond.result === 0, respond });
     };
     onExtendedResponse(sn, handler);
+    // The pin was just set from the docked mower's own GPS: this push may
+    // write pos.json from it (ordinary pushes never do).
+    requestPosJsonWrite(sn);
     publishToExtended(sn, { sync_map: { write_charging_pose: true } });
     setTimeout(() => {
       if (settled) return;

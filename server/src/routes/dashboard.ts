@@ -113,6 +113,7 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
 import { diagnoseConnection } from '../services/connectionDiagnosis.js';
 import { langOf, reqT, M, renderMsg, translator, type Msg, type Translate, type Lang } from '../services/serverText.js';
 import { droneOverlayRouter } from './droneOverlay.js';
+import { posJsonRequested } from '../services/posJsonGate.js';
 import { connectionEventRepo, mowProgressRepo, dockSamplesRepo } from '../db/repositories/index.js';
 import { computeDockDrift } from '../services/dockDrift.js';
 import { firmwareAdvisory, getManifest, ensureTargetDownloaded } from '../services/firmwareAdvisory.js';
@@ -2510,7 +2511,9 @@ dashboardRouter.get('/maps/:sn/sync-info', async (req: Request, res: Response) =
     res.json({
       md5,
       sizeBytes: readFileSync(zipPath).length,
-      posJson: charger ? generatePosJson(charger, anchor ? { x: anchor.x, y: anchor.y } : null) : null,
+      // Only when a flow asked for it (services/posJsonGate.ts): the pin is a
+      // photo position, not the mower's frame origin.
+      posJson: charger && posJsonRequested(sn) ? generatePosJson(charger, anchor ? { x: anchor.x, y: anchor.y } : null) : null,
       charging_pose: anchor
         ? { x: anchor.x, y: anchor.y, orientation: anchor.orientation }
         : null,
