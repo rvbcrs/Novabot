@@ -123,12 +123,15 @@ export class DeviceRepository {
   );
   private _countAll = db.prepare('SELECT COUNT(*) as count FROM device_registry');
   private _listAll = db.prepare('SELECT * FROM device_registry ORDER BY last_seen DESC');
+  // One row per serial. last_seen has one-second resolution, so two client ids
+  // for the same serial (the mower's own and a second connection) can tie on
+  // it; the rowid breaks the tie, otherwise the serial is listed twice.
   private _listLatestBySn = db.prepare(`
     SELECT d.* FROM device_registry d
-    INNER JOIN (
-      SELECT sn, MAX(last_seen) as max_seen FROM device_registry
-      WHERE sn IS NOT NULL GROUP BY sn
-    ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
+    WHERE d.sn IS NOT NULL AND d.rowid = (
+      SELECT d2.rowid FROM device_registry d2 WHERE d2.sn = d.sn
+      ORDER BY d2.last_seen DESC, d2.rowid DESC LIMIT 1
+    )
     ORDER BY d.last_seen DESC
   `);
   private _deleteBySn = db.prepare('DELETE FROM device_registry WHERE sn = ?');
