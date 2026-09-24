@@ -3544,6 +3544,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // app reads chargerGps directly and ignores offset.
     const updated: MapCalibration = { ...savedCal, chargerLat: lat, chargerLng: lng, offsetLat: 0, offsetLng: 0 };
     setSavedCal(updated);
+    // The zones, drawing, copying and navigate-to all project from chargerGps;
+    // without this only the icon moved and everything else kept the old pin
+    // until the maps were fetched again.
+    setChargerGps({ lat, lng });
     setPlacingCharger(false);
     saveCalibration(sn, updated).then(() => {
       toast(t('map.chargerSaved'), 'success');
