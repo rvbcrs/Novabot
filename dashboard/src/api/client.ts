@@ -596,8 +596,9 @@ export function findIncomingRain(
 
 // ── Extended Mower Commands ────────────────────────────────────
 
-export async function navigateToPosition(sn: string, latitude: number, longitude: number, angle = 0): Promise<CommandResult> {
-  return (await post(`${BASE}/navigate-to/${encodeURIComponent(sn)}`, { latitude, longitude, angle })).json();
+/** Drive to a point in map metres (charger-relative, like map_position_x/y). OpenNova firmware only. */
+export async function navigateToPosition(sn: string, x: number, y: number, yaw?: number): Promise<CommandResult> {
+  return (await post(`${BASE}/navigate-to/${encodeURIComponent(sn)}`, { x, y, yaw })).json();
 }
 
 export async function stopNavigation(sn: string): Promise<CommandResult> {

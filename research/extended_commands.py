@@ -1997,6 +1997,81 @@ def handle_return_to_dock(params, respond):
     respond("return_to_dock_respond", {"result": 0})
 
 
+def handle_nav_to_point(params, respond):
+    """Drive to a point in the map frame and stop there (blades stay off).
+
+    Replaces the stock `navigate_to_position`, which mqtt_node only echoes
+    (result 0, no goal ever sent). Params: x, y (map metres, charger-relative,
+    the frame of map_position_x/y), yaw (radians, optional). Runs
+    mow_zone_drive.py goto: refuses points outside every zone and channel,
+    refuses while a mow is running, undocks when on the dock, then one nav2
+    NavigateToPose. Streams nav_to_point_status {phase, error?}; stopped with
+    the existing stop_mow_zone."""
+    try:
+        x = float(params.get("x"))
+        y = float(params.get("y"))
+        yaw = params.get("yaw")
+        yaw = None if yaw is None else float(yaw)
+    except (TypeError, ValueError):
+        respond("nav_to_point_respond", {"result": 1, "error": "invalid_target"})
+        return
+    if not all(math.isfinite(v) for v in (x, y)) or max(abs(x), abs(y)) > 500:
+        respond("nav_to_point_respond", {"result": 1, "error": "invalid_target"})
+        return
+    drive_script = "/root/novabot/scripts/mow_zone_drive.py"
+    if not os.path.isfile(drive_script):
+        respond("nav_to_point_respond", {"result": 1, "error": "drive_script_missing"})
+        return
+    _stale = kill_stale_mow_drives()
+    if _stale:
+        log(f"nav_to_point: {len(_stale)} vastgelopen run(s) opgeruimd voor de start: {_stale}")
+    wrapper = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        'exec stdbuf -oL python3 "$1" goto "$2" "$3" "$4"'
+    )
+    # Values are float()-checked above and passed as argv, never interpolated.
+    argv = ["bash", "-c", wrapper, "nav_to_point", drive_script,
+            repr(x), repr(y), "-" if yaw is None else repr(yaw)]
+
+    def _run():
+        terminal_seen = False
+        proc = None
+        try:
+            proc = subprocess.Popen(argv, env=_ros_env(), stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            _register_mow_drive(proc)
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("PHASE "):
+                    parts = line.split(" ", 2)
+                    ph = parts[1] if len(parts) > 1 else ""
+                    if ph in ("done", "error"):
+                        terminal_seen = True
+                    msg = {"phase": ph}
+                    if ph == "error" and len(parts) > 2:
+                        msg["error"] = parts[2]
+                    respond("nav_to_point_status", msg)
+                else:
+                    log(f"nav_to_point: {line}")
+            proc.wait()
+            stopped = _unregister_mow_drive(proc)
+            if proc.returncode != 0 and not terminal_seen:
+                respond("nav_to_point_status", {"phase": "stopped"} if stopped else
+                        {"phase": "error", "error": f"drive_exit_{proc.returncode}"})
+        except Exception as e:
+            log(f"nav_to_point error: {e}")
+            respond("nav_to_point_status", {"phase": "error", "error": str(e)})
+        finally:
+            if proc is not None:
+                _unregister_mow_drive(proc)
+
+    threading.Thread(target=_run, daemon=True, name="nav-to-point").start()
+    respond("nav_to_point_respond", {"result": 0})
+
+
 def _stop_mow_zone_cleanup_cli():
     """CLI-fallback voor _stop_mow_zone_cleanup wanneer rclpy niet importeert.
 
@@ -2013,6 +2088,8 @@ def _stop_mow_zone_cleanup_cli():
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "
         "( timeout 10 ros2 service call /follow_path/_action/cancel_goal "
+        "action_msgs/srv/CancelGoal '{}'; "
+        "timeout 10 ros2 service call /navigate_to_pose/_action/cancel_goal "
         "action_msgs/srv/CancelGoal '{}'; "
         + sets +
         " ) >> /tmp/stop_mow_zone.log 2>&1"
@@ -2060,12 +2137,16 @@ def _stop_mow_zone_cleanup():
             pass  # context al geinitialiseerd (blade relay)
         node = rclpy.create_node("stop_mow_zone_cleanup")
         try:
-            cancel_cli = node.create_client(CancelGoal, "/follow_path/_action/cancel_goal")
-            if cancel_cli.wait_for_service(timeout_sec=5.0):
-                cancel_cli.call_async(CancelGoal.Request())
-                log("stop_mow_zone cleanup: FollowPath cancel verstuurd")
-            else:
-                log("stop_mow_zone cleanup: cancel service niet gevonden (geen actieve nav2?)")
+            # FollowPath (transit) and NavigateToPose (nav_to_point, and the
+            # approach inside mow_zone): a kill of the drive process leaves
+            # either goal executing server-side, so both are cancelled.
+            for srv in ("/follow_path/_action/cancel_goal", "/navigate_to_pose/_action/cancel_goal"):
+                cancel_cli = node.create_client(CancelGoal, srv)
+                if cancel_cli.wait_for_service(timeout_sec=5.0):
+                    cancel_cli.call_async(CancelGoal.Request())
+                    log(f"stop_mow_zone cleanup: cancel verstuurd naar {srv}")
+                else:
+                    log(f"stop_mow_zone cleanup: {srv} niet gevonden (geen actieve nav2?)")
             param_cli = node.create_client(SetParameters, f"{_NAV_NODE}/set_parameters")
             if param_cli.wait_for_service(timeout_sec=5.0):
                 req = SetParameters.Request()
@@ -4889,6 +4970,7 @@ COMMANDS = {
     "mow_zone": handle_mow_zone,
     "mow_zone_check": handle_mow_zone_check,
     "return_to_dock": handle_return_to_dock,
+    "nav_to_point": handle_nav_to_point,
     "stop_mow_zone": handle_stop_mow_zone,
     "stop_boundary_follow": handle_stop_boundary_follow,
     "get_lora_info": handle_get_lora_info,

@@ -577,7 +577,22 @@
     "navigationTarget": "Navigation target",
     "mowingComplete": "Mowing complete!",
     "allLanesDone": "all lanes mowed",
-    "areaFinished": "{{area}} m² finished"
+    "areaFinished": "{{area}} m² finished",
+    "nav": {
+      "confirmTitle": "Drive to this point?",
+      "confirmMsg": "The mower undocks if needed and drives to the marked point with the blades off, then stops there. It only goes to points inside a zone or on a channel.",
+      "drive": "Drive there",
+      "undocking": "Leaving the dock…",
+      "moving": "On its way to the point…",
+      "done": "Arrived at the point",
+      "stopped": "Stopped",
+      "err_target_outside_zones": "That point is outside every zone and channel.",
+      "err_busy_mowing": "The mower is mowing. Stop the mow first.",
+      "err_not_localized": "The mower does not know where it is yet. Let it drive a short way first.",
+      "err_target_unreachable": "The mower cannot reach that point from where it is.",
+      "err_generic": "Driving to the point failed: {{error}}",
+      "stockOnly": "Needs OpenNova firmware: the stock firmware accepts this command but never drives."
+    }
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

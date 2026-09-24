@@ -543,7 +543,22 @@
     "navigationTarget": "Navigationsziel",
     "mowingComplete": "Mähen abgeschlossen!",
     "allLanesDone": "alle Bahnen gemäht",
-    "areaFinished": "{{area}} m² fertig"
+    "areaFinished": "{{area}} m² fertig",
+    "nav": {
+      "confirmTitle": "Zu diesem Punkt fahren?",
+      "confirmMsg": "Der Mäher verlässt bei Bedarf die Ladestation und fährt mit ausgeschalteten Messern zum markierten Punkt und hält dort an. Er fährt nur zu Punkten in einer Zone oder auf einem Kanal.",
+      "drive": "Hinfahren",
+      "undocking": "Verlässt die Ladestation…",
+      "moving": "Unterwegs zum Punkt…",
+      "done": "Am Punkt angekommen",
+      "stopped": "Gestoppt",
+      "err_target_outside_zones": "Dieser Punkt liegt außerhalb aller Zonen und Kanäle.",
+      "err_busy_mowing": "Der Mäher mäht gerade. Beende zuerst das Mähen.",
+      "err_not_localized": "Der Mäher weiß noch nicht, wo er ist. Lass ihn zuerst ein Stück fahren.",
+      "err_target_unreachable": "Der Mäher kann diesen Punkt von seiner Position aus nicht erreichen.",
+      "err_generic": "Fahrt zum Punkt fehlgeschlagen: {{error}}",
+      "stockOnly": "Benötigt OpenNova-Firmware: Die Original-Firmware nimmt den Befehl an, fährt aber nie."
+    }
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

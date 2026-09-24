@@ -400,6 +400,11 @@ export const CATALOG: Catalog = {
     fr: "L'autre extrémité n'est pas dans une zone de travail. Faites finir le canal à l'intérieur d'une zone.",
     de: "Das andere Ende liegt nicht in einem Arbeitsbereich. Lassen Sie den Kanal innerhalb eines Bereichs enden.",
   },
+  "Naar een punt rijden": {
+    en: "Driving to a point",
+    fr: "Rouler jusqu'à un point",
+    de: "Zu einem Punkt fahren",
+  },
   "Het extended commando {0}": {
     en: "The extended command {0}",
     fr: "La commande étendue {0}",

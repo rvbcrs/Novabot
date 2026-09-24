@@ -3355,15 +3355,47 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [sn, savedCal, t]);
 
   // Push maps to mower via SSH
-  // Navigate-to handler — GPS coords direct van Leaflet klik
-  const handleNavigateClick = useCallback((lat: number, lng: number) => {
-    setNavigateTarget({ lat, lng });
+  // Navigate-to: the click is a map point, the mower wants map metres. Undo
+  // exactly what the map does to draw local points (localToGps from the dock
+  // pose, then the manual offset), so the target lands where the mower marker
+  // would stand on that spot.
+  const handleNavigateClick = useCallback(async (lat: number, lng: number) => {
     setNavigateMode(false);
-    navigateToPosition(sn, lat, lng).then(() => {
-      toast(`✓ ${t('controls.navigateTo')}`, 'success');
-    }).catch(() => toast(`✗ ${t('controls.navigateTo')}`, 'error'));
-    setTimeout(() => setNavigateTarget(null), 60_000);
-  }, [sn, t, toast]);
+    if (!isUsableChargerGps(chargerGps)) return;
+    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
+    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
+    const l = gpsToLocal({ lat: lat - offLat, lng: lng - offLng }, chargerGps);
+    const x = l.x + (chargingPose?.x ?? 0);
+    const y = l.y + (chargingPose?.y ?? 0);
+    setNavigateTarget({ lat, lng });
+    if (!(await dialog.confirm({
+      title: t('map.nav.confirmTitle'), message: t('map.nav.confirmMsg'),
+      confirmLabel: t('map.nav.drive'), variant: 'info',
+    }))) { setNavigateTarget(null); return; }
+    const r = await navigateToPosition(sn, x, y).catch(() => null);
+    if (!r?.ok) {
+      setNavigateTarget(null);
+      toast(`✗ ${(r as { error?: string } | null)?.error ?? t('controls.navigateTo')}`, 'error');
+    }
+  }, [sn, chargerGps, activeCal, chargingPose, dialog, t, toast]);
+
+  // The drive reports its phase through the sensors; say it, and drop the
+  // target marker once it is over.
+  const navPhase = sensors?.nav_to_point_phase ?? '';
+  const navError = sensors?.nav_to_point_error ?? '';
+  const navDriving = navPhase === 'undocking' || navPhase === 'moving';
+  const lastNavPhase = useRef(navPhase);
+  useEffect(() => {
+    if (navPhase === lastNavPhase.current) return;
+    lastNavPhase.current = navPhase;
+    if (navPhase === 'undocking' || navPhase === 'moving' || navPhase === 'done' || navPhase === 'stopped') {
+      toast(t(`map.nav.${navPhase}`), navPhase === 'done' ? 'success' : 'info');
+    } else if (navPhase === 'error') {
+      const known = ['target_outside_zones', 'busy_mowing', 'not_localized', 'target_unreachable'];
+      toast(known.includes(navError) ? t(`map.nav.err_${navError}`) : t('map.nav.err_generic', { error: navError }), 'error');
+    }
+    if (navPhase === 'done' || navPhase === 'error' || navPhase === 'stopped') setNavigateTarget(null);
+  }, [navPhase, navError, t, toast]);
 
   const handleStopNavigation = useCallback(() => {
     setNavigateTarget(null);
@@ -4122,7 +4154,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
           {/* Navigate-to click handler */}
           {navigateMode && !placingCharger && editMode === 'none' && !wallDrawMode && (
-            <NavigateClickHandler onClick={handleNavigateClick} />
+            <NavigateClickHandler onClick={(lat, lng) => { void handleNavigateClick(lat, lng); }} />
           )}
           {/* Navigate-to target marker */}
           {navigateTarget && (
@@ -4412,17 +4444,20 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       )}
                       {sn && (
                         <button
+                          disabled={!cameraAvailable}
+                          title={cameraAvailable ? undefined : t('map.nav.stockOnly')}
                           onClick={() => {
+                            if (!cameraAvailable) return;
                             if (navigateMode) { setNavigateMode(false); setWallDrawMode(false); }
                             else { setNavigateMode(true); setWallDrawMode(false); setPlacingCharger(false); }
                             setRailFlyout(null);
                           }}
-                          className={railRow(navigateMode)}
+                          className={`${railRow(navigateMode)} ${cameraAvailable ? '' : 'opacity-40 cursor-not-allowed'}`}
                         >
                           <Target className="w-4 h-4 opacity-70" />{t('controls.navigateTo')}
                         </button>
                       )}
-                      {navigateTarget && (
+                      {(navigateTarget || navDriving) && (
                         <button onClick={() => { handleStopNavigation(); setRailFlyout(null); }} className={railRow(false)}>
                           <XCircle className="w-4 h-4 opacity-70 text-red-400" />{t('controls.stopNavigation')}
                         </button>

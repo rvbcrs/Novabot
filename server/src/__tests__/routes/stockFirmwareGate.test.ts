@@ -132,6 +132,7 @@ const stockCases: Array<[string, () => request.Test]> = [
   ['POST /mapping-preflight', () => request(server).post(`${B}/mapping-preflight/${SN}`).send({})],
   ['POST /pin/verify', () => request(server).post(`${B}/pin/${SN}/verify`).send({ code: '1234' })],
   ['POST /maps/recalibrate-charging-pose', () => request(server).post(`${B}/maps/${SN}/recalibrate-charging-pose`).send({})],
+  ['POST /navigate-to (stock stub never drives)', () => request(server).post(`${B}/navigate-to/${SN}`).send({ x: 1.5, y: -2 })],
   ['POST /schedules with edgeDays', () => request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] })],
 ];
 
@@ -170,6 +171,25 @@ describe('central firmware gate on stock firmware', () => {
     const res = await request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0' });
     expect(res.status, JSON.stringify(res.body)).toBeLessThan(300);
     expect(scheduleRepo.findByMowerSn(SN)).toHaveLength(1);
+  });
+
+  it('navigate-to: map metres become nav_to_point on OpenNova, bad input is refused', async () => {
+    fw.supported = true;
+    const ok = await request(server).post(`${B}/navigate-to/${SN}`).send({ x: 1.5, y: -2, yaw: 0.3 });
+    expect(ok.status).toBe(200);
+    expect(publishExtendedCommand).toHaveBeenCalledWith(SN, { nav_to_point: { x: 1.5, y: -2, yaw: 0.3 } });
+    for (const bad of [{ latitude: 52, longitude: 6 }, { x: 'a', y: 1 }, { x: 1, y: 900 }, { x: 1, y: 2, yaw: 'n' }]) {
+      const res = await request(server).post(`${B}/navigate-to/${SN}`).send(bad);
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+    expect(publishExtendedCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop-navigation also stops a nav_to_point drive on OpenNova', async () => {
+    fw.supported = true;
+    await request(server).post(`${B}/stop-navigation/${SN}`).send({});
+    expect(publishToDevice).toHaveBeenCalledWith(SN, expect.objectContaining({ stop_navigation: expect.anything() }));
+    expect(publishExtendedCommand).toHaveBeenCalledWith(SN, { stop_mow_zone: {} });
   });
 
   it('lets everything through on OpenNova firmware', async () => {

@@ -4733,16 +4733,24 @@ dashboardRouter.get('/rain-forecast/:sn', async (req: Request, res: Response) =>
 
 // ── Extended Mower Commands (bestaande firmware + extended node) ─────────
 
-// POST /api/dashboard/navigate-to/:sn — stuur maaier naar GPS positie
+// POST /api/dashboard/navigate-to/:sn — drive to a point and stop there.
+// Body: { x, y, yaw? } in map metres (charger-relative, the frame of
+// map_position_x/y). The stock `navigate_to_position` is a stub in mqtt_node
+// (parses, answers result 0, never sends a goal), so this only works on
+// OpenNova firmware: extended_commands.py `nav_to_point` runs nav2
+// NavigateToPose after refusing points outside every zone and channel.
 dashboardRouter.post('/navigate-to/:sn', (req: Request, res: Response) => {
   const sn = req.params.sn;
-  const { latitude, longitude, angle = 0 } = req.body as { latitude?: number; longitude?: number; angle?: number };
-  if (latitude == null || longitude == null) {
-    res.status(400).json({ ok: false, error: 'latitude and longitude required' });
+  const { x, y, yaw } = req.body as { x?: unknown; y?: unknown; yaw?: unknown };
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  if (!finite(x) || !finite(y) || Math.max(Math.abs(x), Math.abs(y)) > 500 || (yaw != null && !finite(yaw))) {
+    res.status(400).json({ ok: false, error: 'x and y (map metres) required' });
     return;
   }
-  publishToDevice(sn, { navigate_to_position: { latitude, longitude, angle } });
-  res.json({ ok: true, command: 'navigate_to_position' });
+  if (rejectUnlessOpenNova(sn, req, res, M`Naar een punt rijden`)) return;
+  disarmEdgeWatch(sn, 'handmatig nav_to_point via dashboard');
+  publishExtendedCommand(sn, { nav_to_point: { x, y, ...(yaw != null ? { yaw } : {}) } });
+  res.json({ ok: true, command: 'nav_to_point' });
 });
 
 // POST /api/dashboard/stop-navigation/:sn — stop navigatie
@@ -4751,6 +4759,10 @@ dashboardRouter.post('/stop-navigation/:sn', (req: Request, res: Response) => {
   // hoorde wordt hiermee afgebroken (finding 4).
   disarmEdgeWatch(req.params.sn, 'stop-navigation via dashboard');
   publishToDevice(req.params.sn, { stop_navigation: { cmd_num: getNextCmdNum(req.params.sn) } });
+  // A nav_to_point drive runs on nav2 directly, outside the stock task, so
+  // stop_navigation does not reach it. stop_mow_zone kills the drive and
+  // cancels its goal; harmless when nothing is driving.
+  if (isOpenNovaMower(req.params.sn, deviceCache.get(req.params.sn))) publishExtendedCommand(req.params.sn, { stop_mow_zone: {} });
   res.json({ ok: true, command: 'stop_navigation' });
 });
 
@@ -4889,7 +4901,7 @@ function syncVirtualWalls(sn: string): void {
 // mow_zone is het PRIMAIRE handmatige maaipad van de app; de andere vier
 // starten of sturen eveneens een rit. Elk hiervan via de extended-route is een
 // handmatige interventie die een gearmde rand-dag randmaai ongeldig maakt.
-const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive'];
+const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive', 'nav_to_point'];
 
 // POST /api/dashboard/extended/:sn — stuur commando naar extended_commands.py
 dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {

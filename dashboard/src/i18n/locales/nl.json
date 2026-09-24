@@ -646,7 +646,22 @@
     "navigationTarget": "Navigatiedoel",
     "mowingComplete": "Maaien voltooid!",
     "allLanesDone": "alle banen gemaaid",
-    "areaFinished": "{{area}} m² klaar"
+    "areaFinished": "{{area}} m² klaar",
+    "nav": {
+      "confirmTitle": "Naar dit punt rijden?",
+      "confirmMsg": "De maaier verlaat zo nodig het dok en rijdt met de messen uit naar het gemarkeerde punt, en stopt daar. Hij rijdt alleen naar punten binnen een zone of op een kanaal.",
+      "drive": "Rij erheen",
+      "undocking": "Verlaat het dok…",
+      "moving": "Onderweg naar het punt…",
+      "done": "Aangekomen op het punt",
+      "stopped": "Gestopt",
+      "err_target_outside_zones": "Dat punt ligt buiten alle zones en kanalen.",
+      "err_busy_mowing": "De maaier is aan het maaien. Stop eerst het maaien.",
+      "err_not_localized": "De maaier weet nog niet waar hij is. Laat hem eerst een stukje rijden.",
+      "err_target_unreachable": "De maaier kan dat punt vanaf zijn plek niet bereiken.",
+      "err_generic": "Naar het punt rijden mislukte: {{error}}",
+      "stockOnly": "Vereist OpenNova-firmware: de stock firmware accepteert dit commando maar rijdt nooit."
+    }
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

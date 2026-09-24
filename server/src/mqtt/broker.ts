@@ -1239,6 +1239,23 @@ export async function startMqttBroker(): Promise<void> {
         // unicom-follow-transit-design.md) into the sensor cache so the app
         // can derive activity='following_unicom' directly from
         // deviceState.sensors, same pattern as edge_cut_status above.
+        // nav_to_point: the go-to-a-point drive (extended_commands.py). Same
+        // mirror as mow_zone below, so the dashboard can say "on its way",
+        // "arrived" or why it refused.
+        if (extSn && cmdName === 'nav_to_point_status') {
+          const body = parsed[cmdName] as { phase?: string; error?: string };
+          if (body?.phase) {
+            if (!deviceCache.has(extSn)) deviceCache.set(extSn, new Map());
+            const cache = deviceCache.get(extSn)!;
+            const changes = new Map<string, string>([
+              ['nav_to_point_phase', body.phase],
+              ['nav_to_point_error', body.phase === 'error' ? (body.error || 'unknown') : ''],
+            ]);
+            for (const [k, v] of changes) cache.set(k, v);
+            forwardToDashboard(extSn, changes);
+          }
+        }
+
         if (extSn && cmdName === 'mow_zone_status') {
           const body = parsed[cmdName] as {
             phase?: string;

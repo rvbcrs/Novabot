@@ -1188,6 +1188,74 @@ def do_return(drv):
     return 0 if ok else 1
 
 
+GOTO_UNICOM_MARGIN = 0.6   # a point this close to a recorded channel counts as on it
+
+
+def _goto_target_allowed(x, y):
+    """Only points the mower is meant to drive on: inside a work zone, or on a
+    recorded channel between zones. Anything else (the road, the neighbour's
+    garden, the pond) is refused before a single wheel turns."""
+    base = _csv_base()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return False
+    for f in names:
+        if re.fullmatch(r"map\d+_work\.csv", f):
+            poly = read_xy_csv(os.path.join(base, f))
+            if len(poly) >= 3 and point_in_poly(x, y, poly):
+                return True
+    for pts, _f in _transit_unicoms():
+        for a, b in zip(pts, pts[1:]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            L = dx * dx + dy * dy
+            t = 0.0 if L == 0 else max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / L))
+            if math.hypot(x - a[0] - t * dx, y - a[1] - t * dy) <= GOTO_UNICOM_MARGIN:
+                return True
+    return False
+
+
+def do_goto(drv, x, y, yaw):
+    """Drive to one point in the map frame and stop there, blades off.
+
+    The stock `navigate_to_position` MQTT command is a stub: mqtt_node parses
+    it, prints it and answers result 0 without ever sending a goal (ghidra,
+    api_navigate_to_position). This is the real thing: nav2's NavigateToPose,
+    the same planner the firmware uses to travel between zones, after the
+    same undock the mow orchestrator does.
+    """
+    if not _goto_target_allowed(x, y):
+        phase("error", "target_outside_zones")
+        return 1
+    st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
+    if st is not None and task_executing(*st) and st[1] != WORK_STATUS_USER_STOP:
+        # A running mow owns the wheels; taking them away mid-task leaves a
+        # half-cut lawn and a confused robot_decision. Stop the mow first.
+        phase("error", "busy_mowing")
+        return 1
+    drv.reload_map()
+    clear_parked_task(drv)
+    clear_recharge(drv)
+    robot = drv.robot_xy()
+    if robot is None:
+        phase("error", "not_localized")
+        return 1
+    log(f"goto: robot={robot} target=({x:.2f},{y:.2f}) yaw={yaw}")
+    if current_zone_slot(robot) == "dock":
+        phase("undocking")
+        drv.undock()
+        robot = drv.robot_xy() or robot
+    weg, note = drv.map_unreachable(robot, [(x, y)])
+    if weg:
+        phase("error", "target_unreachable")
+        log(f"goto: unreachable ({note})")
+        return 1
+    phase("moving")
+    ok, msg = drv.nav_to(x, y, yaw, timeout=600.0)
+    phase("done" if ok else "error", "" if ok else msg)
+    return 0 if ok else 1
+
+
 def check_mow(drv, to_slot):
     """Dry run: say what stands in the way BEFORE the mower drives anywhere.
 
@@ -1313,6 +1381,17 @@ def main():
                 rc = check_mow(drv, args[1])
         elif mode == "return":
             rc = do_return(drv)
+        elif mode == "goto":
+            try:
+                gx, gy = float(args[1]), float(args[2])
+                gyaw = None if len(args) < 4 or args[3] == "-" else float(args[3])
+            except (IndexError, ValueError):
+                phase("error", "usage: mow_zone_drive.py goto <x> <y> [yaw|-]")
+            else:
+                if not all(math.isfinite(v) for v in (gx, gy)) or max(abs(gx), abs(gy)) > 500:
+                    phase("error", "invalid_target")
+                else:
+                    rc = do_goto(drv, gx, gy, gyaw)
         elif mode == "mow":
             if len(args) < 5:
                 phase("error", "usage: mow_zone_drive.py mow <to_slot> <map_ids> <cutterhigh> <direction|->")

@@ -543,7 +543,22 @@
     "navigationTarget": "Destination de navigation",
     "mowingComplete": "Tonte terminée !",
     "allLanesDone": "toutes les bandes tondues",
-    "areaFinished": "{{area}} m² terminés"
+    "areaFinished": "{{area}} m² terminés",
+    "nav": {
+      "confirmTitle": "Aller à ce point ?",
+      "confirmMsg": "La tondeuse quitte la base si besoin et roule jusqu’au point marqué, lames arrêtées, puis s’arrête. Elle ne va qu’à des points dans une zone ou sur un passage.",
+      "drive": "Y aller",
+      "undocking": "Quitte la base…",
+      "moving": "En route vers le point…",
+      "done": "Arrivée au point",
+      "stopped": "Arrêtée",
+      "err_target_outside_zones": "Ce point est hors de toutes les zones et passages.",
+      "err_busy_mowing": "La tondeuse tond. Arrêtez d’abord la tonte.",
+      "err_not_localized": "La tondeuse ne sait pas encore où elle est. Laissez-la rouler un peu d’abord.",
+      "err_target_unreachable": "La tondeuse ne peut pas atteindre ce point depuis sa position.",
+      "err_generic": "Échec du trajet vers le point : {{error}}",
+      "stockOnly": "Nécessite le firmware OpenNova : le firmware d’origine accepte la commande mais ne roule jamais."
+    }
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",
