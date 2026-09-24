@@ -87,8 +87,14 @@ local map frame has shifted between export and restore.
 └───────────────────────────────────────────────────────────────────┘
                               ▼
 ┌───────────────────────────────────────────────────────────────────┐
-│ 4. DOCK ANCHOR REFRESH (REQUIRED before mowing)                   │
-│   After restore the admin page shows a 3-choice modal. Pick one:  │
+│ 4. DOCK ANCHOR REFRESH (only when the frame check fails)          │
+│   Right after the restore the server checks the live frame: is   │
+│   the mower docked, RTK Fixed, and within 0.4 m of the restored   │
+│   dock anchor? On the same mower with an unchanged pos.json that  │
+│   is the normal case: nothing is locked and the admin page says   │
+│   "No re-anchor needed". Otherwise (after a re-provisioning,      │
+│   factory reset, moved charger, or a bundle from another mower)   │
+│   the admin page shows a 3-choice modal. Pick one:                │
 │   - Manual: lift the mower off the dock briefly and place it      │
 │     back, OR use the joystick to drive 1m off and re-dock.        │
 │   - Auto: server sends start_move:4 → 5s mst back velocity →      │

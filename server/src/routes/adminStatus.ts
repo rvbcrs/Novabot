@@ -23,6 +23,7 @@ import { startMdnsAdvertiser, stopMdnsAdvertiser, getActiveAdvertisement } from 
 import { listBackups, backupPath, regenerateLatestZipFromBackup } from '../services/mapBackup.js';
 import { getPolygonAnchor } from '../services/anchor.js';
 import { markFrameUnvalidated } from '../services/frameValidation.js';
+import { settleRestoredFrame } from '../services/restoreFrameCheck.js';
 import { exportBundle, parseBundle, BundleValidationError, computeAnchorRebase, type ParsedBundle } from '../services/portableMap.js';
 import { synthesizePortableFromWalker } from '../maps/walkerBundleImporter.js';
 import { buildMaskOverlay, parsePgm } from '../maps/maskOverlay.js';
@@ -1374,9 +1375,11 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore', (req: AuthRequest, 
     }
 
     console.log(`[Admin] Map restore for ${sn}: ${restored} restored, ${overwritten} overwritten, ${skippedExisting} skippedExisting, ${skippedNotInBackup} skippedNotInBackup`);
-    markFrameUnvalidated(sn);
-    console.log(`[Admin] frame_unvalidated set for ${sn} after restore`);
-    res.json({ ok: true, restored, overwritten, skippedExisting, skippedNotInBackup });
+    // Verify first (see apply-verbatim): only lock navigation when the live
+    // docked position does not match the restored dock anchor.
+    const frameCheck = settleRestoredFrame(sn);
+    console.log(`[Admin] ${sn} after restore: frame ${frameCheck.ok ? 'verified' : `unvalidated (${frameCheck.reason})`}`);
+    res.json({ ok: true, restored, overwritten, skippedExisting, skippedNotInBackup, frameCheck });
   } catch (err) {
     console.error('[Admin] Map restore failed:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'restore failed' });
@@ -3330,11 +3333,11 @@ adminStatusRouter.post(
     mapRepo.setPolygonOffset(sn, 0, 0);
 
     importStaging.transition(stagingId, 'APPLIED', { applyResult: {} });
-    // The map files are now applied but the frame is not yet anchored to the
-    // real charger. Lock go_to_charge and trigger the app re-anchor wizard
-    // until a successful ArUco dock re-anchors pos.json.
-    markFrameUnvalidated(sn);
-    console.log(`[Admin] frame_unvalidated set for ${sn} after apply-verbatim`);
+    // Verify first: a bundle from this mower on an unchanged frame needs no
+    // re-anchor. Docked with RTK Fixed on the restored dock anchor means the
+    // frame is right; anything else locks navigation until the re-anchor.
+    const frameCheck = settleRestoredFrame(sn);
+    console.log(`[Admin] ${sn} after apply-verbatim: frame ${frameCheck.ok ? 'verified' : `unvalidated (${frameCheck.reason})`}${frameCheck.distM != null ? `, ${frameCheck.distM.toFixed(2)} m from the dock anchor` : ''}`);
     importAuditRepo.append({
       sn,
       staging_id: stagingId,
@@ -3355,7 +3358,8 @@ adminStatusRouter.post(
         mapFilesB64: Object.keys(mowerFiles.mapFilesB64 ?? {}).length,
         chargingStationYaml: !!mowerFiles.chargingStationYaml,
       },
-      requires_dock_anchor_refresh: true,
+      requires_dock_anchor_refresh: !frameCheck.ok,
+      frameCheck,
     });
   },
 );

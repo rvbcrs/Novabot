@@ -22,7 +22,7 @@ import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
-import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked } from '../services/frameValidation.js';
+import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked, FRAME_TOLERANCE_M } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { gpsSpreadMeters, medianGps, type LatLng } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
@@ -3372,7 +3372,7 @@ function reanchorMapPos(sn: string): { x: number; y: number } {
   const s = deviceCache.get(sn);
   return { x: parseFloat(s?.get('map_position_x') ?? 'NaN'), y: parseFloat(s?.get('map_position_y') ?? 'NaN') };
 }
-const REANCHOR_TOLERANCE_M = 0.4; // docked map_position must land this close to the dock anchor
+const REANCHOR_TOLERANCE_M = FRAME_TOLERANCE_M; // docked map_position must land this close to the dock anchor
 // Stability gate: the origin GPS must SETTLE before we anchor on it. A single
 // instantaneous reading can be mid-wander, which puts the dock in the wrong
 // place. We require a window of consecutive Fixed readings that agree within the

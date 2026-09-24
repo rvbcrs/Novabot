@@ -96,6 +96,8 @@ vi.mock('../../services/anchor.js', () => ({
 
 vi.mock('../../mqtt/sensorData.js', () => ({
   deviceCache: new Map<string, Map<string, string>>(),
+  translateValue: (field: string, raw: string) =>
+    field === 'rtk_fix_quality' ? ({ '4': 'RTK Fixed', '5': 'RTK Float' } as Record<string, string>)[raw] ?? raw : raw,
   getValidationTrail: vi.fn().mockReturnValue([]),
   clearValidationTrail: vi.fn(),
   getLocalTrail: vi.fn().mockReturnValue([]),
@@ -116,6 +118,8 @@ import { equipmentRepo, mapRepo } from '../../db/repositories/index.js';
 import { exportBundle, parseBundle } from '../../services/portableMap.js';
 import * as mapSyncMock from '../../mqtt/mapSync.js';
 import * as sensorDataMock from '../../mqtt/sensorData.js';
+import { getPolygonAnchor } from '../../services/anchor.js';
+import { isFrameUnvalidated, clearFrameUnvalidated } from '../../services/frameValidation.js';
 
 // Inject fake userId to bypass auth middleware
 const app = express();
@@ -384,6 +388,61 @@ describe('POST /apply-verbatim firmware capability', () => {
     expect(mapRepo.findAllByMowerSnAndType(sn, 'unicom')).toHaveLength(1);
     expect(vi.mocked(mapSyncMock.applyVerbatimToMower)).not.toHaveBeenCalled();
     expect(vi.mocked(mapSyncMock.publishToExtended)).not.toHaveBeenCalled();
+  });
+});
+
+
+// Verify-first: een bundle van dezelfde maaier op een ongewijzigd frame hoeft
+// niet opnieuw verankerd te worden. De check is dezelfde als de zelfverificatie
+// van het her-ankeren: gedockt, RTK Fixed, map_position binnen 0,4 m van het
+// dock-anker (eerste punt van map0tocharge_unicom).
+describe('POST /apply-verbatim verifies the frame before asking for a re-anchor', () => {
+  // Eén SN per test: een staging-sessie blijft per SN staan en zou de volgende
+  // upload met 409 "er loopt al een import" weigeren.
+  let n = 0;
+  let sn = '';
+  beforeEach(() => {
+    sn = `LFIN_VERIFY_FIRST_${++n}`;
+    clearFrameUnvalidated(sn);
+    equipmentRepo.create({ equipment_id: `eq-${sn}`, mower_sn: sn, charger_sn: `LFIC_VERIFY_FIRST_${n}`, mower_version: 'v6.0.2-custom-45' });
+    vi.mocked(getPolygonAnchor).mockReturnValue({ x: 0.03, y: 0.73, orientation: -1.5, orientationSource: 'saved' });
+    // applyVerbatimToMower is synchroon en gemockt; zonder resultaat gooit de
+    // route op `.pushed` en blijft het antwoord uit.
+    vi.mocked(mapSyncMock.applyVerbatimToMower).mockReturnValue({ pushed: true, validation: { hardFailures: [], warnings: [] } } as unknown as ReturnType<typeof mapSyncMock.applyVerbatimToMower>);
+  });
+
+  it('docked with RTK Fixed on the anchor: no dock-anchor refresh, frame stays validated', async () => {
+    const stagingId = await stageVerbatimBundle(sn);
+    seedSensorCache(sn, '52.14', '6.23');
+    getSensorMap(sn).set('rtk_fix_quality', '4');
+    getSensorMap(sn).set('map_position_x', '-0.01');
+    getSensorMap(sn).set('map_position_y', '0.78');
+    const res = await request(server).post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`);
+    expect(res.status).toBe(200);
+    expect(res.body.requires_dock_anchor_refresh).toBe(false);
+    expect(res.body.frameCheck).toMatchObject({ ok: true, reason: 'ok' });
+    expect(isFrameUnvalidated(sn)).toBe(false);
+  });
+
+  it('docked but 2 m off the anchor: refresh required, frame unvalidated', async () => {
+    const stagingId = await stageVerbatimBundle(sn);
+    seedSensorCache(sn, '52.14', '6.23');
+    getSensorMap(sn).set('rtk_fix_quality', '4');
+    getSensorMap(sn).set('map_position_x', '2.14');
+    getSensorMap(sn).set('map_position_y', '0.02');
+    const res = await request(server).post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`);
+    expect(res.status).toBe(200);
+    expect(res.body.requires_dock_anchor_refresh).toBe(true);
+    expect(res.body.frameCheck).toMatchObject({ ok: false, reason: 'off' });
+    expect(isFrameUnvalidated(sn)).toBe(true);
+  });
+
+  it('mower not docked: refresh required as before', async () => {
+    const stagingId = await stageVerbatimBundle(sn);
+    const res = await request(server).post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`);
+    expect(res.status).toBe(200);
+    expect(res.body.requires_dock_anchor_refresh).toBe(true);
+    expect(isFrameUnvalidated(sn)).toBe(true);
   });
 });
 

@@ -4911,6 +4911,9 @@ async function portableApplyVerbatim() {
   portableMowerFileApplySupported = false;
   loadMaps();
   if (j.requires_dock_anchor_refresh) await promptDockAnchorRefresh(sn);
+  else if (j.frameCheck && j.frameCheck.ok) {
+    await appAlert(__t('Frame verified: the mower is docked {cm} cm from the dock anchor, so no re-anchor is needed.', { cm: Math.round((j.frameCheck.distM || 0) * 100) }), { accent: 'success', title: __t('No re-anchor needed') });
+  }
 }
 
 // After a restore the saved frame no longer matches the live UTM frame.
@@ -5366,6 +5369,11 @@ async function restoreSelection() {
     if (result.overwritten > 0) parts.push(__t('overwritten {n}', { n: result.overwritten }));
     if (result.skippedExisting > 0) parts.push(__t('skipped {n} (already existed)', { n: result.skippedExisting }));
     if (result.skippedNotInBackup > 0) parts.push(__t('skipped {n} (not in backup)', { n: result.skippedNotInBackup }));
+    if (result.frameCheck) {
+      parts.push(result.frameCheck.ok
+        ? __t('frame verified ({cm} cm from the dock anchor), no re-anchor needed', { cm: Math.round((result.frameCheck.distM || 0) * 100) })
+        : __t('re-anchor needed ({reason})', { reason: result.frameCheck.reason }));
+    }
     status.style.color = '#00d4aa';
     status.textContent = parts.join(', ') + '.';
     loadMaps();

@@ -65,6 +65,39 @@ export function isFrameUnvalidated(sn: string): boolean {
   return unvalidated.has(sn);
 }
 
+/** Docked map_position must land this close to the dock anchor for the frame to count as right. */
+export const FRAME_TOLERANCE_M = 0.4;
+
+export interface DockedFrameCheck {
+  ok: boolean;
+  reason: 'ok' | 'not_docked' | 'no_rtk_fixed' | 'no_pose' | 'no_anchor' | 'off';
+  /** Distance docked position → dock anchor, when both are known. */
+  distM: number | null;
+}
+
+/**
+ * Is the live frame consistent with a map's dock anchor? The same test the
+ * re-anchor flow ends with (self-verify), usable BEFORE asking for a re-anchor:
+ * a mower docked with RTK Fixed whose map_position lies on the anchor (first
+ * point of map0tocharge_unicom) already lives in the map's frame. Pure, so the
+ * restore routes and the re-anchor flow share one definition of "right".
+ */
+export function checkDockedFrame(i: {
+  docked: boolean;
+  rtkFixed: boolean;
+  pose: { x: number; y: number } | null;
+  anchor: { x: number; y: number } | null;
+  toleranceM?: number;
+}): DockedFrameCheck {
+  if (!i.docked) return { ok: false, reason: 'not_docked', distM: null };
+  if (!i.rtkFixed) return { ok: false, reason: 'no_rtk_fixed', distM: null };
+  if (!i.pose || !Number.isFinite(i.pose.x) || !Number.isFinite(i.pose.y)) return { ok: false, reason: 'no_pose', distM: null };
+  if (!i.anchor || !Number.isFinite(i.anchor.x) || !Number.isFinite(i.anchor.y)) return { ok: false, reason: 'no_anchor', distM: null };
+  const distM = Math.hypot(i.pose.x - i.anchor.x, i.pose.y - i.anchor.y);
+  const ok = distM <= (i.toleranceM ?? FRAME_TOLERANCE_M) + 1e-9;
+  return { ok, reason: ok ? 'ok' : 'off', distM };
+}
+
 /**
  * Latch (or clear) the "has re-locked since the re-anchor began" lifecycle bit.
  * Set true when the auto re-anchor's relock step reaches RUNNING + RTK Fixed off
