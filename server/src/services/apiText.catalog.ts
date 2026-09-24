@@ -1310,4 +1310,34 @@ export const CATALOG: Catalog = {
     fr: "Zone de travail {0} de la tondeuse {1} introuvable.",
     de: "Arbeitsbereich {0} von Mäher {1} nicht gefunden.",
   },
+  "De zone ligt meer dan {0} m van het dock; als eerste zone moet ze bij het dock liggen, anders kan er geen dockkanaal gemaakt worden.": {
+    en: "The zone is more than {0} m from the dock; as the first zone it must sit near the dock, otherwise no dock channel can be made.",
+    fr: "La zone est à plus de {0} m de la station ; en tant que première zone elle doit être proche de la station, sinon aucun couloir vers la station ne peut être créé.",
+    de: "Die Zone liegt mehr als {0} m vom Dock entfernt; als erste Zone muss sie nahe am Dock liegen, sonst kann kein Dockkanal angelegt werden.",
+  },
+  "Deze maaier heeft al vijf werkgebieden (map0 t/m map4); de firmware kan er niet meer aan.": {
+    en: "This mower already has five work areas (map0 to map4); the firmware cannot run more.",
+    fr: "Cette tondeuse a déjà cinq zones de travail (map0 à map4) ; le firmware n'en gère pas davantage.",
+    de: "Dieser Mäher hat bereits fünf Arbeitsbereiche (map0 bis map4); die Firmware kann nicht mehr verarbeiten.",
+  },
+  "Een zone kopiëren": {
+    en: "Copying a zone",
+    fr: "Copier une zone",
+    de: "Eine Zone kopieren",
+  },
+  "Het dockkanaal zou door een obstakel lopen; verwijder dat obstakel na het kopiëren of kies een andere zone.": {
+    en: "The dock channel would run through an obstacle; remove that obstacle after copying or choose another zone.",
+    fr: "Le couloir vers la station traverserait un obstacle ; supprimez cet obstacle après la copie ou choisissez une autre zone.",
+    de: "Der Dockkanal würde durch ein Hindernis verlaufen; entfernen Sie das Hindernis nach dem Kopieren oder wählen Sie eine andere Zone.",
+  },
+  "kopie": {
+    en: "copy",
+    fr: "copie",
+    de: "Kopie",
+  },
+  "Maaier offline: kopiëren vereist een online maaier, zodat die de nieuwe zone meteen ontvangt.": {
+    en: "Mower offline: copying needs an online mower so it receives the new zone right away.",
+    fr: "Tondeuse hors ligne : la copie nécessite une tondeuse en ligne pour qu'elle reçoive la nouvelle zone immédiatement.",
+    de: "Mäher offline: Kopieren braucht einen Online-Mäher, damit er die neue Zone sofort erhält.",
+  },
 };

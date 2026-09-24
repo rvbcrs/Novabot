@@ -64,6 +64,7 @@ import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
 import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor } from '../services/anchor.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
+import { previewZoneCopy, persistZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
@@ -1885,6 +1886,85 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   });
 
   // Auto-push naar maaier in de achtergrond
+  autoPushMapsInBackground(sn);
+});
+
+// ── Zone kopiëren van een andere maaier ───────────────────────────────────
+// Spec: docs/superpowers/specs/2026-09-24-copy-zone-between-mowers-design.md
+// De kopie is een getekende zone met voorgevulde geometrie: zelfde rijen,
+// zelfde push (autoPushMapsInBackground), zelfde kanaal-prompt in het dashboard.
+interface ZoneCopyBody {
+  canonical?: string;
+  dockAtB?: { x?: unknown; y?: unknown };
+  withObstacles?: boolean;
+  name?: string;
+  acceptChannel?: boolean;
+}
+
+function zoneCopyRefusalText(refusal: NonNullable<CopyPlan['refusal']>, T: Translate): string {
+  switch (refusal) {
+    case 'slot_limit':
+      return T`Deze maaier heeft al vijf werkgebieden (map0 t/m map4); de firmware kan er niet meer aan.`;
+    case 'target_no_dock':
+      return T`Het dock van deze maaier is onbekend: zet de maaier op het dock of teken eerst een dockkanaal.`;
+    case 'too_far_from_dock':
+      return T`De zone ligt meer dan ${DOCK_MAX_M} m van het dock; als eerste zone moet ze bij het dock liggen, anders kan er geen dockkanaal gemaakt worden.`;
+    case 'dock_channel_blocked':
+      return T`Het dockkanaal zou door een obstakel lopen; verwijder dat obstakel na het kopiëren of kies een andere zone.`;
+  }
+}
+
+dashboardRouter.post('/maps/:sn/copy-from/:source/preview', (req: Request, res: Response) => {
+  const T = reqT(req);
+  const { sn, source } = req.params;
+  if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
+  const body = (req.body ?? {}) as ZoneCopyBody;
+  const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false }, T);
+  if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
+  res.json({
+    ...r.plan,
+    sourceAlias: r.sourceAlias,
+    areaM2: r.areaM2,
+    error: r.plan.refusal ? zoneCopyRefusalText(r.plan.refusal, T) : undefined,
+  });
+});
+
+dashboardRouter.post('/maps/:sn/copy-from/:source', (req: Request, res: Response) => {
+  const T = reqT(req);
+  const { sn, source } = req.params;
+  if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
+  if (!isDeviceOnline(sn)) {
+    res.status(409).json({ ok: false, reason: 'offline', error: T`Maaier offline: kopiëren vereist een online maaier, zodat die de nieuwe zone meteen ontvangt.` });
+    return;
+  }
+  const body = (req.body ?? {}) as ZoneCopyBody;
+  // Altijd server-side herberekenen: de client stuurt alleen de correspondentie, nooit geometrie.
+  const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false }, T);
+  if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
+  if (!r.plan.ok) {
+    res.status(409).json({ ok: false, reason: r.plan.refusal, error: zoneCopyRefusalText(r.plan.refusal!, T) });
+    return;
+  }
+  const typedName = (body.name ?? '').trim();
+  const alias = typedName || (r.sourceAlias ? `${r.sourceAlias} (${T`kopie`})` : null);
+  const acceptChannel = body.acceptChannel !== false;
+  const saved = persistZoneCopy(sn, r.plan, { alias, acceptChannel });
+  res.json({
+    ok: true,
+    map: {
+      mapId: saved.mapId,
+      mapName: alias,
+      canonicalName: r.plan.canonical,
+      mapType: 'work',
+      mapArea: r.plan.work,
+      mapMaxMin: saved.mapMaxMin,
+      createdAt: saved.createdAt,
+    },
+    obstacles: saved.obstacles,
+    channels: saved.channels,
+    needsChannel: acceptChannel ? r.plan.needsChannel : !r.plan.connectedVia,
+    warnings: r.plan.warnings,
+  });
   autoPushMapsInBackground(sn);
 });
 
