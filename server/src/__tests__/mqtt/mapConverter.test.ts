@@ -10,7 +10,7 @@ import os from 'os';
 import fs from 'fs';
 import { execSync } from 'child_process';
 
-import { generateMapZipFromDb } from '../../mqtt/mapConverter.js';
+import { generateMapZipFromDb, gridLocalToGps, gridGpsToLocal } from '../../mqtt/mapConverter.js';
 import { mapRepo } from '../../db/repositories/maps.js';
 import { db } from '../../db/database.js';
 
@@ -195,5 +195,32 @@ describe('generateMapZipFromDb polygon offset', () => {
     const info = JSON.parse(fs.readFileSync(path.join(dir, 'csv_file/map_info.json'), 'utf8'));
     expect(Object.keys(info).sort()).toEqual(['charging_pose', 'map0_work.csv', 'map3_work.csv']);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// The mower's map frame is UTM minus an origin; these are PROJ's answers
+// (+proj=utm +zone=32) around LFIN2230700238's origin.
+describe('gridLocalToGps / gridGpsToLocal', () => {
+  const ref = { lat: 52.140845931081316, lng: 6.2311545451881649 };
+  const cases: Array<[number, number, number, number]> = [
+    [20, 15, 52.14098749228963, 6.231438093593753],
+    [-12.5, 30, 52.14111105172895, 6.230955382849581],
+    [0, 25, 52.14107043698007, 6.231140612434456],
+    [25, 0, 52.140854503011845, 6.231519429153085],
+  ];
+  const metres = (a: { lat: number; lng: number }, lat: number, lng: number) =>
+    Math.hypot((a.lat - lat) * 111265, (a.lng - lng) * 68477);
+
+  it('puts map metres where PROJ does, within a centimetre', () => {
+    for (const [x, y, lat, lng] of cases) {
+      expect(metres(gridLocalToGps({ x, y }, ref), lat, lng)).toBeLessThan(0.01);
+    }
+  });
+
+  it('brings a PROJ point back to the same map metres', () => {
+    for (const [x, y, lat, lng] of cases) {
+      const l = gridGpsToLocal({ lat, lng }, ref);
+      expect(Math.hypot(l.x - x, l.y - y)).toBeLessThan(0.01);
+    }
   });
 });

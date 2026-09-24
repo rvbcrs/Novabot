@@ -735,10 +735,17 @@ function metersToOffsetDeg(dxM: number, dyM: number, latDeg: number): { offsetLa
   return { offsetLat: dyM / DEG_TO_M, offsetLng: dxM / (DEG_TO_M * cosLat) };
 }
 
-// Omgekeerde conversie: graden-offset → meters, voor de apply-offset call.
-function offsetDegToMeters(offsetLat: number, offsetLng: number, latDeg: number): { dxM: number; dyM: number } {
-  const cosLat = Math.cos((latDeg * Math.PI) / 180);
-  return { dxM: offsetLng * DEG_TO_M * cosLat, dyM: offsetLat * DEG_TO_M };
+// De maaier krijgt de verschuiving in kaartmeters, en die lopen langs het
+// UTM-raster (utils/coords.ts), niet langs echt noord. Aan de randen (seed bij
+// openen, uitlezing, apply) dus dezelfde projectie als de kaart zelf, zodat de
+// preview precies is wat de maaier krijgt. De pijltjes blijven echt noord/oost.
+function gridMetresToOffsetDeg(dxM: number, dyM: number, ref: { lat: number; lng: number }): { offsetLat: number; offsetLng: number } {
+  const g = localToGps({ x: dxM, y: dyM }, ref);
+  return { offsetLat: g.lat - ref.lat, offsetLng: g.lng - ref.lng };
+}
+function offsetDegToMeters(offsetLat: number, offsetLng: number, ref: { lat: number; lng: number }): { dxM: number; dyM: number } {
+  const l = gpsToLocal({ lat: ref.lat + offsetLat, lng: ref.lng + offsetLng }, ref);
+  return { dxM: l.x, dyM: l.y };
 }
 
 // Mirror van isToChargeUnicomName in server/src/services/polygonOffset.ts: het
@@ -3658,9 +3665,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // gebeuren vóór de seed en gaat er niets verloren; de baseline klopt altijd.
     setSeedLoading(true);
     fetchPolygonOffset(sn).then(({ dxM, dyM }) => {
-      const latDeg = chargerGps?.lat ?? polyCenter.lat;
-      if (!Number.isFinite(latDeg)) return;
-      const { offsetLat, offsetLng } = metersToOffsetDeg(dxM, dyM, latDeg);
+      const ref = isUsableChargerGps(chargerGps) ? chargerGps : polyCenter;
+      if (!Number.isFinite(ref.lat) || !Number.isFinite(ref.lng)) return;
+      const { offsetLat, offsetLng } = gridMetresToOffsetDeg(dxM, dyM, ref);
       setEditCal(prev => prev ? { ...prev, offsetLat, offsetLng } : prev);
     }).catch(() => {}).finally(() => setSeedLoading(false));
   }, [savedCal, sn, chargerGps, polyCenter]);
@@ -3672,9 +3679,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Huidige totale offset in meters (voor de readout naast de pijltjes).
   const shiftOffsetM = useMemo(() => {
     if (!editCal) return { dxM: 0, dyM: 0 };
-    const latDeg = chargerGps?.lat ?? polyCenter.lat;
-    if (!Number.isFinite(latDeg)) return { dxM: 0, dyM: 0 };
-    return offsetDegToMeters(editCal.offsetLat, editCal.offsetLng, latDeg);
+    const ref = isUsableChargerGps(chargerGps) ? chargerGps : polyCenter;
+    if (!Number.isFinite(ref.lat) || !Number.isFinite(ref.lng)) return { dxM: 0, dyM: 0 };
+    return offsetDegToMeters(editCal.offsetLat, editCal.offsetLng, ref);
   }, [editCal, chargerGps, polyCenter]);
 
   const applyShift = useCallback(async (dxM: number, dyM: number, calForDisplay: MapCalibration) => {
@@ -3700,14 +3707,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   const handleApplyOffset = useCallback(async () => {
     if (!editCal || !mapWriteSupported) return;
-    const latDeg = chargerGps?.lat ?? polyCenter.lat;
-    if (!Number.isFinite(latDeg)) { toast(t('map.shiftFailed'), 'error'); return; }
+    const ref = isUsableChargerGps(chargerGps) ? chargerGps : polyCenter;
+    if (!Number.isFinite(ref.lat) || !Number.isFinite(ref.lng)) { toast(t('map.shiftFailed'), 'error'); return; }
     // editCal.offset is in graden; converteer naar meters (+x oost, +y noord —
     // zelfde frame als shiftPoints). LET OP: teken/richting is nog NIET hardware-
     // geverifieerd (aparte Fase 0). Mapping bewust recht-toe-recht-aan (noord-pijl
     // → +dy noord, oost-pijl → +dx oost) zodat de latere check dit op één plek
     // kan bevestigen of omdraaien.
-    const { dxM, dyM } = offsetDegToMeters(editCal.offsetLat, editCal.offsetLng, latDeg);
+    const { dxM, dyM } = offsetDegToMeters(editCal.offsetLat, editCal.offsetLng, ref);
     await applyShift(dxM, dyM, editCal);
   }, [editCal, mapWriteSupported, chargerGps, polyCenter, applyShift, t, toast]);
 

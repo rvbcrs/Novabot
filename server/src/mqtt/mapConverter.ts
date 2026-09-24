@@ -88,6 +88,45 @@ export interface MapPackage {
 // ── Coördinaat conversie ──────────────────────────────────────────
 
 /**
+ * Map metres <-> lat/lng the way the mower's map frame works: UTM minus an
+ * origin (robot_combination_localization projects with +proj=utm), so its axes
+ * follow the UTM grid, turned from true north by the meridian convergence
+ * (about 2.2 degrees in the Netherlands, a metre at 25 m). Around the reference
+ * point that is a rotation plus the grid scale factor, exact to well under a
+ * centimetre across a garden. Mirrors the dashboard's utils/coords.ts; keep
+ * them identical so the 3D render and the 2D map agree.
+ */
+function gridAt(ref: GpsPoint) {
+  const phi = ref.lat * Math.PI / 180;
+  const zone = Math.floor((ref.lng + 180) / 6) + 1;
+  const dl = (ref.lng - (zone * 6 - 183)) * Math.PI / 180;
+  const gamma = Math.atan(Math.tan(dl) * Math.sin(phi));
+  return {
+    c: Math.cos(gamma),
+    s: Math.sin(gamma),
+    k: 0.9996 * (1 + (dl * Math.cos(phi)) ** 2 / 2),
+    mLat: 111132.954 - 559.822 * Math.cos(2 * phi) + 1.175 * Math.cos(4 * phi),
+    mLng: 111412.84 * Math.cos(phi) - 93.5 * Math.cos(3 * phi),
+  };
+}
+
+/** Map metres relative to `ref` (the dock pin) to lat/lng. */
+export function gridLocalToGps(p: LocalPoint, ref: GpsPoint): GpsPoint {
+  const g = gridAt(ref);
+  const e = (p.x * g.c + p.y * g.s) / g.k;
+  const n = (p.y * g.c - p.x * g.s) / g.k;
+  return { lat: ref.lat + n / g.mLat, lng: ref.lng + e / g.mLng };
+}
+
+/** Lat/lng to map metres relative to `ref` (the dock pin). */
+export function gridGpsToLocal(p: GpsPoint, ref: GpsPoint): LocalPoint {
+  const g = gridAt(ref);
+  const e = (p.lng - ref.lng) * g.mLng;
+  const n = (p.lat - ref.lat) * g.mLat;
+  return { x: g.k * (e * g.c - n * g.s), y: g.k * (e * g.s + n * g.c) };
+}
+
+/**
  * Converteer GPS lat/lng naar lokale x,y meters relatief t.o.v. een origin punt.
  * Optioneel met rotatie (orientation in radialen van het lokale coördinatensysteem).
  */

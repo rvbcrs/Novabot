@@ -17,6 +17,7 @@ import {
 } from '../../services/gardenRender.js';
 import fs from 'node:fs';
 import { mapRepo } from '../../db/repositories/index.js';
+import { gridLocalToGps } from '../../mqtt/mapConverter.js';
 import { db } from '../../db/database.js';
 
 const SN = 'LFIN_RENDER_TEST';
@@ -136,7 +137,8 @@ describe('compositeImage', () => {
     const base = await fakeBase(1600, 1600);
     const png = await compositeImage(SN, base);
     const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
-    const corner = base.project({ lat: CHARGER.lat + 4.8 / 111_320, lng: CHARGER.lng + 4.8 / (111_320 * Math.cos((CHARGER.lat * Math.PI) / 180)) });
+    // Map metres follow the UTM grid (mapConverter.gridLocalToGps); the dock pose is (0,0) here.
+    const corner = base.project(gridLocalToGps({ x: 4.8, y: 4.8 }, CHARGER));
     const i = (Math.round(corner[1]) * info.width + Math.round(corner[0])) * info.channels;
     expect(data[i]).toBeGreaterThan(150);
     expect(data[i + 1]).toBeLessThan(80);

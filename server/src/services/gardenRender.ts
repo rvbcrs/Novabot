@@ -25,7 +25,7 @@ import sharp from 'sharp';
 import type { OverlayOptions } from 'sharp';
 import { Resvg } from '@resvg/resvg-js';
 import { mapRepo, deviceSettingsRepo } from '../db/repositories/index.js';
-import { metersPerDegLat, metersPerDegLng } from '../mqtt/mapConverter.js';
+import { metersPerDegLat, metersPerDegLng, gridLocalToGps, gridGpsToLocal } from '../mqtt/mapConverter.js';
 import { readMeta } from '../routes/droneOverlay.js';
 
 const TAG = '[garden-render]';
@@ -35,12 +35,9 @@ const TAG = '[garden-render]';
 export interface LatLng { lat: number; lng: number }
 interface XY { x: number; y: number }
 
-/** Local metres (charger-relative, as stored in `maps.map_area`) → lat/lng. */
+/** Map metres (as stored in `maps.map_area`) → lat/lng, the dock pose at `origin`. */
 function localToLatLng(p: XY, origin: LatLng, pose: XY): LatLng {
-  return {
-    lat: origin.lat + (p.y - pose.y) / metersPerDegLat(origin.lat),
-    lng: origin.lng + (p.x - pose.x) / metersPerDegLng(origin.lat),
-  };
+  return gridLocalToGps({ x: p.x - pose.x, y: p.y - pose.y }, origin);
 }
 
 /** Web-Mercator helpers, the projection every XYZ tile service uses. */
@@ -249,11 +246,11 @@ export function gardenBounds(
   if (!gps) return null;
   const pose = dockPose(sn);
   if (view) {
-    // The inverse of localToLatLng, so localBox and the corners stay one rectangle.
-    const toLocal = (lat: number, lng: number): XY => ({
-      x: (lng - gps.lng) * metersPerDegLng(gps.lat) + pose.x,
-      y: (lat - gps.lat) * metersPerDegLat(gps.lat) + pose.y,
-    });
+    // The inverse of localToLatLng.
+    const toLocal = (lat: number, lng: number): XY => {
+      const l = gridGpsToLocal({ lat, lng }, gps);
+      return { x: l.x + pose.x, y: l.y + pose.y };
+    };
     const a = toLocal(view.south, view.west); const b = toLocal(view.north, view.east);
     return {
       sw: { lat: view.south, lng: view.west }, ne: { lat: view.north, lng: view.east }, origin: gps, pose,
@@ -275,8 +272,12 @@ export function gardenBounds(
     minX: Math.min(...xs) - marginM, maxX: Math.max(...xs) + marginM,
     minY: Math.min(...ys) - marginM, maxY: Math.max(...ys) + marginM,
   };
-  const sw = localToLatLng({ x: localBox.minX, y: localBox.minY }, gps, pose);
-  const ne = localToLatLng({ x: localBox.maxX, y: localBox.maxY }, gps, pose);
+  // Map axes are turned from true north (UTM grid), so the lat/lng box has to
+  // take all four corners of the local box, not just two.
+  const corners = [[localBox.minX, localBox.minY], [localBox.maxX, localBox.minY], [localBox.maxX, localBox.maxY], [localBox.minX, localBox.maxY]]
+    .map(([x, y]) => localToLatLng({ x, y }, gps, pose));
+  const sw = { lat: Math.min(...corners.map(c => c.lat)), lng: Math.min(...corners.map(c => c.lng)) };
+  const ne = { lat: Math.max(...corners.map(c => c.lat)), lng: Math.max(...corners.map(c => c.lng)) };
   return { sw, ne, origin: gps, pose, localBox };
 }
 

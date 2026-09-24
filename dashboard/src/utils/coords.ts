@@ -9,24 +9,42 @@
 export type GpsPoint = { lat: number; lng: number };
 export type LocalPoint = { x: number; y: number };
 
-const DEG_TO_M = 111320; // meters per degree latitude
-
-/** Convert local meters (charger=0,0) to GPS coordinates. */
-export function localToGps(p: LocalPoint, chargerGps: GpsPoint): GpsPoint {
-  const cosLat = Math.cos(chargerGps.lat * Math.PI / 180);
+/**
+ * The mower's map frame is UTM minus an origin (robot_combination_localization
+ * projects with +proj=utm), so a map metre runs along the UTM grid, and grid
+ * north differs from true north by the meridian convergence: about 2.2° in
+ * the Netherlands, a metre at 25 m from the dock. Around the reference point
+ * the projection is that rotation plus the grid scale factor, exact to well
+ * under a centimetre across a garden (checked against PROJ in coords.check.ts).
+ */
+function gridAt(ref: GpsPoint) {
+  const phi = ref.lat * Math.PI / 180;
+  const zone = Math.floor((ref.lng + 180) / 6) + 1;
+  const dl = (ref.lng - (zone * 6 - 183)) * Math.PI / 180;
+  const gamma = Math.atan(Math.tan(dl) * Math.sin(phi));
   return {
-    lat: chargerGps.lat + p.y / DEG_TO_M,
-    lng: chargerGps.lng + p.x / (DEG_TO_M * cosLat),
+    c: Math.cos(gamma),
+    s: Math.sin(gamma),
+    k: 0.9996 * (1 + (dl * Math.cos(phi)) ** 2 / 2),
+    mLat: 111132.954 - 559.822 * Math.cos(2 * phi) + 1.175 * Math.cos(4 * phi),
+    mLng: 111412.84 * Math.cos(phi) - 93.5 * Math.cos(3 * phi),
   };
 }
 
-/** Convert GPS coordinates to local meters (charger=0,0). */
+/** Convert map metres relative to the reference point (the dock pin) to GPS. */
+export function localToGps(p: LocalPoint, chargerGps: GpsPoint): GpsPoint {
+  const g = gridAt(chargerGps);
+  const e = (p.x * g.c + p.y * g.s) / g.k;
+  const n = (p.y * g.c - p.x * g.s) / g.k;
+  return { lat: chargerGps.lat + n / g.mLat, lng: chargerGps.lng + e / g.mLng };
+}
+
+/** Convert GPS to map metres relative to the reference point (the dock pin). */
 export function gpsToLocal(p: GpsPoint, chargerGps: GpsPoint): LocalPoint {
-  const cosLat = Math.cos(chargerGps.lat * Math.PI / 180);
-  return {
-    x: (p.lng - chargerGps.lng) * DEG_TO_M * cosLat,
-    y: (p.lat - chargerGps.lat) * DEG_TO_M,
-  };
+  const g = gridAt(chargerGps);
+  const e = (p.lng - chargerGps.lng) * g.mLng;
+  const n = (p.lat - chargerGps.lat) * g.mLat;
+  return { x: g.k * (e * g.c - n * g.s), y: g.k * (e * g.s + n * g.c) };
 }
 
 /**
