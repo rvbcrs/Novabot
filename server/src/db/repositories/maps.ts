@@ -77,7 +77,12 @@ export interface SetCalibrationData {
  * Prefers file_name (always holds the mower's internal name) and falls back
  * to map_name (used on installs that store the shared ZIP as file_name).
  */
-function extractCanonicalPrefix(row: Pick<MapRow, 'file_name' | 'map_name'>): string | null {
+function extractCanonicalPrefix(row: Pick<MapRow, 'file_name' | 'map_name' | 'canonical_name'>): string | null {
+  // Dashboard-created rows (drawn or copied) carry only canonical_name:
+  // map_name is the user's alias and file_name is null. Without this branch
+  // deleting such a work map left its obstacles and channels as orphans.
+  const canonMatch = row.canonical_name?.match(/^(map\d+)(?:$|[_t])/);
+  if (canonMatch) return canonMatch[1];
   const fileMatch = row.file_name?.match(/^(map\d+)(?=[_t])/);
   if (fileMatch) return fileMatch[1];
   const nameMatch = row.map_name?.match(/^(map\d+)(?:$|[_t])/);
@@ -141,8 +146,8 @@ export function isCanonicalMapName(name: string | null | undefined): boolean {
 }
 
 /** Check whether `row` is a dependent of the map identified by `prefix`. */
-function isRelatedByPrefix(row: Pick<MapRow, 'file_name' | 'map_name'>, prefix: string): boolean {
-  const candidates = [row.file_name, row.map_name].filter((v): v is string => !!v);
+function isRelatedByPrefix(row: Pick<MapRow, 'file_name' | 'map_name' | 'canonical_name'>, prefix: string): boolean {
+  const candidates = [row.canonical_name, row.file_name, row.map_name].filter((v): v is string => !!v);
   // Obstacles owned by this map: e.g. map1_0_obstacle, map1_3_obstacle.csv
   const obstacleRe = new RegExp(`^${prefix}_\\d+_obstacle(\\.|$)`);
   // Unicoms starting from this map: e.g. map1tocharge_unicom, map1tomap2_0_unicom

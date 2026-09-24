@@ -306,3 +306,47 @@ describe('previewZoneCopy / persistZoneCopy (in-memory DB)', () => {
     expect(JSON.parse(dock.map_area!)[1]).toEqual({ x: 0.3, y: -0.8 });
   });
 });
+
+describe('zone copy ↔ delete cascade (review fix)', () => {
+  const A = 'LFIN_COPY_SRC2';
+  const B = 'LFIN_COPY_DST2';
+  const addRow = (sn: string, canonical: string, type: 'work' | 'obstacle' | 'unicom', pts: unknown[], alias: string | null = null) =>
+    mapRepo.create({ map_id: `${sn}-${canonical}`, mower_sn: sn, map_name: alias, map_type: type, map_area: JSON.stringify(pts), canonical_name: canonical });
+  const dockA = { x: 0.03, y: 0.73 };
+  const dockB = { x: 0.1, y: -0.5 };
+
+  beforeEach(() => {
+    for (const sn of [A, B]) for (const m of mapRepo.findByMowerSn(sn)) mapRepo.deleteById(m.map_id);
+    vi.mocked(getDockPose).mockReturnValue(null);
+    addRow(A, 'map0', 'work', square(0, 0), 'Grote tuin');
+    addRow(A, 'map0_0_obstacle', 'obstacle', square(2, 2, 2));
+    addRow(A, 'map0tocharge_unicom', 'unicom', [dockA, { x: -0.4, y: 0.94 }]);
+    addRow(B, 'map0tocharge_unicom', 'unicom', [dockB, { x: 0.3, y: -0.8 }]);
+  });
+
+  it('kopie → verwijderen met cascade → geen wezen; opnieuw kopiëren slaagt', () => {
+    const r1 = previewZoneCopy(B, A, 'map0', dockB);
+    if (!r1.ok) throw new Error('preview failed');
+    const saved = persistZoneCopy(B, r1.plan, { alias: 'Grote tuin (kopie)', acceptChannel: true });
+    expect(mapRepo.findByMowerSn(B)).toHaveLength(3);
+    // Ongedaan maken = de bestaande delete met cascade (spec §Foutafhandeling).
+    mapRepo.deleteWithCascade(saved.mapId, B);
+    expect(mapRepo.findByMowerSn(B).map(x => x.canonical_name)).toEqual([]);
+    // Het vervangen dockkanaal is nu ook weg; B staat gedockt, dus het anker komt live.
+    vi.mocked(getDockPose).mockImplementation(sn => (sn === B ? { ...dockB, orientation: 1.5, capturedAt: 0 } : null));
+    const r2 = previewZoneCopy(B, A, 'map0', dockB);
+    if (!r2.ok) throw new Error('second preview failed: ' + r2.reason);
+    expect(() => persistZoneCopy(B, r2.plan, { alias: null, acceptChannel: true })).not.toThrow();
+    expect(mapRepo.findByMowerSn(B).map(x => x.canonical_name).sort()).toEqual(['map0', 'map0_0_obstacle', 'map0tocharge_unicom']);
+  });
+
+  it('een achtergebleven obstakelrij met dezelfde canonieke naam wordt vervangen, niet gedupliceerd', () => {
+    addRow(B, 'map0_0_obstacle', 'obstacle', square(50, 50, 2));
+    const r = previewZoneCopy(B, A, 'map0', dockB);
+    if (!r.ok) throw new Error('preview failed');
+    expect(() => persistZoneCopy(B, r.plan, { alias: null, acceptChannel: true })).not.toThrow();
+    const obstacles = mapRepo.findByMowerSn(B).filter(x => x.canonical_name === 'map0_0_obstacle');
+    expect(obstacles).toHaveLength(1);
+    expect(JSON.parse(obstacles[0].map_area!)[0].x).toBeCloseTo(2 + dockB.x - dockA.x, 6);
+  });
+});

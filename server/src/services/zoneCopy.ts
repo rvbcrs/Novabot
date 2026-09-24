@@ -338,6 +338,11 @@ export function persistZoneCopy(
   const ts = Date.now();
   const mapId = `copy_${plan.canonical}_${ts}`;
   const create = (canonical: string, mapType: 'work' | 'obstacle' | 'unicom', points: XY[], alias: string | null) => {
+    // (mower_sn, canonical_name) is UNIQUE: een achtergebleven rij met deze
+    // naam (dockkanaal, of een obstakel van een eerder gewiste zone) wordt
+    // vervangen, nooit gedupliceerd.
+    const old = mapRepo.findBySnAndCanonical(targetSn, canonical);
+    if (old) mapRepo.deleteByIdAndMower(old.map_id, targetSn);
     mapRepo.create({
       source: 'drawn',
       map_id: mapType === 'work' ? mapId : `copy_${canonical}_${ts}`,
@@ -353,11 +358,7 @@ export function persistZoneCopy(
   db.transaction(() => {
     create(plan.canonical, 'work', plan.work, opts.alias);
     for (const o of plan.obstacles) create(o.canonical, 'obstacle', o.points, null);
-    for (const c of channels) {
-      const old = mapRepo.findBySnAndCanonical(targetSn, c.canonical);
-      if (old) mapRepo.deleteByIdAndMower(old.map_id, targetSn);
-      create(c.canonical, 'unicom', c.points, null);
-    }
+    for (const c of channels) create(c.canonical, 'unicom', c.points, null);
   })();
   return {
     mapId,

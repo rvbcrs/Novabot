@@ -1225,6 +1225,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Na het tekenen van een werkgebied: welk gebied nog met een kanaal verbonden
   // moet worden. De maaier kan alleen tussen zones rijden over een unicom-kanaal.
   const [channelPrompt, setChannelPrompt] = useState<{ canonical: string; name: string } | null>(null);
+  // Paneel "zone kopiëren van andere maaier"; null = dicht. Staat hier zodat
+  // elke modewissel (tekenen, bewerken, navigeren) het kan sluiten.
+  const [copyPanel, setCopyPanel] = useState<CopyPanelState | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
 
   // ── Coverage-path preview ("show mowing path"): idle preview is generated
@@ -1906,6 +1909,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Server stuurt al GPS coords (lokaal→GPS conversie) — direct bruikbaar voor Leaflet.
   const startEditMap = useCallback((mapId: string, mapArea: Array<{ lat: number; lng: number }>) => {
     if (mapArea.length < 3) return;
+    setCopyPanel(null);
     // KEEP THE FULL RING — never simplify on edit. Mower-recorded rings carry
     // hundreds of densely sampled points that trace the real garden contour;
     // RDP-simplifying them (the old behaviour) straightened the boundary and
@@ -1965,6 +1969,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // ongemerkt het verkeerde soort gebied. De kanaal-prompt geeft zijn type mee.
   const startDrawMap = useCallback((type: AreaType = 'work') => {
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
+    setCopyPanel(null);
     setDrawType(type);
     setEditingMapId(null);
     setEditVertices([]);
@@ -1983,8 +1988,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // DEZE kaart staat. De zone volgt met rotatie 0. GPS/pos.json van de andere
   // maaier is onbruikbaar: twee maaiers delen geen absoluut GPS-frame (elke
   // charger zendt zijn eigen ingemeten RTK-basispositie uit).
-  const [copyPanel, setCopyPanel] = useState<CopyPanelState | null>(null);
   const copyPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Volgnummer: een verouderd preview-antwoord mag een nieuwer plan niet overschrijven.
+  const copyPreviewSeq = useRef(0);
   const copyMarkerIcon = useMemo(() => L.divIcon({
     className: '',
     html: '<div style="width:22px;height:22px;border-radius:50%;background:#f59e0b;border:3px solid #fff;box-shadow:0 0 0 2px #f59e0b"></div>',
@@ -1995,23 +2001,30 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   /** Klik/sleep op de kaart → lokale meters van deze maaier, dezelfde formule als tekenen. */
   const copyLocalFromLatLng = useCallback((lat: number, lng: number): LocalPoint | null => {
     if (!isUsableChargerGps(chargerGps)) return null;
-    const l = gpsToLocal({ lat, lng }, chargerGps);
+    // De kaart tekent lokale punten met de weergave-offset erbij (calibratePoints);
+    // hier dus dezelfde inverse als navigate-to, anders landt de zone naast de marker.
+    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
+    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
+    const l = gpsToLocal({ lat: lat - offLat, lng: lng - offLng }, chargerGps);
     return { x: l.x + (chargingPose?.x ?? 0), y: l.y + (chargingPose?.y ?? 0) };
-  }, [chargerGps, chargingPose]);
+  }, [chargerGps, chargingPose, activeCal]);
 
   const runCopyPreview = useCallback((state: CopyPanelState) => {
     if (!sn || !state.sourceSn || !state.canonical || !state.marker) return;
     const local = copyLocalFromLatLng(state.marker[0], state.marker[1]);
     if (!local) return;
     if (copyPreviewTimer.current) clearTimeout(copyPreviewTimer.current);
+    const seq = ++copyPreviewSeq.current;
     const sourceSn = state.sourceSn;
     const canonical = state.canonical;
     const withObstacles = state.withObstacles;
     copyPreviewTimer.current = setTimeout(async () => {
       try {
         const plan = await previewZoneCopy(sn, sourceSn, canonical, local, withObstacles);
+        if (seq !== copyPreviewSeq.current) return;
         setCopyPanel(prev => (prev ? { ...prev, plan, error: null } : prev));
       } catch (err) {
+        if (seq !== copyPreviewSeq.current) return;
         setCopyPanel(prev => (prev ? { ...prev, plan: null, error: err instanceof Error ? err.message : String(err) } : prev));
       }
     }, 250);
@@ -2020,6 +2033,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const openCopyPanel = useCallback(async () => {
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     const sources = (await fetchDevices()).filter(d => d.deviceType === 'mower' && d.sn !== sn);
+    // Eén kaartklik-modus tegelijk, zoals de andere rail-ingangen.
+    setNavigateMode(false);
+    setWallDrawMode(false);
+    setPlacingCharger(false);
     setSelectedMapId(null);
     setCopyPanel({ sources, sourceSn: null, sourceMaps: [], canonical: null, marker: null, withObstacles: true, plan: null, busy: false, error: null });
   }, [mapWriteSupported, sn, t]);
@@ -2043,7 +2060,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const setCopyMarker = useCallback((lat: number, lng: number) => {
     setCopyPanel(prev => {
       if (!prev) return prev;
-      const next: CopyPanelState = { ...prev, marker: [lat, lng] };
+      const next: CopyPanelState = { ...prev, marker: [lat, lng], plan: null };
       runCopyPreview(next);
       return next;
     });
@@ -4191,7 +4208,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {placingCharger && <ChargerPlacer onPlace={handlePlaceCharger} />}
           {/* Zone kopiëren: klik verplaatst de marker, marker is sleepbaar, preview gestippeld */}
           {copyPanel && editMode === 'none' && <ChargerPlacer onPlace={setCopyMarker} />}
-          {copyPanel?.marker && (
+          {copyPanel?.marker && editMode === 'none' && (
             <Marker
               position={copyPanel.marker}
               icon={copyMarkerIcon}
@@ -4204,13 +4221,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <Tooltip direction="top" offset={[0, -12]} permanent>{t('map.copyZoneMarker', { name: copySourceName })}</Tooltip>
             </Marker>
           )}
-          {copyPanel?.plan && copyPanel.plan.work.length >= 3 && (
+          {editMode === 'none' && copyPanel?.plan && copyPanel.plan.work.length >= 3 && (
             <Polygon positions={copyPositions(copyPanel.plan.work)} pathOptions={{ ...AREA_STYLES.work, dashArray: '6 4', fillOpacity: 0.15 }} />
           )}
-          {copyPanel?.plan?.obstacles.map(o => (
+          {editMode === 'none' && copyPanel?.plan?.obstacles.map(o => (
             <Polygon key={`copy-${o.canonical}`} positions={copyPositions(o.points)} pathOptions={{ ...AREA_STYLES.obstacle, dashArray: '6 4', fillOpacity: 0.2 }} />
           ))}
-          {copyPanel?.plan?.channels.map(c => (
+          {editMode === 'none' && copyPanel?.plan?.channels.map(c => (
             <Polyline key={`copy-${c.canonical}`} positions={copyPositions(c.points)} pathOptions={{ ...AREA_STYLES.unicom, dashArray: '6 4', weight: 4 }} />
           ))}
           {/* Charger marker (draggable to reposition) — apply same calibration offset as polygons */}
@@ -4613,7 +4630,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                           onClick={() => {
                             if (!cameraAvailable) return;
                             if (navigateMode) { setNavigateMode(false); setWallDrawMode(false); }
-                            else { setNavigateMode(true); setWallDrawMode(false); setPlacingCharger(false); }
+                            else { setCopyPanel(null); setNavigateMode(true); setWallDrawMode(false); setPlacingCharger(false); }
                             setRailFlyout(null);
                           }}
                           className={`${railRow(navigateMode)} ${cameraAvailable ? '' : 'opacity-40 cursor-not-allowed'}`}
@@ -4630,7 +4647,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                         <button
                           onClick={() => {
                             if (wallDrawMode) { setWallDrawMode(false); setWallFirstCorner(null); }
-                            else { setWallDrawMode(true); setNavigateMode(false); setPlacingCharger(false); setWallFirstCorner(null); }
+                            else { setCopyPanel(null); setWallDrawMode(true); setNavigateMode(false); setPlacingCharger(false); setWallFirstCorner(null); }
                             setRailFlyout(null);
                           }}
                           className={railRow(wallDrawMode)}
