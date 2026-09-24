@@ -181,6 +181,38 @@ describe('the overlay routes', () => {
     expect((await request(app).post(`/overlay/${other}/copy-from/${other}`)).status).toBe(400);
   });
 
+  it('remembers the placements it replaced, newest last, at most 20', async () => {
+    const up = await request(app).put(`/overlay/${SN}/image?lat=52.14&lng=6.23`).set('Content-Type', 'image/png').send(png(300, 200));
+    const at = (w: number) => ({ corners: similarityCorners({ lat: 52.14, lng: 6.23 }, w, 0, 1.5), opacity: 0.8 });
+    await request(app).put(`/overlay/${SN}`).send(at(40));
+    await request(app).put(`/overlay/${SN}`).send(at(41));
+    const r = await request(app).get(`/overlay/${SN}`);
+    expect(r.body.placement).toEqual(at(41));
+    expect(r.body.history).toEqual([up.body.placement, at(40)]);
+    for (let w = 42; w < 70; w++) await request(app).put(`/overlay/${SN}`).send(at(w));
+    const many = await request(app).get(`/overlay/${SN}`);
+    expect(many.body.history).toHaveLength(20);
+    expect(many.body.history[19]).toEqual(at(68));
+  });
+
+  it('keeps the first placement as the original through edits and a replaced photo', async () => {
+    const up = await request(app).put(`/overlay/${SN}/image?lat=52.14&lng=6.23`).set('Content-Type', 'image/png').send(png(300, 200));
+    expect(up.body.original).toEqual(up.body.placement);
+    await request(app).put(`/overlay/${SN}`).send({ corners: similarityCorners({ lat: 52.14, lng: 6.23 }, 45, 10, 1.5), opacity: 0.8 });
+    const again = await request(app).put(`/overlay/${SN}/image`).set('Content-Type', 'image/png').send(png(300, 200));
+    expect(again.body.original).toEqual(up.body.placement);
+    expect(again.body.history).toEqual([up.body.placement]);
+  });
+
+  it('takes the source placement as the original of a copy, with a fresh history', async () => {
+    await request(app).put(`/overlay/${SN}/image?lat=52.14&lng=6.23`).set('Content-Type', 'image/png').send(png(3, 2));
+    await request(app).put(`/overlay/${SN}`).send({ corners: similarityCorners({ lat: 52.14, lng: 6.23 }, 45, 10, 1.5), opacity: 0.8 });
+    const src = (await request(app).get(`/overlay/${SN}`)).body;
+    const r = await request(app).post(`/overlay/LFIN1231000211/copy-from/${SN}`);
+    expect(r.body.original).toEqual(src.placement);
+    expect(r.body.history).toEqual([]);
+  });
+
   it('rejects a bad serial', async () => {
     expect((await request(app).get('/overlay/x')).status).toBe(400);
   });

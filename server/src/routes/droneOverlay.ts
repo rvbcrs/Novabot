@@ -28,6 +28,7 @@ const SETTING_KEY = 'drone_overlay';
 /** One garden fits in a few metres to a few hundred; anything else is a typo. */
 const EXTENT_M = { min: 1, max: 3000 };
 const M_PER_DEG_LAT = 111_320;
+const HISTORY_MAX = 20;
 
 export interface LatLng { lat: number; lng: number }
 /** Top-left, top-right, bottom-right, bottom-left of the photo, on the map. */
@@ -64,6 +65,10 @@ export interface OverlayMeta {
   size: number;
   updatedAt: string;
   placement: OverlayPlacement | null;
+  /** The first placement: from the upload, or the source mower's when copied. */
+  original?: OverlayPlacement | null;
+  /** Placements this one replaced, newest last, so a bad edit can be undone. */
+  history?: OverlayPlacement[];
   /** What the drone wrote into the photo, when it did; placedFromPhoto says the placement came from it. */
   camera?: PhotoMetadata & { placedFromPhoto: boolean };
 }
@@ -210,6 +215,8 @@ droneOverlayRouter.put('/:sn/image',
     const meta: OverlayMeta = {
       file, width: dims.width, height: dims.height, mime: dims.mime, size: buf.length,
       updatedAt: new Date().toISOString(), placement, camera,
+      original: previous ? (previous.original ?? null) : placement,
+      history: previous?.history ?? [],
     };
     writeMeta(sn, meta);
     const { file: _f, ...pub } = meta;
@@ -224,8 +231,11 @@ droneOverlayRouter.put('/:sn', (req, res) => {
   if (!meta) { res.status(404).json({ error: T`upload eerst een foto` }); return; }
   const placement = parsePlacement(req.body);
   if (!placement) { res.status(400).json({ error: T`plaatsing vereist hoeken (4 x lat/lng, 1 tot 3000 m uit elkaar) en dekking (0 tot 1)` }); return; }
-  writeMeta(sn, { ...meta, placement });
-  res.json({ sn, placement });
+  const history = [...(meta.history ?? []), ...(meta.placement ? [meta.placement] : [])].slice(-HISTORY_MAX);
+  const next: OverlayMeta = { ...meta, placement, history };
+  writeMeta(sn, next);
+  const { file: _f, ...pub } = next;
+  res.json({ sn, ...pub });
 });
 
 // POST /overlay/:sn/copy-from/:source — the other mower's photo, placement
@@ -243,7 +253,7 @@ droneOverlayRouter.post('/:sn/copy-from/:source', (req, res) => {
     if (stale !== file && existsSync(path.join(dir, stale))) { try { unlinkSync(path.join(dir, stale)); } catch { /* best effort */ } }
   }
   copyFileSync(path.join(dir, src.file), path.join(dir, file));
-  const meta: OverlayMeta = { ...src, file, updatedAt: new Date().toISOString() };
+  const meta: OverlayMeta = { ...src, file, updatedAt: new Date().toISOString(), original: src.placement, history: [] };
   writeMeta(sn, meta);
   const { file: _f, ...pub } = meta;
   res.json({ sn, ...pub });

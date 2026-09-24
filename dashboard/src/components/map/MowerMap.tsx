@@ -1710,14 +1710,26 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (!sn || !droneDraft) return;
     setDroneBusy(true);
     try {
-      await saveDroneOverlayPlacement(sn, droneDraft);
-      setDroneMeta(m => (m ? { ...m, placement: droneDraft } : m));
+      setDroneMeta(await saveDroneOverlayPlacement(sn, droneDraft));
       setDroneDraft(null);
     } catch (e) {
       void dialog.alert({ title: t('map.dronePlaceFailed', 'Plaatsing niet opgeslagen'), message: e instanceof Error ? e.message : String(e), variant: 'danger' });
     } finally { setDroneBusy(false); }
   }, [sn, droneDraft, dialog, t]);
   const dronePlacement = droneDraft ?? droneMeta?.placement ?? null;
+  // Terugzetten: hoeveel opgeslagen plaatsingen terug het concept nu staat.
+  // Alleen het concept verandert; bewaard wordt het pas bij opslaan.
+  const [droneBackStep, setDroneBackStep] = useState(0);
+  const droneDraftOpen = droneDraft !== null;
+  useEffect(() => { if (!droneDraftOpen) setDroneBackStep(0); }, [droneDraftOpen]);
+  const droneHistory = droneMeta?.history ?? [];
+  const droneStepBack = useCallback(() => {
+    const step = Math.min(droneBackStep + 1, droneHistory.length);
+    const p = droneHistory[droneHistory.length - step];
+    if (!p) return;
+    setDroneBackStep(step);
+    setDroneDraft({ corners: p.corners, opacity: p.opacity });
+  }, [droneBackStep, droneHistory]);
   // Punten aanwijzen: pixels in de foto en waar die op de kaart horen. Het
   // eerste punt is het laadstation (doel = dock, bekend), daarna steeds een
   // punt in de foto en dan op de kaart. Na elk paar wordt de foto opnieuw
@@ -4888,6 +4900,23 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       className="w-full py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 font-medium">
                 {t('map.dronePoints', 'Punten aanwijzen')}
               </button>
+            )}
+            {!pointMode && (droneHistory.length > 0 || droneMeta?.original) && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]" title={t('map.droneRestoreHint', 'Zet de foto terug; bewaard wordt het pas bij opslaan.')}>
+                <span className="text-gray-500">{t('map.droneRestore', 'Herstellen')}:</span>
+                {droneHistory.length > 0 && (
+                  <button onClick={droneStepBack} disabled={droneBackStep >= droneHistory.length}
+                          className="text-gray-300 hover:text-white underline disabled:opacity-40 disabled:no-underline">
+                    {t('map.droneRestorePrev', 'Vorige plaatsing')}{droneBackStep > 0 ? ` (${droneBackStep}/${droneHistory.length})` : ''}
+                  </button>
+                )}
+                {droneMeta?.original && (
+                  <button onClick={() => { const o = droneMeta.original!; setDroneBackStep(0); setDroneDraft({ corners: o.corners, opacity: o.opacity }); }}
+                          className="text-gray-300 hover:text-white underline">
+                    {t('map.droneRestoreOriginal', 'Oorspronkelijke plaatsing')}
+                  </button>
+                )}
+              </div>
             )}
             <p className="text-gray-400 text-[11px]">{t('map.droneHint')}</p>
             {droneMeta?.camera?.placedFromPhoto && (

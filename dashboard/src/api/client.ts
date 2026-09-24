@@ -1295,6 +1295,10 @@ export interface DroneOverlayPlacement { corners: DroneCorners; opacity: number 
 export interface DroneOverlayMeta {
   sn: string; width: number; height: number; mime: string; size: number;
   updatedAt: string; placement: DroneOverlayPlacement | null;
+  /** The first placement: from the upload, or the other mower's when copied. */
+  original?: DroneOverlayPlacement | null;
+  /** Placements the current one replaced, newest last (at most 20). */
+  history?: DroneOverlayPlacement[];
   /** What the drone wrote into the photo, when it did. pitchDeg: -90 is straight down. */
   camera?: { altitudeM?: number; yawDeg?: number; pitchDeg?: number; focal35?: number; placedFromPhoto: boolean };
 }
@@ -1385,7 +1389,7 @@ export async function uploadDroneOverlay(
   return res.json();
 }
 
-export async function saveDroneOverlayPlacement(sn: string, placement: DroneOverlayPlacement): Promise<void> {
+export async function saveDroneOverlayPlacement(sn: string, placement: DroneOverlayPlacement): Promise<DroneOverlayMeta> {
   const res = await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(placement),
   });
@@ -1393,6 +1397,7 @@ export async function saveDroneOverlayPlacement(sn: string, placement: DroneOver
     const data = await res.json().catch(() => ({})) as { error?: string };
     throw new Error(data.error || `${res.status} ${res.statusText}`);
   }
+  return res.json() as Promise<DroneOverlayMeta>;
 }
 
 /** The other mower's photo and placement, onto this one; replaces what was there. */
