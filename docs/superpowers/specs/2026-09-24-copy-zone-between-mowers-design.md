@@ -1,7 +1,7 @@
 # Zone kopiëren tussen maaiers — ontwerp
 
 **Datum:** 2026-09-24
-**Status:** goedgekeurd door gebruiker (klik-gebaseerde plaatsing, dashboard-only, obstakels mee, drempels 3 m / 1,5 m); kanaalregels verfijnd na vondst dat `deleteWithCascade` van map0 ook `map0tocharge_unicom` en `map0tomap3_0_unicom` wist
+**Status:** geïmplementeerd (plan 2026-09-24, branch feat/copy-zone-between-mowers); live testprocedure open
 **Plan:** `docs/superpowers/plans/2026-09-24-copy-zone-between-mowers.md`
 **Probleem:** twee maaiers in één tuin, elk met een eigen laadstation op een andere plek. Een zone die op maaier A nauwkeurig is ingereden moet op maaier B bruikbaar worden zonder opnieuw te mappen. Omdat de docks verschillen, moet de zone in B's frame terechtkomen én moet B er kunnen komen: via een kort dockkanaal, of via een kanaal naar een bestaande zone.
 

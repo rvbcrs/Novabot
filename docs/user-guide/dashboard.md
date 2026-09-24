@@ -124,6 +124,18 @@ channel to select it. Then:
   files; the dashboard only forgets it after that).
 - **Channels**: the corridors between areas and to the dock. A drawn channel
   becomes a real corridor in the mower's navigation map.
+- **Copy zone from another mower**: put a work area (with its obstacles)
+  that another mower on this server drove onto this mower's map. Pick the
+  source mower and zone, then drag the orange marker to where the *source
+  mower's* charging station really stands on this map; the zone follows.
+  Two mowers never share a GPS frame (each charger broadcasts its own
+  surveyed RTK base position), so this one physical reference is what
+  places the copy. The preview shows the zone dashed, with the dock
+  channel or the proposed channel to a neighbouring zone. A first zone must
+  lie within 3 m of the dock; a later zone that overlaps or sits within
+  1.5 m of an existing zone gets a channel proposed, otherwise the usual
+  "draw a channel" prompt follows. After placing, check the coverage
+  preview before the first mow.
 - **Apply to mower** sends the result; **Revert** throws the edits away. The
   panel says when something is pending or needs a resync.
 - **Coverage preview**: ask the mower how it would cover the area and see the
