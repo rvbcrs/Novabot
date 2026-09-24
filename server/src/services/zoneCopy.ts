@@ -7,8 +7,13 @@
  * .100). De enige betrouwbare koppeling is één fysieke correspondentie, waar
  * het laadstation van A staat in B's frame, met rotatie 0 (beide ENU).
  */
-import { pointInPolygon, polygonContains, segIntersects, type XY } from '../maps/editGeometry.js';
-import { distanceToPolygon } from './canonicalNaming.js';
+import { db } from '../db/database.js';
+import { mapRepo } from '../db/repositories/index.js';
+import { pointInPolygon, polygonArea, polygonContains, segIntersects, MIN_WORK_AREA_M2, type XY } from '../maps/editGeometry.js';
+import { distanceToPolygon, dockPoint, nextChannelIndex, nextFreeWorkSlot, workSlots } from './canonicalNaming.js';
+import { getPolygonAnchor } from './anchor.js';
+import { getDockPose } from '../mqtt/sensorData.js';
+import { translator, type Translate } from './serverText.js';
 
 /** ponytail: knop. Max afstand dock→zone voor een gegenereerd dockkanaal. */
 export const DOCK_MAX_M = 3;
@@ -206,5 +211,159 @@ export function planZoneCopy(i: PlanInput): CopyPlan {
     ...base, ok: true, channels, connectedVia,
     needsChannel: !connectedVia && channels.length === 0,
     warnings, dockDistanceM,
+  };
+}
+
+// ── DB-orkestratie ────────────────────────────────────────────────────────
+
+/** dockAtB verder dan dit van B's eigen dock is een typefout, geen tuin. */
+export const MAX_DOCK_DISTANCE_M = 500;
+
+export interface PreviewOk { ok: true; plan: CopyPlan; sourceAlias: string | null; areaM2: number }
+export interface PreviewFail {
+  ok: false;
+  status: 400 | 404 | 409;
+  reason: 'bad_canonical' | 'source_not_found' | 'source_no_anchor' | 'bad_dock' | 'dock_too_far' | 'target_no_dock' | 'too_small';
+  error: string;
+}
+export type PreviewResult = PreviewOk | PreviewFail;
+
+function parsePoints(raw: string | null): XY[] {
+  if (!raw) return [];
+  try {
+    const pts = JSON.parse(raw);
+    return Array.isArray(pts) ? pts.filter((p: XY) => Number.isFinite(p?.x) && Number.isFinite(p?.y)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Obstakels van slot N, op volgorde van index. */
+function obstaclesOf(sn: string, slot: number): XY[][] {
+  const re = new RegExp(`^map${slot}_\\d+_obstacle$`);
+  return mapRepo.findAllByMowerSnAndType(sn, 'obstacle')
+    .filter(r => re.test(r.canonical_name ?? ''))
+    .sort((a, b) => (a.canonical_name ?? '').localeCompare(b.canonical_name ?? '', undefined, { numeric: true }))
+    .map(r => parsePoints(r.map_area))
+    .filter(p => p.length >= 3);
+}
+
+/** A's dock in A's frame: het anker (rij 1 van map0tocharge_unicom), anders de live gedockte pose. */
+function sourceDock(sn: string): XY | null {
+  const anchor = getPolygonAnchor(sn);
+  if (anchor) return { x: anchor.x, y: anchor.y };
+  const live = getDockPose(sn);
+  if (live && (live.x !== 0 || live.y !== 0)) return { x: live.x, y: live.y };
+  return null;
+}
+
+export function previewZoneCopy(
+  targetSn: string,
+  sourceSn: string,
+  sourceCanonical: string,
+  dockAtB: { x?: unknown; y?: unknown } | undefined,
+  opts: { withObstacles?: boolean } = {},
+  T: Translate = translator('en'),
+): PreviewResult {
+  const m = sourceCanonical.match(/^map(\d+)$/);
+  if (!m) return { ok: false, status: 400, reason: 'bad_canonical', error: T`Kies een werkgebied (map0, map1, ...) om te kopiëren.` };
+  const src = mapRepo.findBySnAndCanonical(sourceSn, sourceCanonical);
+  const srcPts = src && src.map_type === 'work' ? parsePoints(src.map_area) : [];
+  if (!src || srcPts.length < 3) {
+    return { ok: false, status: 404, reason: 'source_not_found', error: T`Werkgebied ${sourceCanonical} van maaier ${sourceSn} niet gevonden.` };
+  }
+  const areaM2 = polygonArea(srcPts);
+  if (areaM2 < MIN_WORK_AREA_M2) return { ok: false, status: 409, reason: 'too_small', error: T`Het werkgebied is kleiner dan ${MIN_WORK_AREA_M2} m².` };
+  const dockAInA = sourceDock(sourceSn);
+  if (!dockAInA) {
+    return { ok: false, status: 409, reason: 'source_no_anchor', error: T`De bronmaaier heeft geen dock-anker (geen map0tocharge_unicom en niet gedockt online); zonder anker is de zone niet te plaatsen.` };
+  }
+  const x = Number(dockAtB?.x);
+  const y = Number(dockAtB?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { ok: false, status: 400, reason: 'bad_dock', error: T`Geef de positie van het laadstation van de bronmaaier op deze kaart (dockAtB.x/y).` };
+  }
+  const dockB = dockPoint(targetSn);
+  if (!dockB) {
+    return { ok: false, status: 409, reason: 'target_no_dock', error: T`Het dock van deze maaier is onbekend: zet de maaier op het dock of teken eerst een dockkanaal.` };
+  }
+  if (Math.hypot(x - dockB.x, y - dockB.y) > MAX_DOCK_DISTANCE_M) {
+    return { ok: false, status: 400, reason: 'dock_too_far', error: T`De aangewezen plek ligt meer dan ${MAX_DOCK_DISTANCE_M} m van het dock van deze maaier.` };
+  }
+
+  const dockAInB = { x, y };
+  const slot = nextFreeWorkSlot(targetSn);
+  const work = transformPoints(srcPts, dockAInA, dockAInB);
+  const obstacles = opts.withObstacles === false
+    ? []
+    : obstaclesOf(sourceSn, parseInt(m[1], 10)).map(o => transformPoints(o, dockAInA, dockAInB));
+  const existing: ExistingZone[] = workSlots(targetSn)
+    .filter(w => w.poly.length >= 3)
+    .map(w => ({ slot: w.slot, canonical: `map${w.slot}`, points: w.poly, obstacles: obstaclesOf(targetSn, w.slot) }));
+  const plan = planZoneCopy({
+    slot, work, obstacles, existing, dock: dockB,
+    dockChannelRowExists: !!mapRepo.findBySnAndCanonical(targetSn, `map${slot}tocharge_unicom`),
+    linkIndex: (from, to) => nextChannelIndex(targetSn, from, to),
+  });
+  const sourceAlias = src.map_name && src.map_name !== sourceCanonical ? src.map_name : null;
+  return { ok: true, plan, sourceAlias, areaM2 };
+}
+
+export interface PersistResult {
+  mapId: string;
+  createdAt: string;
+  mapMaxMin: { minX: number; maxX: number; minY: number; maxY: number };
+  channels: string[];
+  obstacles: string[];
+}
+
+function bounds(pts: XY[]): PersistResult['mapMaxMin'] {
+  return {
+    minX: Math.min(...pts.map(p => p.x)), maxX: Math.max(...pts.map(p => p.x)),
+    minY: Math.min(...pts.map(p => p.y)), maxY: Math.max(...pts.map(p => p.y)),
+  };
+}
+
+/**
+ * Schrijft de kopie als DB-rijen (work + obstakels + geaccepteerde kanalen) in
+ * één transactie, precies zoals de tekenroute dat doet (source 'drawn', geen
+ * file_name). Pushen naar de maaier doet de route (autoPushMapsInBackground).
+ */
+export function persistZoneCopy(
+  targetSn: string,
+  plan: CopyPlan,
+  opts: { alias: string | null; acceptChannel: boolean },
+): PersistResult {
+  if (!plan.ok) throw new Error(`persistZoneCopy: plan is refused (${plan.refusal})`);
+  const ts = Date.now();
+  const mapId = `copy_${plan.canonical}_${ts}`;
+  const create = (canonical: string, mapType: 'work' | 'obstacle' | 'unicom', points: XY[], alias: string | null) => {
+    mapRepo.create({
+      source: 'drawn',
+      map_id: mapType === 'work' ? mapId : `copy_${canonical}_${ts}`,
+      mower_sn: targetSn,
+      map_name: alias,
+      map_type: mapType,
+      map_area: JSON.stringify(points),
+      map_max_min: JSON.stringify(bounds(points)),
+      canonical_name: canonical,
+    });
+  };
+  const channels = opts.acceptChannel ? plan.channels : [];
+  db.transaction(() => {
+    create(plan.canonical, 'work', plan.work, opts.alias);
+    for (const o of plan.obstacles) create(o.canonical, 'obstacle', o.points, null);
+    for (const c of channels) {
+      const old = mapRepo.findBySnAndCanonical(targetSn, c.canonical);
+      if (old) mapRepo.deleteByIdAndMower(old.map_id, targetSn);
+      create(c.canonical, 'unicom', c.points, null);
+    }
+  })();
+  return {
+    mapId,
+    createdAt: new Date(ts).toISOString(),
+    mapMaxMin: bounds(plan.work),
+    channels: channels.map(c => c.canonical),
+    obstacles: plan.obstacles.map(o => o.canonical),
   };
 }

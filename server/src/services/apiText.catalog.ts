@@ -1275,4 +1275,39 @@ export const CATALOG: Catalog = {
     fr: "{0} nécessite le firmware personnalisé OpenNova ; le firmware d'origine ne peut pas recevoir cette commande.",
     de: "{0} erfordert die OpenNova Custom-Firmware; die Standard-Firmware kann diesen Befehl nicht empfangen.",
   },
+  "De aangewezen plek ligt meer dan {0} m van het dock van deze maaier.": {
+    en: "The chosen spot is more than {0} m from this mower's dock.",
+    fr: "L'emplacement choisi est à plus de {0} m de la station de cette tondeuse.",
+    de: "Die gewählte Stelle liegt mehr als {0} m vom Dock dieses Mähers entfernt.",
+  },
+  "De bronmaaier heeft geen dock-anker (geen map0tocharge_unicom en niet gedockt online); zonder anker is de zone niet te plaatsen.": {
+    en: "The source mower has no dock anchor (no map0tocharge_unicom and not docked online); without an anchor the zone cannot be placed.",
+    fr: "La tondeuse source n'a pas d'ancre de station (pas de map0tocharge_unicom et pas amarrée en ligne) ; sans ancre la zone ne peut pas être placée.",
+    de: "Der Quellmäher hat keinen Dock-Anker (kein map0tocharge_unicom und nicht online angedockt); ohne Anker lässt sich die Zone nicht platzieren.",
+  },
+  "Geef de positie van het laadstation van de bronmaaier op deze kaart (dockAtB.x/y).": {
+    en: "Give the position of the source mower's charging station on this map (dockAtB.x/y).",
+    fr: "Indiquez la position de la station de charge de la tondeuse source sur cette carte (dockAtB.x/y).",
+    de: "Geben Sie die Position der Ladestation des Quellmähers auf dieser Karte an (dockAtB.x/y).",
+  },
+  "Het dock van deze maaier is onbekend: zet de maaier op het dock of teken eerst een dockkanaal.": {
+    en: "This mower's dock is unknown: put the mower on the dock or draw a dock channel first.",
+    fr: "La station de cette tondeuse est inconnue : placez la tondeuse sur la station ou tracez d'abord un couloir vers la station.",
+    de: "Das Dock dieses Mähers ist unbekannt: Mäher aufs Dock stellen oder zuerst einen Dockkanal zeichnen.",
+  },
+  "Het werkgebied is kleiner dan {0} m².": {
+    en: "The work area is smaller than {0} m².",
+    fr: "La zone de travail fait moins de {0} m².",
+    de: "Der Arbeitsbereich ist kleiner als {0} m².",
+  },
+  "Kies een werkgebied (map0, map1, ...) om te kopiëren.": {
+    en: "Choose a work area (map0, map1, ...) to copy.",
+    fr: "Choisissez une zone de travail (map0, map1, ...) à copier.",
+    de: "Wählen Sie einen Arbeitsbereich (map0, map1, ...) zum Kopieren.",
+  },
+  "Werkgebied {0} van maaier {1} niet gevonden.": {
+    en: "Work area {0} of mower {1} not found.",
+    fr: "Zone de travail {0} de la tondeuse {1} introuvable.",
+    de: "Arbeitsbereich {0} von Mäher {1} nicht gefunden.",
+  },
 };
