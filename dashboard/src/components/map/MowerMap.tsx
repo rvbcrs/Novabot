@@ -46,6 +46,7 @@ import { PolygonEditor } from './PolygonEditor';
 import { MapEditBar } from './MapEditBar';
 import { MowingStatsCard } from '../status/MowingStatsCard';
 import { parseFinishedAreas, prefixedAreaId } from '../../utils/coverPathProgress';
+import { coverageLaneStrokes, type LaneStroke } from '../../utils/coverageStyle';
 import { PatternOverlay, type PatternPlacement } from '../patterns/PatternOverlay';
 import { CameraTile } from './CameraTile';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
@@ -804,7 +805,9 @@ function buildRenderOverlay(
   tilt: NonNullable<GardenRenderMeta['tilt']>,
   a: { mapX?: string; mapY?: string; lat?: string; lng?: string; heading?: string;
        trail: Array<{ x: number; y: number }>; trailGapM: number;
-       coverage: Array<{ points: Array<{ x: number; y: number }> }>;
+       coverage: Array<{ id: string; points: Array<{ x: number; y: number }> }>;
+       /** Dezelfde baan-kleuren als de 2D-kaart (coverageLaneStrokes). */
+       laneStrokes: (id: string) => LaneStroke[];
        lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }> },
 ): RenderOverlay {
   const h = tilt.localToRender;
@@ -833,9 +836,15 @@ function buildRenderOverlay(
   if (cur.length >= 2) trail.push(cur);
 
   const lanes = a.lanes.map(l => [px(toLocal(l.lat1, l.lng1)), px(toLocal(l.lat2, l.lng2))] as [[number, number], [number, number]]);
-  const coverage = a.coverage
-    .map(c => c.points.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)).map(px))
-    .filter(seg => seg.length >= 2);
+  const coverage: RenderOverlay['coverage'] = [];
+  for (const c of a.coverage) {
+    const pts = c.points.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)).map(px);
+    if (pts.length < 2) continue;
+    for (const s of a.laneStrokes(c.id)) {
+      const seg = s.upTo === null ? pts : pts.slice(0, s.upTo);
+      if (seg.length >= 2) coverage.push({ points: seg, color: s.color, width: s.weight, opacity: s.opacity });
+    }
+  }
   return { width: tilt.width, height: tilt.height, lanes, trail, mower, coverage, dock: px(tilt.pose) };
 }
 
@@ -2196,6 +2205,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     mowingSensors.covering_area_id,
     mowingSensors.covering_area_points,
   ]);
+  // Eén bron voor de baan-kleuren, gedeeld door 2D-kaart en 3D-render.
+  const laneStrokes = useCallback((id: string) => coverageLaneStrokes({
+    live: coverageLive,
+    stale: progressIsStale,
+    finished: coverProgress.finished.has(id),
+    active: id === coverProgress.activeId,
+    activePoints: coverProgress.activePoints,
+  }), [coverageLive, progressIsStale, coverProgress]);
 
   // ── Live plan-path polling (while mowing) ───────────────────────
   // Fetch the live plan path once (used by the poll loop AND the manual path).
@@ -3799,7 +3816,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             night={renderVariant === 'night'}
             fitTitle={t('map.base.renderFit', 'Passend maken')}
             overlay={shownRender.meta.tilt
-              ? buildRenderOverlay(shownRender.meta.tilt, { mapX, mapY, lat, lng, heading, trail, trailGapM: TRAIL_GAP_M, lanes: (!progressIsStale && coveredLanes) || [], coverage: showCoverage ? coveragePath ?? [] : [] })
+              ? buildRenderOverlay(shownRender.meta.tilt, { mapX, mapY, lat, lng, heading, trail: showTrail && !showHeatmap ? trail : [], trailGapM: TRAIL_GAP_M, lanes: (!progressIsStale && coveredLanes) || [], coverage: showCoverage ? coveragePath ?? [] : [], laneStrokes })
               : undefined}
           >
             <div className="absolute bottom-3 left-3 flex items-center gap-2 text-[11px] text-gray-400 bg-gray-900/80 border border-gray-700 rounded-lg px-2.5 py-1.5">
@@ -3934,51 +3951,19 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Coverage-path preview — the real boustrophedon mowing lines the
               mower will cut ("black lines"). Drawn above the satellite tiles,
               projected into the same frame as the work polygons. */}
-          {showCoverage && coverageGps.map(cp => {
-            // Finished/active coloring only while ACTUALLY mowing (live plan). A
-            // static preview must NOT inherit the previous session's progress —
-            // finished_area lingers in the sensors after a mow, which would paint
-            // the fresh preview as "already done". Preview => uniform planned path.
-            const isFinished = coverageLive && !progressIsStale && coverProgress.finished.has(cp.id);
-            const isActive = coverageLive && !progressIsStale && cp.id === coverProgress.activeId;
-            const full = calibratePoints(cp.gps, activeCal, polyCenter);
-            // Finished sub-area → dik groen ("gemaaid"), zoals de app.
-            if (isFinished) {
-              return (
-                <Polyline key={`cov-${cp.id}`} positions={full}
-                  pathOptions={{ color: 'rgba(34,197,94,0.9)', weight: 3.5, opacity: 1, lineCap: 'round', lineJoin: 'round' }} />
-              );
-            }
-            // Active lane → the lane the mower is working on RIGHT NOW. Draw it
-            // YELLOW (thick) so it stands out, then overlay the already-covered
-            // start portion (0..covering_area_points) in green so progress within
-            // the lane is visible. When the lane completes it joins `finished`
-            // and renders fully green — exactly like the OpenNova app.
-            if (isActive) {
-              const done = coverProgress.activePoints >= 2
-                ? calibratePoints(cp.gps.slice(0, coverProgress.activePoints), activeCal, polyCenter)
-                : null;
-              return (
-                <Fragment key={`cov-${cp.id}`}>
-                  <Polyline positions={full}
-                    pathOptions={{ color: '#fbbf24', weight: 3, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }} />
-                  {done && done.length >= 2 && (
-                    <Polyline positions={done}
-                      pathOptions={{ color: 'rgba(34,197,94,0.95)', weight: 3.5, opacity: 1, lineCap: 'round', lineJoin: 'round' }} />
-                  )}
-                </Fragment>
-              );
-            }
-            // Not-yet-started lane → thin faint hint while live; thicker cyan in
-            // the static idle preview so the planned path stays clearly visible.
-            const baseStyle = coverageLive
-              ? { color: 'rgba(255,255,255,0.35)', weight: 1, opacity: 0.8 }
-              : { color: 'rgba(56,189,248,0.9)', weight: 1.5, opacity: 0.9 };
-            return (
-              <Polyline key={`cov-${cp.id}`} positions={full}
-                pathOptions={{ ...baseStyle, lineCap: 'round', lineJoin: 'round' }} />
-            );
-          })}
+          {showCoverage && coverageGps.map(cp => (
+            // Afgemaaid = dik groen, nu bezig = geel met groen tot het huidige
+            // punt, nog niet = dun; buiten een sessie cyaan (zie coverageStyle).
+            <Fragment key={`cov-${cp.id}`}>
+              {laneStrokes(cp.id).map((st, i) => {
+                const pts = st.upTo === null ? cp.gps : cp.gps.slice(0, st.upTo);
+                return pts.length >= 2 ? (
+                  <Polyline key={i} positions={calibratePoints(pts, activeCal, polyCenter)}
+                    pathOptions={{ color: st.color, weight: st.weight, opacity: st.opacity, lineCap: 'round', lineJoin: 'round' }} />
+                ) : null;
+              })}
+            </Fragment>
+          ))}
           {/* Push/pull brush (R3): live in-progress stroke + pointer handler. */}
           {brushMode && brushOverlayGps && brushOverlayGps.length >= 3 && (
             <Polygon

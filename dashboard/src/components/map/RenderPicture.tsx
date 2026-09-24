@@ -16,8 +16,8 @@ import type { MowerSprite } from './mowerSprite';
 export interface RenderOverlay {
   width: number; height: number;
   lanes: Array<[[number, number], [number, number]]>;
-  /** Planned mow path (the Coverage preview), as polylines. */
-  coverage: Array<Array<[number, number]>>;
+  /** Mow path, one styled polyline per stroke, in the 2D map's lane colours. */
+  coverage: Array<{ points: Array<[number, number]>; color: string; width: number; opacity: number }>;
   dock: [number, number] | null;
   trail: Array<Array<[number, number]>>;
   /** `heading` is ENU radians (0 = east), for the 3D model. */
@@ -181,17 +181,19 @@ export function RenderPicture({ src, alt, night, fitTitle, overlay, children }: 
           onLoad={e => { if (!lifted) void liftIsland(e.currentTarget).then(setLifted).catch(() => {}); }} />
         {overlay && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${overlay.width} ${overlay.height}`} preserveAspectRatio="xMidYMid meet">
+            {/* Trail as on the 2D map: thin dashed cyan, under the lanes. */}
+            {overlay.trail.map((seg, i) => (
+              <polyline key={`t${i}`} points={seg.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
+                fill="none" stroke="#06b6d4" strokeWidth={1.5} strokeOpacity={0.5} strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" />
+            ))}
             {overlay.coverage.map((seg, i) => (
-              <polyline key={`c${i}`} points={seg.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
-                fill="none" stroke="rgba(96,165,250,0.9)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              <polyline key={`c${i}`} points={seg.points.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
+                fill="none" stroke={seg.color} strokeWidth={seg.width} strokeOpacity={seg.opacity} strokeLinejoin="round" strokeLinecap="round" />
             ))}
             {overlay.lanes.map(([a, b], i) => (
               <line key={`l${i}`} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="rgba(34,197,94,0.85)" strokeWidth={6} strokeLinecap="round" />
             ))}
-            {overlay.trail.map((seg, i) => (
-              <polyline key={`t${i}`} points={seg.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
-                fill="none" stroke="#38bdf8" strokeWidth={3.5} strokeOpacity={0.9} strokeLinejoin="round" strokeLinecap="round" />
-            ))}
+
             {/* Dock: the map's orange charger pin, standing on its spot. */}
             {overlay.dock && (
               <g transform={`translate(${overlay.dock[0]} ${overlay.dock[1]})`}>
