@@ -447,12 +447,6 @@ export async function dockAndSave(sn: string): Promise<{ ok: boolean; waited?: n
   return data;
 }
 
-/** Kalibreer laadstation: maaier rijdt ~1m naar voren en parkeert automatisch terug via go_to_charge + ArUco. */
-export async function calibrateCharger(sn: string): Promise<{ ok: boolean }> {
-  const data = await (await post(`${BASE}/maps/${encodeURIComponent(sn)}/calibrate-charger`, {})).json();
-  return data;
-}
-
 // ── Work Records (Mowing History) ────────────────────────────────
 
 export async function fetchWorkRecords(sn: string, limit = 50, offset = 0): Promise<{ records: WorkRecord[]; total: number }> {

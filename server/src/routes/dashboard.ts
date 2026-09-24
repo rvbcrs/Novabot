@@ -2887,57 +2887,6 @@ dashboardRouter.post('/maps/:sn/dock-and-save', (req: Request, res: Response) =>
   setTimeout(check, 3000);
 });
 
-// POST /api/dashboard/maps/:sn/calibrate-charger — ArUco kalibratie
-// Maaier staat op station → start_run undockt (enige commando dat werkt) →
-// stop_run stopt maaien → go_to_charge keert terug via GPS + ArUco.
-// Geteste alternatieven die NIET werken terwijl docked:
-//   - start_move: firmware blokkeert handmatige besturing op laadstation
-//   - start_navigation: crasht ROS nav stack (localization niet geïnitialiseerd)
-//   - start_assistant_build_map: commando ontvangen maar maaier beweegt niet
-// start_run is het ENIGE commando dat de maaier van het dock laat rijden.
-// Mesjes draaien ~5s maar dat is onvermijdelijk.
-dashboardRouter.post('/maps/:sn/calibrate-charger', (req: Request, res: Response) => {
-  const { sn } = req.params;
-
-  // Zoek een beschikbare map voor start_run
-  const workMaps = mapRepo.findByMowerSnAndType(sn, 'work');
-  const mapName = workMaps[0]?.map_name || 'map0';
-
-  // 1. Save huidige positie als charger (maaier staat op station)
-  publishToDevice(sn, { save_recharge_pos: { mapName, map0: '', cmd_num: getNextCmdNum(sn) } });
-  console.log(`[CALIBRATE] save_recharge_pos gestuurd naar ${sn}`);
-
-  // 2. start_run — maaier undockt automatisch (enige werkende methode)
-  setTimeout(() => {
-    publishToDevice(sn, {
-      start_run: {
-        mapName,
-        cutGrassHeight: 5,
-        workArea: mapName,
-        startWay: 'app',
-        schedule: false,
-        scheduleId: '',
-        mapNames: [mapName]
-      }
-    });
-    console.log(`[CALIBRATE] start_run gestuurd naar ${sn} (map: ${mapName}) — maaier undockt`);
-
-    // 3. Na 8s: stop maaien (maaier is ~1m van dock, mesjes stoppen)
-    setTimeout(() => {
-      publishToDevice(sn, { stop_run: {} });
-      console.log(`[CALIBRATE] stop_run naar ${sn}, wacht 3s...`);
-
-      // 4. Na 3s: terug naar charger via go_to_charge (GPS + ArUco scan)
-      setTimeout(() => {
-        publishToDevice(sn, goToChargePayload(sn));
-        console.log(`[CALIBRATE] go_to_charge naar ${sn} — ArUco scan tijdens return`);
-      }, 3000);
-    }, 8000);
-  }, 1000);
-
-  res.json({ ok: true });
-});
-
 // Re-anchor the charger pose from the mower's live localization. Reads the
 // latest map_position from the sensor cache, validates it hard (no 0/0/0, no
 // bad localization state, no report_state_robot x==y bug), pushes

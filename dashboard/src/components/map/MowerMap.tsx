@@ -26,7 +26,6 @@ import {
   deleteMap, renameMap, updateMapArea, createMap,
   navigateToPosition, stopNavigation,
   fetchVirtualWalls, createVirtualWall, deleteVirtualWall,
-  calibrateCharger,
   fetchEditGeometry, saveEditDraft, discardEditDrafts, applyEdits, revertEdits,
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
@@ -1549,8 +1548,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [confirmDeleteMapId, setConfirmDeleteMapId] = useState<string | null>(null);
   const [confirmDeleteMapName, setConfirmDeleteMapName] = useState<string>('');
 
-  // Charger calibration
-  const [confirmCalibrate, setConfirmCalibrate] = useState(false);
   const [confirmShiftReset, setConfirmShiftReset] = useState(false);
   // True zolang de absolute-offset-seed nog binnenkomt; houdt de nudge-pijltjes
   // uit zodat een klik niet door de async seed wordt overschreven (race-fix).
@@ -4748,13 +4745,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   {railFlyout === 'dock' && (
                     <div className={railPanel}>
                       <button onClick={() => { setPlacingCharger(!placingCharger); setRailFlyout(null); }} className={railRow(placingCharger)}>
-                        <MapPin className="w-4 h-4 opacity-70" />{!chargerHasGps ? t('map.chargerNotSet') : t('map.placeChargerTooltip')}
+                        <MapPin className="w-4 h-4 opacity-70 shrink-0" />
+                        <span className="text-left">
+                          {t('map.alignToSatellite')}
+                          <span className="block text-[11px] leading-snug text-gray-500">{t('map.alignToSatelliteHint')}</span>
+                        </span>
                       </button>
-                      {chargerHasGps && sn && (
-                        <button onClick={() => { setConfirmCalibrate(true); setRailFlyout(null); }} className={railRow(false)}>
-                          <Navigation className="w-4 h-4 opacity-70" />{t('map.calibrateCharger')}
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>
@@ -5718,22 +5714,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           setConfirmDeleteMapId(null);
         }}
         onCancel={() => setConfirmDeleteMapId(null)}
-      />
-      <ConfirmDialog
-        open={confirmCalibrate}
-        title={t('map.calibrateConfirm')}
-        confirmLabel={t('map.calibrateCharger')}
-        cancelLabel={t('common.cancel')}
-        onConfirm={async () => {
-          setConfirmCalibrate(false);
-          try {
-            await calibrateCharger(sn);
-            toast(t('map.calibrateStarted'), 'success');
-          } catch {
-            toast(t('map.calibrateCharger') + ' ✗', 'error');
-          }
-        }}
-        onCancel={() => setConfirmCalibrate(false)}
       />
       <ConfirmDialog
         open={confirmShiftReset}
