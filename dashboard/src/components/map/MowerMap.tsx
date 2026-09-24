@@ -97,6 +97,13 @@ const AREA_STYLES = {
   default:  { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.25, weight: 2 },   // purple
 } as const;
 
+/** Zone-kopie-voorvertoning: amber zoals de kopieermarker, half dekkend. */
+const COPY_PREVIEW_STYLES = {
+  work:     { color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.4, weight: 3 },
+  obstacle: { color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.45, weight: 2 },
+  channel:  { color: '#f59e0b', dashArray: '6 4', weight: 4 },
+} as const;
+
 /** Paneelstate voor "zone kopiëren van andere maaier" (spec 2026-09-24). */
 interface CopyPanelState {
   sources: DeviceState[];
@@ -4252,14 +4259,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <Tooltip direction="top" offset={[0, -12]} permanent>{t('map.copyZoneMarker', { name: copySourceName })}</Tooltip>
             </Marker>
           )}
+          {/* Kopie-voorvertoning in de kleur van de marker, half dekkend: in het
+              groen van de gewone zones viel hij weg tegen de foto en tegen een
+              bestaande zone op dezelfde plek. */}
           {editMode === 'none' && copyPanel?.plan && copyPanel.plan.work.length >= 3 && (
-            <Polygon positions={copyPositions(copyPanel.plan.work)} pathOptions={{ ...AREA_STYLES.work, dashArray: '6 4', fillOpacity: 0.15 }} />
+            <Polygon positions={copyPositions(copyPanel.plan.work)} pathOptions={COPY_PREVIEW_STYLES.work} />
           )}
           {editMode === 'none' && copyPanel?.plan?.obstacles.map(o => (
-            <Polygon key={`copy-${o.canonical}`} positions={copyPositions(o.points)} pathOptions={{ ...AREA_STYLES.obstacle, dashArray: '6 4', fillOpacity: 0.2 }} />
+            <Polygon key={`copy-${o.canonical}`} positions={copyPositions(o.points)} pathOptions={COPY_PREVIEW_STYLES.obstacle} />
           ))}
           {editMode === 'none' && copyPanel?.plan?.channels.map(c => (
-            <Polyline key={`copy-${c.canonical}`} positions={copyPositions(c.points)} pathOptions={{ ...AREA_STYLES.unicom, dashArray: '6 4', weight: 4 }} />
+            <Polyline key={`copy-${c.canonical}`} positions={copyPositions(c.points)} pathOptions={COPY_PREVIEW_STYLES.channel} />
           ))}
           {/* Charger marker (draggable to reposition) — apply same calibration offset as polygons */}
           {chargerHasGps && (
