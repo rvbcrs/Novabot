@@ -10,7 +10,7 @@ import {
   Box, Sun, Moon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { MapData, MapCalibration, GpsPoint } from '../../types';
+import type { MapData, MapCalibration, GpsPoint, DeviceState, LocalPoint } from '../../types';
 import { DroneOverlayLayer } from './DroneOverlay';
 import { RenderPicture, type RenderOverlay } from './RenderPicture';
 import { RenderMaker } from './RenderMaker';
@@ -31,6 +31,7 @@ import {
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
   applyPolygonOffset, fetchPolygonOffset, isUnsupportedFirmwareError,
+  previewZoneCopy, copyZone, fetchDevices, type ZoneCopyPlan,
   type VirtualWall, type EditGeometryDto, type CoveragePathEntry,
 } from '../../api/client';
 import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
@@ -94,6 +95,20 @@ const AREA_STYLES = {
   unicom:   { color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.20, weight: 2 },   // blue
   default:  { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.25, weight: 2 },   // purple
 } as const;
+
+/** Paneelstate voor "zone kopiëren van andere maaier" (spec 2026-09-24). */
+interface CopyPanelState {
+  sources: DeviceState[];
+  sourceSn: string | null;
+  sourceMaps: MapData[];
+  canonical: string | null;
+  /** Waar het laadstation van de bronmaaier op DEZE kaart staat (lat, lng). */
+  marker: [number, number] | null;
+  withObstacles: boolean;
+  plan: ZoneCopyPlan | null;
+  busy: boolean;
+  error: string | null;
+}
 
 /** Bepaal kaarttype — primair uit mapType veld, fallback op mapId/mapName patronen */
 function getAreaStyle(mapType?: string, mapId?: string, mapName?: string | null) {
@@ -1963,6 +1978,111 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setUserInteracted(true);
   }, [mapWriteSupported, t]);
 
+  // ── Zone kopiëren van een andere maaier ────────────────────────────────
+  // Eén fysieke correspondentie: waar het laadstation van de bronmaaier op
+  // DEZE kaart staat. De zone volgt met rotatie 0. GPS/pos.json van de andere
+  // maaier is onbruikbaar: twee maaiers delen geen absoluut GPS-frame (elke
+  // charger zendt zijn eigen ingemeten RTK-basispositie uit).
+  const [copyPanel, setCopyPanel] = useState<CopyPanelState | null>(null);
+  const copyPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyMarkerIcon = useMemo(() => L.divIcon({
+    className: '',
+    html: '<div style="width:22px;height:22px;border-radius:50%;background:#f59e0b;border:3px solid #fff;box-shadow:0 0 0 2px #f59e0b"></div>',
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  }), []);
+
+  /** Klik/sleep op de kaart → lokale meters van deze maaier, dezelfde formule als tekenen. */
+  const copyLocalFromLatLng = useCallback((lat: number, lng: number): LocalPoint | null => {
+    if (!isUsableChargerGps(chargerGps)) return null;
+    const l = gpsToLocal({ lat, lng }, chargerGps);
+    return { x: l.x + (chargingPose?.x ?? 0), y: l.y + (chargingPose?.y ?? 0) };
+  }, [chargerGps, chargingPose]);
+
+  const runCopyPreview = useCallback((state: CopyPanelState) => {
+    if (!sn || !state.sourceSn || !state.canonical || !state.marker) return;
+    const local = copyLocalFromLatLng(state.marker[0], state.marker[1]);
+    if (!local) return;
+    if (copyPreviewTimer.current) clearTimeout(copyPreviewTimer.current);
+    const sourceSn = state.sourceSn;
+    const canonical = state.canonical;
+    const withObstacles = state.withObstacles;
+    copyPreviewTimer.current = setTimeout(async () => {
+      try {
+        const plan = await previewZoneCopy(sn, sourceSn, canonical, local, withObstacles);
+        setCopyPanel(prev => (prev ? { ...prev, plan, error: null } : prev));
+      } catch (err) {
+        setCopyPanel(prev => (prev ? { ...prev, plan: null, error: err instanceof Error ? err.message : String(err) } : prev));
+      }
+    }, 250);
+  }, [sn, copyLocalFromLatLng]);
+
+  const openCopyPanel = useCallback(async () => {
+    if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
+    const sources = (await fetchDevices()).filter(d => d.deviceType === 'mower' && d.sn !== sn);
+    setSelectedMapId(null);
+    setCopyPanel({ sources, sourceSn: null, sourceMaps: [], canonical: null, marker: null, withObstacles: true, plan: null, busy: false, error: null });
+  }, [mapWriteSupported, sn, t]);
+
+  const chooseCopySource = useCallback(async (sourceSn: string) => {
+    const [{ maps: srcMaps }, cal] = await Promise.all([fetchMaps(sourceSn), fetchCalibration(sourceSn)]);
+    const work = srcMaps.filter(m => m.mapType === 'work' && m.canonicalName);
+    // Voorgevuld op de kaartpositie van het laadstation van de bron; de
+    // gebruiker sleept hem naar de echte plek op de foto.
+    const marker: [number, number] | null = cal.chargerLat && cal.chargerLng
+      ? [cal.chargerLat, cal.chargerLng]
+      : (isUsableChargerGps(chargerGps) ? [chargerGps.lat, chargerGps.lng] : null);
+    setCopyPanel(prev => {
+      if (!prev) return prev;
+      const next: CopyPanelState = { ...prev, sourceSn, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, marker, plan: null, error: null };
+      runCopyPreview(next);
+      return next;
+    });
+  }, [chargerGps, runCopyPreview]);
+
+  const setCopyMarker = useCallback((lat: number, lng: number) => {
+    setCopyPanel(prev => {
+      if (!prev) return prev;
+      const next: CopyPanelState = { ...prev, marker: [lat, lng] };
+      runCopyPreview(next);
+      return next;
+    });
+  }, [runCopyPreview]);
+
+  const updateCopyPanel = useCallback((patch: Partial<CopyPanelState>) => {
+    setCopyPanel(prev => {
+      if (!prev) return prev;
+      const next: CopyPanelState = { ...prev, ...patch, plan: null };
+      runCopyPreview(next);
+      return next;
+    });
+  }, [runCopyPreview]);
+
+  const placeCopiedZone = useCallback(async () => {
+    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || !copyPanel.marker || !copyPanel.plan?.ok) return;
+    const local = copyLocalFromLatLng(copyPanel.marker[0], copyPanel.marker[1]);
+    if (!local) return;
+    setCopyPanel(prev => (prev ? { ...prev, busy: true, error: null } : prev));
+    try {
+      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, local, { withObstacles: copyPanel.withObstacles, acceptChannel: true });
+      if (!r.ok || !r.map) throw new Error(t('map.copyZoneFailed'));
+      await reloadMaps();
+      setSelectedMapId(r.map.mapId);
+      setCopyPanel(null);
+      const slot = r.map.canonicalName ?? '';
+      toast(t('map.copyZoneDone', { name: r.map.mapName ?? slot, slot }), 'success');
+      if (r.needsChannel && r.map.canonicalName) {
+        setChannelPrompt({ canonical: r.map.canonicalName, name: r.map.mapName ?? r.map.canonicalName });
+      }
+    } catch (err) {
+      setCopyPanel(prev => (prev ? { ...prev, busy: false, error: err instanceof Error ? err.message : String(err) } : prev));
+    }
+  }, [sn, copyPanel, copyLocalFromLatLng, reloadMaps, t, toast]);
+
+  const copySourceName = copyPanel
+    ? (copyPanel.sources.find(d => d.sn === copyPanel.sourceSn)?.nickname || copyPanel.sourceSn || '')
+    : '';
+
   // Determine editor polygon color based on context
   const editorColor = useMemo(() => {
     if (editMode === 'draw') return AREA_TYPE_META[drawType].color;
@@ -3453,6 +3573,18 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     return { lat: totalLat / count, lng: totalLng / count };
   }, [polygonMaps, position]);
 
+  /** Lokale meters van deze maaier → Leaflet-posities, dezelfde projectie als gpsMaps/draftOverlays. */
+  const copyPositions = useCallback((pts: LocalPoint[]): [number, number][] => {
+    if (!isUsableChargerGps(chargerGps)) return [];
+    const offX = chargingPose?.x ?? 0;
+    const offY = chargingPose?.y ?? 0;
+    const gps = pts.flatMap(p => {
+      const g = localToGps({ x: p.x - offX, y: p.y - offY }, chargerGps);
+      return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? [g] : [];
+    });
+    return calibratePoints(gps, activeCal, polyCenter);
+  }, [chargerGps, chargingPose, activeCal, polyCenter]);
+
   // Calibration handlers
   // De edit-offset houden we in GRADEN aan zodat de bestaande preview
   // (calibratePoints) ongewijzigd blijft; conversie meters↔graden gebeurt alleen
@@ -4057,6 +4189,30 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
           {/* Click-to-place charger handler */}
           {placingCharger && <ChargerPlacer onPlace={handlePlaceCharger} />}
+          {/* Zone kopiëren: klik verplaatst de marker, marker is sleepbaar, preview gestippeld */}
+          {copyPanel && editMode === 'none' && <ChargerPlacer onPlace={setCopyMarker} />}
+          {copyPanel?.marker && (
+            <Marker
+              position={copyPanel.marker}
+              icon={copyMarkerIcon}
+              draggable
+              zIndexOffset={1000}
+              eventHandlers={{
+                dragend: (e) => { const { lat, lng } = e.target.getLatLng(); setCopyMarker(lat, lng); },
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -12]} permanent>{t('map.copyZoneMarker', { name: copySourceName })}</Tooltip>
+            </Marker>
+          )}
+          {copyPanel?.plan && copyPanel.plan.work.length >= 3 && (
+            <Polygon positions={copyPositions(copyPanel.plan.work)} pathOptions={{ ...AREA_STYLES.work, dashArray: '6 4', fillOpacity: 0.15 }} />
+          )}
+          {copyPanel?.plan?.obstacles.map(o => (
+            <Polygon key={`copy-${o.canonical}`} positions={copyPositions(o.points)} pathOptions={{ ...AREA_STYLES.obstacle, dashArray: '6 4', fillOpacity: 0.2 }} />
+          ))}
+          {copyPanel?.plan?.channels.map(c => (
+            <Polyline key={`copy-${c.canonical}`} positions={copyPositions(c.points)} pathOptions={{ ...AREA_STYLES.unicom, dashArray: '6 4', weight: 4 }} />
+          ))}
           {/* Charger marker (draggable to reposition) — apply same calibration offset as polygons */}
           {chargerHasGps && (
             <Marker
@@ -4438,6 +4594,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                         title={!mapWriteSupported ? t('map.drawStockNotice') : undefined}
                       >
                         <Pencil className="w-4 h-4 opacity-70" />{t('map.drawNew')}
+                      </button>
+                      <button
+                        onClick={() => { void openCopyPanel(); setRailFlyout(null); }}
+                        className={`${railRow(false)} ${!mapWriteSupported ? 'opacity-40 cursor-not-allowed' : ''}`}
+                        disabled={!mapWriteSupported}
+                        title={!mapWriteSupported ? t('map.drawStockNotice') : undefined}
+                      >
+                        <Copy className="w-4 h-4 opacity-70" />{t('map.copyZone')}
                       </button>
                       {!mapWriteSupported && (
                         <div className="px-2.5 pb-1.5 text-[11px] leading-snug text-amber-300/90">{t('map.drawStockNotice')}</div>
@@ -4938,6 +5102,91 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           </div>
         )}
 
+        {/* Zone kopiëren van een andere maaier */}
+        {copyPanel && editMode === 'none' && (
+          <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-72 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">{t('map.copyZone')}</span>
+              <button onClick={() => setCopyPanel(null)} className="text-gray-500 hover:text-gray-300" title={t('common.cancel')}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {copyPanel.sources.length === 0 ? (
+              <p className="text-[11px] text-gray-400">{t('map.copyZoneNoSources')}</p>
+            ) : (
+              <>
+                <label className="block text-[11px] text-gray-400">
+                  {t('map.copyZoneSource')}
+                  <select
+                    value={copyPanel.sourceSn ?? ''}
+                    onChange={e => void chooseCopySource(e.target.value)}
+                    className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                  >
+                    <option value="" disabled>{t('map.copyZoneChoose')}</option>
+                    {copyPanel.sources.map(d => <option key={d.sn} value={d.sn}>{d.nickname || d.sn}</option>)}
+                  </select>
+                </label>
+                {copyPanel.sourceSn && (
+                  <label className="block text-[11px] text-gray-400">
+                    {t('map.copyZoneZone')}
+                    <select
+                      value={copyPanel.canonical ?? ''}
+                      onChange={e => updateCopyPanel({ canonical: e.target.value })}
+                      className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                    >
+                      {copyPanel.sourceMaps.map(m => (
+                        <option key={m.mapId} value={m.canonicalName ?? ''}>
+                          {m.mapName ? `${m.mapName} (${m.canonicalName})` : m.canonicalName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="flex items-center gap-2 text-[11px] text-gray-400">
+                  <input type="checkbox" checked={copyPanel.withObstacles} onChange={e => updateCopyPanel({ withObstacles: e.target.checked })} />
+                  {t('map.copyZoneWithObstacles')}
+                </label>
+                {copyPanel.sourceSn && (
+                  <p className="text-[11px] leading-snug text-gray-400">{t('map.copyZoneHint', { name: copySourceName })}</p>
+                )}
+                {copyPanel.error && <p className="text-[11px] text-red-400">{copyPanel.error}</p>}
+                {copyPanel.plan && (
+                  <div className="text-[11px] leading-snug space-y-0.5">
+                    {copyPanel.plan.ok ? (
+                      <>
+                        <div className="text-emerald-300">{t('map.copyZoneVerdictOk', { slot: copyPanel.plan.canonical, m2: Math.round(copyPanel.plan.areaM2) })}</div>
+                        {copyPanel.plan.connectedVia && <div className="text-gray-300">{t('map.copyZoneConnected', { zone: copyPanel.plan.connectedVia })}</div>}
+                        {copyPanel.plan.channels.map(c => (
+                          <div key={c.canonical} className="text-blue-300">
+                            {c.kind === 'dock'
+                              ? t('map.copyZoneChannelDock', { m: (copyPanel.plan?.dockDistanceM ?? 0).toFixed(1) })
+                              : t('map.copyZoneChannelLink', { zone: c.canonical.replace(/tomap.*$/, '') })}
+                          </div>
+                        ))}
+                        {copyPanel.plan.needsChannel && <div className="text-amber-300">{t('map.copyZoneNeedsChannel')}</div>}
+                        {copyPanel.plan.warnings.map(w => <div key={w} className="text-amber-300">{t(`map.copyZoneWarn.${w}`)}</div>)}
+                      </>
+                    ) : (
+                      <div className="text-red-300">{copyPanel.plan.error ?? t('map.copyZoneFailed')}</div>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center gap-2 pt-1">
+                  <button onClick={() => setCopyPanel(null)} className="flex-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors">
+                    {t('common.cancel')}
+                  </button>
+                  <button
+                    onClick={() => void placeCopiedZone()}
+                    disabled={!copyPanel.plan?.ok || copyPanel.busy}
+                    className="flex-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 transition-colors"
+                  >
+                    {copyPanel.busy ? t('map.copyZonePlacing') : t('map.copyZonePlace')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {/* Na het tekenen van een werkgebied: kanaal erheen vragen */}
         {channelPrompt && editMode === 'none' && (
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-64">
