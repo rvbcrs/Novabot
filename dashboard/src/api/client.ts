@@ -294,6 +294,48 @@ export async function createMap(sn: string, mapName: string, mapArea: LocalPoint
   return data.map;
 }
 
+// ── Zone kopiëren van een andere maaier ───────────────────────────────────
+export interface ZoneCopyChannel { canonical: string; kind: 'dock' | 'link'; points: LocalPoint[]; replaces: boolean }
+export interface ZoneCopyPlan {
+  ok: boolean;
+  refusal?: 'slot_limit' | 'target_no_dock' | 'too_far_from_dock' | 'dock_channel_blocked';
+  /** Leesbare reden (in de taal van de lezer) bij een refusal. */
+  error?: string;
+  slot: number;
+  canonical: string;
+  work: LocalPoint[];
+  obstacles: { canonical: string; points: LocalPoint[] }[];
+  channels: ZoneCopyChannel[];
+  connectedVia: string | null;
+  needsChannel: boolean;
+  warnings: ('full_overlap' | 'existing_zones_unlinked')[];
+  dockDistanceM: number | null;
+  sourceAlias: string | null;
+  areaM2: number;
+}
+export interface ZoneCopyResult {
+  ok: boolean;
+  map?: MapData;
+  obstacles?: string[];
+  channels?: string[];
+  needsChannel?: boolean;
+  warnings?: string[];
+}
+
+/** Plan zonder te schrijven. Invoerfouten (400/404/409) komen als Error met de servertekst. */
+export async function previewZoneCopy(sn: string, source: string, canonical: string, dockAtB: LocalPoint, withObstacles = true): Promise<ZoneCopyPlan> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, dockAtB, withObstacles });
+  return res.json();
+}
+
+export async function copyZone(
+  sn: string, source: string, canonical: string, dockAtB: LocalPoint,
+  opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean } = {},
+): Promise<ZoneCopyResult> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, dockAtB, ...opts });
+  return res.json();
+}
+
 export async function deleteMap(sn: string, mapId: string, force = false): Promise<void> {
   const qs = force ? '?force=1' : '';
   const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}${qs}`, {
