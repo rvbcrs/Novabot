@@ -336,6 +336,11 @@ export async function copyZone(
   return res.json();
 }
 
+/** De kaart opnieuw op de maaier zetten na een mislukte push. */
+export async function applyMapsToMower(sn: string): Promise<void> {
+  await post(`${BASE}/maps/${encodeURIComponent(sn)}/apply`, {});
+}
+
 export async function deleteMap(sn: string, mapId: string, force = false): Promise<void> {
   const qs = force ? '?force=1' : '';
   const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}${qs}`, {

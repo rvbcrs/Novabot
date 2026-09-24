@@ -97,7 +97,9 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
 }));
 
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { publishToExtended } from '../../mqtt/mapSync.js';
+import { publishToExtended, onExtendedResponse } from '../../mqtt/mapSync.js';
+import { forwardToDashboard } from '../../dashboard/socketHandler.js';
+import { mapApplyTiming, PHASE_KEY, ERROR_KEY } from '../../services/mapApplyStatus.js';
 import { isDeviceOnline } from '../../mqtt/broker.js';
 import { mapRepo } from '../../db/repositories/index.js';
 
@@ -197,5 +199,94 @@ describe('zone copy routes', () => {
     fw.supported = false;
     expect((await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: dockB })).body.reason).toBe('unsupported_firmware');
     expect((await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB })).body.reason).toBe('unsupported_firmware');
+  });
+});
+
+describe('toepassen op de maaier: status voor het dashboard', () => {
+  const saved = { ...mapApplyTiming };
+  let handlers: Array<(d: Record<string, unknown>) => void> = [];
+  const answer = (d: Record<string, unknown>) => { for (const h of handlers) h(d); };
+  const tick = () => new Promise(r => setTimeout(r, 5));
+  const phases = () => vi.mocked(forwardToDashboard).mock.calls
+    .filter(c => c[0] === B && (c[1] as Map<string, string>).has(PHASE_KEY))
+    .map(c => (c[1] as Map<string, string>).get(PHASE_KEY));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fw.supported = true;
+    vi.mocked(isDeviceOnline).mockReturnValue(true);
+    Object.assign(mapApplyTiming, { settleMinMs: 0, settleMaxMs: 50, pollMs: 1 });
+    handlers = [];
+    vi.mocked(onExtendedResponse).mockImplementation((_sn, h) => { handlers.push(h as (d: Record<string, unknown>) => void); });
+    for (const sn of [A, B]) for (const m of mapRepo.findByMowerSn(sn)) mapRepo.deleteById(m.map_id);
+    addRow(A, 'map0', 'work', square(0, 0), 'Grote tuin');
+    addRow(A, 'map0tocharge_unicom', 'unicom', [dockA, { x: -0.4, y: 0.94 }]);
+    addRow(B, 'map0tocharge_unicom', 'unicom', [dockB, { x: 0.3, y: -0.8 }]);
+  });
+  afterAll(() => { Object.assign(mapApplyTiming, saved); });
+
+  it('meldt syncing → regenerating → settling → klaar', async () => {
+    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    expect(res.status).toBe(200);
+    await tick();
+    expect(phases()).toEqual(['syncing']);
+    answer({ sync_map_respond: { result: 0 } });
+    await tick();
+    expect(phases()).toEqual(['syncing', 'regenerating']);
+    answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); await tick();
+    expect(phases()).toEqual(['syncing', 'regenerating', 'settling', '']);
+  });
+
+  it('een mislukte sync_map laat failed staan met de reden', async () => {
+    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await tick();
+    answer({ sync_map_respond: { result: 1, error: 'download failed' } });
+    await tick();
+    const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
+    expect(last.get(PHASE_KEY)).toBe('failed');
+    expect(last.get(ERROR_KEY)).toBe('sync_failed');
+  });
+
+  it('een mislukte regenerate laat failed staan met de reden', async () => {
+    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await tick();
+    answer({ sync_map_respond: { result: 0 } });
+    await tick();
+    answer({ regenerate_per_map_files_respond: { result: 1, error: 'map.pgm missing' } });
+    await tick();
+    const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
+    expect(last.get(PHASE_KEY)).toBe('failed');
+    expect(last.get(ERROR_KEY)).toBe('regenerate_failed');
+  });
+});
+
+describe('POST /maps/:sn/apply — opnieuw op de maaier zetten na een mislukte push', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fw.supported = true;
+    vi.mocked(isDeviceOnline).mockReturnValue(true);
+  });
+
+  it('start de push opnieuw (sync_map)', async () => {
+    const res = await request(server).post(`/api/dashboard/maps/${B}/apply`).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    await new Promise(r => setTimeout(r, 0));
+    expect(vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0])).toEqual(['sync_map']);
+  });
+
+  it('409 offline, geen push', async () => {
+    vi.mocked(isDeviceOnline).mockReturnValue(false);
+    const res = await request(server).post(`/api/dashboard/maps/${B}/apply`).send({});
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('offline');
+    expect(publishToExtended).not.toHaveBeenCalled();
+  });
+
+  it('stock firmware: 409 unsupported_firmware', async () => {
+    fw.supported = false;
+    const res = await request(server).post(`/api/dashboard/maps/${B}/apply`).send({});
+    expect(res.body.reason).toBe('unsupported_firmware');
   });
 });

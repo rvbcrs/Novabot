@@ -227,6 +227,7 @@
     }
   },
   "controls": {
+    "mapApplying": "Kaart wordt op de maaier gezet…",
     "startMowing": "Start maaien",
     "mowerOffline": "Maaier offline",
     "start": "Start",
@@ -532,6 +533,23 @@
     "channelPromptTitle": "Verbind {{name}}",
     "channelPromptBody": "De maaier rijdt alleen naar {{slot}} als er een kanaal naartoe loopt. Teken een lijn van {{slot}} naar een bestaand gebied of naar het laadstation.",
     "channelPromptDraw": "Kanaal tekenen",
+    "apply": {
+      "title": "Kaart op de maaier zetten",
+      "step": "stap {{step}} van 3",
+      "syncing": "Bestanden naar de maaier sturen.",
+      "regenerating": "Maaikaarten per zone maken.",
+      "settling": "Wachten tot de planner van de maaier weer draait.",
+      "hint": "Starten kan zodra dit klaar is.",
+      "failed": "Kaart niet op de maaier gezet",
+      "retry": "Opnieuw",
+      "error": {
+        "sync_timeout": "De maaier antwoordde niet op het versturen.",
+        "sync_failed": "De maaier kon de bestanden niet ophalen.",
+        "regenerate_timeout": "De maaier antwoordde niet bij het maken van de maaikaarten.",
+        "regenerate_failed": "De maaier kon de maaikaarten niet maken.",
+        "unknown": "Onbekende fout."
+      }
+    },
     "copyZone": "Zone kopiëren van andere maaier",
     "copyZoneNoSources": "Geen andere maaier bekend op deze server.",
     "copyZoneSource": "Bronmaaier",

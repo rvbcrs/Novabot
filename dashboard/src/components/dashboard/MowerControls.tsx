@@ -27,6 +27,7 @@ import {
   isMowerBusy,
   type MowerActivity,
 } from '../../utils/mowerActivity';
+import { mapApplyView } from '../../utils/mapApply';
 import { useToast } from '../common/Toast';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { ReturnReasonModal } from './ReturnReasonModal';
@@ -775,7 +776,10 @@ export function MowerControls({
   const disabled = busy || (!online && !demoActive);
   // The Start button is additionally blocked while the mower is already
   // executing a task, has an error, has no map, or is offline.
-  const startDisabled = disabled || mowerBusy || hasError || noMap || frameUnvalidated || (!online && !demoActive);
+  // A just drawn or copied zone is on the map before the mower has it: sync,
+  // per-zone grids and the planner restart take about a minute.
+  const mapApplying = mapApplyView(sensors).state === 'busy';
+  const startDisabled = disabled || mowerBusy || hasError || noMap || frameUnvalidated || mapApplying || (!online && !demoActive);
   const btnBase = 'inline-flex items-center justify-center p-1 sm:p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
 
   // ── Activity-driven action handlers (mirror app HomeScreen) ─────────────
@@ -998,7 +1002,8 @@ export function MowerControls({
                 : 'bg-gray-700/60 text-gray-400 hover:text-white hover:bg-emerald-700'
             } disabled:opacity-30 disabled:cursor-not-allowed`}
             title={
-              hasError ? (t('controls.clearErrorFirst') ?? 'Clear error first')
+              mapApplying ? t('controls.mapApplying')
+              : hasError ? (t('controls.clearErrorFirst') ?? 'Clear error first')
               : noMap ? (t('controls.noMapCreateFirst') ?? 'Create a map first')
               // Stond hier niet, terwijl frameUnvalidated de knop wél uitzet:
               // de startknop was grijs zonder dat iets vertelde waarom.

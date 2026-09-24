@@ -156,6 +156,7 @@
     }
   },
   "controls": {
+    "mapApplying": "Map is being applied on the mower…",
     "startMowing": "Start mowing",
     "mowerOffline": "Mower offline",
     "clearErrorFirst": "Clear error first",
@@ -463,6 +464,23 @@
     "channelPromptTitle": "Connect {{name}}",
     "channelPromptBody": "The mower only reaches {{slot}} when a channel leads there. Draw a line from {{slot}} to an existing area or to the charging station.",
     "channelPromptDraw": "Draw channel",
+    "apply": {
+      "title": "Applying map on the mower",
+      "step": "step {{step}} of 3",
+      "syncing": "Sending files to the mower.",
+      "regenerating": "Building a mowing map per zone.",
+      "settling": "Waiting for the mower's planner to run again.",
+      "hint": "You can start once this is done.",
+      "failed": "Map not applied on the mower",
+      "retry": "Retry",
+      "error": {
+        "sync_timeout": "The mower did not answer the transfer.",
+        "sync_failed": "The mower could not fetch the files.",
+        "regenerate_timeout": "The mower did not answer while building the mowing maps.",
+        "regenerate_failed": "The mower could not build the mowing maps.",
+        "unknown": "Unknown error."
+      }
+    },
     "copyZone": "Copy zone from another mower",
     "copyZoneNoSources": "No other mower known to this server.",
     "copyZoneSource": "Source mower",

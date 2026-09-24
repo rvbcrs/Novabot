@@ -1340,4 +1340,14 @@ export const CATALOG: Catalog = {
     fr: "Tondeuse hors ligne : la copie nécessite une tondeuse en ligne pour qu'elle reçoive la nouvelle zone immédiatement.",
     de: "Mäher offline: Kopieren braucht einen Online-Mäher, damit er die neue Zone sofort erhält.",
   },
+  "De kaart op de maaier zetten": {
+    en: "Applying the map on the mower",
+    fr: "Appliquer la carte sur la tondeuse",
+    de: "Die Karte auf den Mäher übertragen",
+  },
+  "Maaier offline: de kaart kan pas op de maaier gezet worden als die online is.": {
+    en: "Mower offline: the map can only be applied once the mower is online.",
+    fr: "Tondeuse hors ligne : la carte ne peut être appliquée qu'une fois la tondeuse en ligne.",
+    de: "Mäher offline: Die Karte kann erst übertragen werden, wenn der Mäher online ist.",
+  },
 };

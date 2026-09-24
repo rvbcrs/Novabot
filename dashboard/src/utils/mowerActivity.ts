@@ -1,3 +1,4 @@
+import { mapApplyView, PROCESS_RESTART_ERROR } from './mapApply.ts';
 /**
  * mowerActivity — derives a single high-level "activity" state for a mower
  * from its raw sensor cache, mirroring the OpenNova app's `deriveMower`
@@ -71,6 +72,9 @@ export function parseRechargeStatus(value: string | undefined): number {
  */
 export function deriveHasError(sensors: Sensors): boolean {
   const errorStatusRaw = parseInt(sensors?.error_status?.match(/\d+/)?.[0] ?? '0', 10);
+  // Error 140 while our own map push restarts the planner is expected and
+  // clears by itself; the push status says why Start waits instead.
+  if (errorStatusRaw === PROCESS_RESTART_ERROR && mapApplyView(sensors).state === 'busy') return false;
   return Boolean(errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw));
 }
 

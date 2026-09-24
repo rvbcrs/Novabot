@@ -65,6 +65,7 @@ import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, U
 import { getPolygonAnchor } from '../services/anchor.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, persistZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
+import { beginMapApply, waitForPlannerBack } from '../services/mapApplyStatus.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
@@ -1968,6 +1969,21 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', (req: Request, res: Response
   autoPushMapsInBackground(sn);
 });
 
+// POST /api/dashboard/maps/:sn/apply — de kaart opnieuw op de maaier zetten,
+// voor als een push mislukte (map_apply_phase 'failed'). Zelfde pad als na
+// tekenen of kopiëren.
+dashboardRouter.post('/maps/:sn/apply', (req: Request, res: Response) => {
+  const T = reqT(req);
+  const { sn } = req.params;
+  if (rejectUnlessOpenNova(sn, req, res, M`De kaart op de maaier zetten`)) return;
+  if (!isDeviceOnline(sn)) {
+    res.status(409).json({ ok: false, reason: 'offline', error: T`Maaier offline: de kaart kan pas op de maaier gezet worden als die online is.` });
+    return;
+  }
+  res.json({ ok: true });
+  autoPushMapsInBackground(sn);
+});
+
 // PATCH /api/dashboard/maps/:sn/:mapId — hernoem of bewerk een kaart
 dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
   const T = reqT(req);
@@ -2644,13 +2660,19 @@ async function autoPushMapsInBackground(sn: string): Promise<void> {
   // kick listed csv_file/ before sync_map had downloaded and unpacked the new
   // ZIP: the freshly drawn zone got no map<N>.yaml until the NEXT push, and
   // starting it failed with error 118 (Petrov's map10, 2026-09-16).
+  // Het dashboard toont elke stap (map_apply_phase): de zone staat al op de
+  // kaart, maar de maaier is pas klaar na deze drie stappen.
+  const apply = beginMapApply(sn);
+  apply.phase('syncing');
   const sync = await awaitExtended(sn, 'sync_map', {}, SYNC_MAP_TIMEOUT_MS);
   if (!sync) {
     console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op sync_map`);
+    apply.fail('sync_timeout');
     return;
   }
   if (sync.result !== 0) {
     console.warn(`[AUTO-PUSH] ${sn}: sync_map faalde: ${String(sync.error ?? '')}`);
+    apply.fail('sync_failed');
     return;
   }
   console.log(`[AUTO-PUSH] ${sn}: sync_map ok${sync.unchanged ? ' (unchanged)' : ''}`);
@@ -2661,7 +2683,17 @@ async function autoPushMapsInBackground(sn: string): Promise<void> {
   // an area beyond the scanned terrain has no free cells in the shared raster
   // (error 125) until that handler grows it. Both needed a manual command
   // before, so every dashboard-drawn zone looked broken.
-  await regeneratePerMapFiles(sn);
+  apply.phase('regenerating');
+  const regen = await regeneratePerMapFiles(sn);
+  if (regen !== 'ok') { apply.fail(regen); return; }
+
+  // sync_map herstart novabot_mapping en de coverage planner; tot die terug
+  // zijn meldt robot_decision Error 140 en kan er niet gemaaid worden.
+  apply.phase('settling');
+  if (await waitForPlannerBack(sn) === 'timeout') {
+    console.warn(`[AUTO-PUSH] ${sn}: planner na de push nog niet terug (Error 140 blijft)`);
+  }
+  apply.done();
 }
 
 // The mower downloads the ZIP, unpacks it and restarts its mapping node.
@@ -2696,17 +2728,23 @@ async function awaitExtended(
  * Ask the mower to rebuild its per-slot grids after a map push, and wait for
  * the answer so the log tells us whether the shared raster had to grow.
  */
-async function regeneratePerMapFiles(sn: string): Promise<void> {
+async function regeneratePerMapFiles(sn: string): Promise<'ok' | 'regenerate_timeout' | 'regenerate_failed'> {
   try {
     const result = await awaitExtended(sn, 'regenerate_per_map_files', {}, REGENERATE_TIMEOUT_MS);
     if (!result) {
       console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op regenerate_per_map_files`);
-      return;
+      return 'regenerate_timeout';
+    }
+    if (result.result !== undefined && result.result !== 0) {
+      console.warn(`[AUTO-PUSH] ${sn}: regenerate_per_map_files faalde: ${String(result.error ?? '')}`);
+      return 'regenerate_failed';
     }
     const grown = result.canvas_grown as { from?: string; to?: string } | null | undefined;
     console.log(`[AUTO-PUSH] ${sn}: per-slot grids herbouwd${grown ? ` (raster ${grown.from} → ${grown.to})` : ''}`);
+    return 'ok';
   } catch (err) {
     console.warn(`[AUTO-PUSH] regenerate_per_map_files fout voor ${sn}:`, err);
+    return 'regenerate_failed';
   }
 }
 

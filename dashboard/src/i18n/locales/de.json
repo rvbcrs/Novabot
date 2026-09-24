@@ -124,6 +124,7 @@
     }
   },
   "controls": {
+    "mapApplying": "Karte wird auf den Mäher übertragen…",
     "startMowing": "Mähen starten",
     "mowerOffline": "Mäher offline",
     "start": "Start",
@@ -429,6 +430,23 @@
     "channelPromptTitle": "{{name}} verbinden",
     "channelPromptBody": "Der Mäher erreicht {{slot}} nur, wenn ein Kanal dorthin führt. Zeichnen Sie eine Linie von {{slot}} zu einem bestehenden Bereich oder zur Ladestation.",
     "channelPromptDraw": "Kanal zeichnen",
+    "apply": {
+      "title": "Karte auf den Mäher übertragen",
+      "step": "Schritt {{step}} von 3",
+      "syncing": "Dateien an den Mäher senden.",
+      "regenerating": "Mähkarte pro Zone erstellen.",
+      "settling": "Warten, bis der Planer des Mähers wieder läuft.",
+      "hint": "Starten ist möglich, sobald dies fertig ist.",
+      "failed": "Karte nicht auf den Mäher übertragen",
+      "retry": "Erneut",
+      "error": {
+        "sync_timeout": "Der Mäher hat auf die Übertragung nicht geantwortet.",
+        "sync_failed": "Der Mäher konnte die Dateien nicht abrufen.",
+        "regenerate_timeout": "Der Mäher hat beim Erstellen der Mähkarten nicht geantwortet.",
+        "regenerate_failed": "Der Mäher konnte die Mähkarten nicht erstellen.",
+        "unknown": "Unbekannter Fehler."
+      }
+    },
     "copyZone": "Zone von anderem Mäher kopieren",
     "copyZoneNoSources": "Kein anderer Mäher auf diesem Server bekannt.",
     "copyZoneSource": "Quellmäher",

@@ -31,7 +31,7 @@ import {
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
   applyPolygonOffset, fetchPolygonOffset, isUnsupportedFirmwareError,
-  previewZoneCopy, copyZone, fetchDevices, type ZoneCopyPlan,
+  previewZoneCopy, copyZone, fetchDevices, type ZoneCopyPlan, applyMapsToMower,
   type VirtualWall, type EditGeometryDto, type CoveragePathEntry,
 } from '../../api/client';
 import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
@@ -47,6 +47,7 @@ import { MapEditBar } from './MapEditBar';
 import { MowingStatsCard } from '../status/MowingStatsCard';
 import { parseFinishedAreas, prefixedAreaId } from '../../utils/coverPathProgress';
 import { coverageLaneStrokes, type LaneStroke } from '../../utils/coverageStyle';
+import { mapApplyView } from '../../utils/mapApply';
 import { PatternOverlay, type PatternPlacement } from '../patterns/PatternOverlay';
 import { CameraTile } from './CameraTile';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
@@ -2104,6 +2105,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       setCopyPanel(prev => (prev ? { ...prev, busy: false, error: err instanceof Error ? err.message : String(err) } : prev));
     }
   }, [sn, copyPanel, copyLocalFromLatLng, reloadMaps, t, toast]);
+
+  // Toepassen op de maaier (sync → grids → planner terug). De zone staat al
+  // op de kaart; deze regel zegt dat de maaier nog niet klaar is.
+  const applyView = mapApplyView(sensors);
+  const [dismissedApplyError, setDismissedApplyError] = useState<string | null>(null);
+  useEffect(() => { if (applyView.state === 'busy') setDismissedApplyError(null); }, [applyView.state]);
+  const retryMapApply = useCallback(async () => {
+    if (!sn) return;
+    try { await applyMapsToMower(sn); } catch (err) { toast(err instanceof Error ? err.message : t('map.apply.failed'), 'error'); }
+  }, [sn, t, toast]);
 
   const copySourceName = copyPanel
     ? (copyPanel.sources.find(d => d.sn === copyPanel.sourceSn)?.nickname || copyPanel.sourceSn || '')
@@ -5104,6 +5115,34 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           </div>
         )}
 
+        {/* Kaart op de maaier zetten: stap voor stap, of waarom het mislukte */}
+        {(applyView.state === 'busy' || (applyView.state === 'failed' && dismissedApplyError !== applyView.error)) && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[900] max-w-[calc(100%-1.5rem)] w-max bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg px-3 py-2 shadow-xl text-[12px] flex items-center gap-2.5">
+            {applyView.state === 'busy' ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
+                <div className="leading-snug">
+                  <div className="text-gray-100 font-medium">{t('map.apply.title')} · {t('map.apply.step', { step: applyView.step })}</div>
+                  <div className="text-gray-400">{t(`map.apply.${applyView.phase}`)} {t('map.apply.hint')}</div>
+                </div>
+              </>
+            ) : applyView.state === 'failed' ? (
+              <>
+                <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <div className="leading-snug">
+                  <div className="text-red-300 font-medium">{t('map.apply.failed')}</div>
+                  <div className="text-gray-400">{t(`map.apply.error.${applyView.error}`, t('map.apply.error.unknown'))}</div>
+                </div>
+                <button onClick={() => void retryMapApply()} className="text-xs px-2 py-1 rounded bg-amber-600 text-white hover:bg-amber-500 transition-colors shrink-0">
+                  {t('map.apply.retry')}
+                </button>
+                <button onClick={() => setDismissedApplyError(applyView.error)} className="text-gray-500 hover:text-gray-300 shrink-0" title={t('common.close', 'Sluiten')}>
+                  <X className="w-4 h-4" />
+                </button>
+              </>
+            ) : null}
+          </div>
+        )}
         {/* Zone kopiëren van een andere maaier */}
         {copyPanel && editMode === 'none' && (
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-72 space-y-2">

@@ -124,6 +124,7 @@
     }
   },
   "controls": {
+    "mapApplying": "Carte en cours d'application sur la tondeuse…",
     "startMowing": "Démarrer la tonte",
     "mowerOffline": "Tondeuse hors ligne",
     "start": "Démarrer",
@@ -429,6 +430,23 @@
     "channelPromptTitle": "Relier {{name}}",
     "channelPromptBody": "La tondeuse n'atteint {{slot}} que si un couloir y mène. Tracez une ligne de {{slot}} vers une zone existante ou vers la station de charge.",
     "channelPromptDraw": "Tracer le couloir",
+    "apply": {
+      "title": "Application de la carte sur la tondeuse",
+      "step": "étape {{step}} sur 3",
+      "syncing": "Envoi des fichiers à la tondeuse.",
+      "regenerating": "Création d'une carte de tonte par zone.",
+      "settling": "Attente du redémarrage du planificateur de la tondeuse.",
+      "hint": "Le démarrage sera possible une fois terminé.",
+      "failed": "Carte non appliquée sur la tondeuse",
+      "retry": "Réessayer",
+      "error": {
+        "sync_timeout": "La tondeuse n'a pas répondu à l'envoi.",
+        "sync_failed": "La tondeuse n'a pas pu récupérer les fichiers.",
+        "regenerate_timeout": "La tondeuse n'a pas répondu lors de la création des cartes.",
+        "regenerate_failed": "La tondeuse n'a pas pu créer les cartes.",
+        "unknown": "Erreur inconnue."
+      }
+    },
     "copyZone": "Copier une zone d'une autre tondeuse",
     "copyZoneNoSources": "Aucune autre tondeuse connue sur ce serveur.",
     "copyZoneSource": "Tondeuse source",
