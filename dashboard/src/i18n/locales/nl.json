@@ -546,6 +546,8 @@
     "copyZoneZone": "Zone",
     "copyZoneWithObstacles": "Obstakels meenemen",
     "copyZoneHint": "Sleep de oranje marker (of klik op de kaart) naar de plek waar het laadstation van {{name}} echt staat. De zone schuift mee.",
+    "copyZoneMeasure": "Gebruik de huidige positie van deze maaier",
+    "copyZoneMeasureHint": "Nauwkeuriger dan de foto: rijd deze maaier met de joystick precies naar de plek waar {{name}} gedockt staat en druk dan op de knop. De marker springt naar die positie.",
     "copyZoneMarker": "Laadstation {{name}}",
     "copyZoneVerdictOk": "Wordt {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Overlapt {{zone}}: geen kanaal nodig",

@@ -443,6 +443,8 @@
     "copyZoneZone": "Zone",
     "copyZoneWithObstacles": "Hindernisse übernehmen",
     "copyZoneHint": "Ziehen Sie die orange Markierung (oder klicken Sie auf die Karte) dorthin, wo die Ladestation von {{name}} wirklich steht. Die Zone folgt.",
+    "copyZoneMeasure": "Aktuelle Position dieses Mähers verwenden",
+    "copyZoneMeasureHint": "Genauer als das Foto: Fahren Sie diesen Mäher mit dem Joystick genau dorthin, wo {{name}} angedockt steht, und drücken Sie dann die Taste. Die Markierung springt zu dieser Position.",
     "copyZoneMarker": "Ladestation {{name}}",
     "copyZoneVerdictOk": "Wird {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Überlappt {{zone}}: kein Kanal nötig",

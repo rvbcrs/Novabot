@@ -475,6 +475,8 @@
     "copyZoneZone": "Zone",
     "copyZoneWithObstacles": "Include obstacles",
     "copyZoneHint": "Drag the orange marker (or click the map) to where {{name}}'s charging station really stands. The zone follows.",
+    "copyZoneMeasure": "Use this mower's current position",
+    "copyZoneMeasureHint": "More precise than the photo: drive this mower with the joystick exactly to where {{name}} sits when docked, then press the button. The marker jumps to that position.",
     "copyZoneMarker": "Charging station {{name}}",
     "copyZoneVerdictOk": "Becomes {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Overlaps {{zone}}: no channel needed",

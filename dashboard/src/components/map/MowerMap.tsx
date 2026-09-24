@@ -2073,6 +2073,21 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     });
   }, [runCopyPreview]);
 
+  // Meetstand: de maaier staat fysiek op de plek waar de bronmaaier dockt, dus
+  // zijn eigen map_position IS het laadstation van de bron in dit frame. Op
+  // centimeters nauwkeurig, waar een klik op de foto decimeters tot een meter
+  // ernaast zit (live gezien: 1,5 m te ver het terras op, 2026-09-24).
+  const copyMarkerFromMower = useCallback(() => {
+    const mx = parseFloat(mapX ?? ''), my = parseFloat(mapY ?? '');
+    if (!Number.isFinite(mx) || !Number.isFinite(my) || !isUsableChargerGps(chargerGps)) return;
+    // Inverse van copyLocalFromLatLng: lokale meters → marker-lat/lng inclusief de weergave-offset.
+    const g = localToGps({ x: mx - (chargingPose?.x ?? 0), y: my - (chargingPose?.y ?? 0) }, chargerGps);
+    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
+    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
+    setCopyMarker(g.lat + offLat, g.lng + offLng);
+  }, [mapX, mapY, chargerGps, chargingPose, activeCal, setCopyMarker]);
+  const copyMarkerFromMowerReady = Number.isFinite(parseFloat(mapX ?? '')) && Number.isFinite(parseFloat(mapY ?? ''));
+
   const updateCopyPanel = useCallback((patch: Partial<CopyPanelState>) => {
     setCopyPanel(prev => {
       if (!prev) return prev;
@@ -5185,6 +5200,18 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 </label>
                 {copyPanel.sourceSn && (
                   <p className="text-[11px] leading-snug text-gray-400">{t('map.copyZoneHint', { name: copySourceName })}</p>
+                )}
+                {copyPanel.sourceSn && (
+                  <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
+                    <p className="text-[11px] leading-snug text-gray-400">{t('map.copyZoneMeasureHint', { name: copySourceName })}</p>
+                    <button
+                      onClick={copyMarkerFromMower}
+                      disabled={!copyMarkerFromMowerReady}
+                      className="w-full text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-200 hover:bg-gray-600 disabled:opacity-40 transition-colors"
+                    >
+                      {t('map.copyZoneMeasure')}
+                    </button>
+                  </div>
                 )}
                 {copyPanel.error && <p className="text-[11px] text-red-400">{copyPanel.error}</p>}
                 {copyPanel.plan && (
