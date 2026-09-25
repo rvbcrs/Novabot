@@ -2,7 +2,9 @@
 
 Onderzocht op 25 september 2026, lokale broncode op `a8acf7ab`. Dit is een beoordeling, geen implementatie van de voorgestelde reparaties. De server-API en bestanden op beide maaiers zijn alleen gelezen; er zijn geen rij-, herstel-, synchronisatie- of firmwarecommando’s verstuurd. De gelijkheid van alle gedeployde uitvoerbare bestanden met deze lokale broncode is niet vastgesteld.
 
-**Oordeel:** de kern van de UTM-uitleg klopt. De bestaande code biedt de benodigde bouwstenen, maar heeft concrete fouten in herstel, ankerkeuze, offsets en validatie. Een garantie van enkele centimeters op de grond volgt niet uit het document of de huidige controles.
+Na de tweede beoordeling zijn de aanvullende claims opnieuw tegen `master` op `d08d66a7` gecontroleerd. Daarbij zijn geen nieuwe live dockmetingen uitgevoerd. De hieronder genoemde live waarden behoren tot de oorspronkelijke controle; de aanvullende GPS-captures dateren van 1 juni 2026.
+
+**Oordeel:** de kern van de UTM-uitleg klopt. De bestaande code biedt de benodigde bouwstenen, maar heeft concrete fouten in herstel, ankerkeuze, offsets en validatie. De wens om een getekende grens binnen enkele centimeters op de grond te realiseren is een aanvullende gebruikerswens. Het document belooft die totale nauwkeurigheid niet; de roadmap verderop is daarom geen bevinding van een onjuiste productbelofte.
 
 ## Direct op beide maaiers gecontroleerd
 
@@ -40,13 +42,15 @@ Nodig: navigatie vooraf blokkeren, online/rustvoorwaarden, bevestiging afwachten
 
 Het adminscherm biedt na herstel nog “Automatic (1m drive)” aan via [adminPage.ts:4940](../../server/src/routes/adminPage.ts#L4940). Die route gebruikt [adminStatus.ts:3468](../../server/src/routes/adminStatus.ts#L3468): `go_to_charge` met `bypassFrameGuard: true`. De codecomment veronderstelt dat docken `pos.json` opnieuw schrijft, terwijl de nieuwe documentatie dat juist ontkracht. Deze route voert geen `reanchor_pos` uit.
 
-Daarnaast wist [frameValidation.ts:134](../../server/src/services/frameValidation.ts#L134) de blokkade zodra na `noteAutoRecharge()` een docked-bericht komt. Vertrek van het dock, RTK Fixed, opnieuw gelokaliseerd zijn en afstand tot het anker worden daar niet gecontroleerd. Een geïsoleerde aanroep van de daadwerkelijke functies bevestigde dat alleen deze twee berichten de blokkade wissen.
+[mapSync.ts:219](../../server/src/mqtt/mapSync.ts#L219) roept `noteAutoRecharge()` ook aan voor deze `go_to_charge` met `bypassFrameGuard`, tenzij `suppressReanchorArm` is meegegeven. Vervolgens wist [frameValidation.ts:134](../../server/src/services/frameValidation.ts#L134) de blokkade zodra een docked-bericht komt. Dit is dus daadwerkelijk onderdeel van de oude herstelroute. Vertrek van het dock, RTK Fixed, opnieuw gelokaliseerd zijn en afstand tot het anker worden daar niet gecontroleerd. Een geïsoleerde aanroep van de daadwerkelijke functies bevestigde dat alleen het wapenen en het docked-bericht de blokkade wissen.
 
 Nodig: alle herstelknoppen naar dezelfde actuele procedure laten verwijzen. Alleen expliciete eindvalidatie mag de blokkade opheffen. De documentclaim dat dit uitsluitend na de 0.4 m-controle gebeurt, klopt momenteel niet voor alle codepaden.
 
 ### 4. P1 - De oude “Restore + Realign” accepteert een ongeschikte GPS-positie
 
 [adminStatus.ts:1473](../../server/src/routes/adminStatus.ts#L1473) leest gecachte GPS en controleert alleen eindige, niet-nul waarden. Dockstatus, Fixed-status en versheid zijn geen voorwaarden. Het pad overschrijft bovendien de handmatig geplaatste beeldpin met deze GPS en autoriseert daarna het schrijven van `pos.json`.
+
+Dit pad is bereikbaar: de opgeslagen MQTT-captures bevatten `gps_latitude` en `gps_longitude` voor [.100](../../research/documents/obstacle-capture-20260601-150851.jsonl#L71) en [.244](../../research/documents/obstacle-capture-20260601-150851.jsonl#L126). [sensorData.ts:993](../../server/src/mqtt/sensorData.ts#L993) neemt de server-reportvelden over in de sensorcache. De uitspraak in [REANCHOR.md:168](../reference/REANCHOR.md#L168) dat `gps_latitude` in productie niet gevuld wordt, is daarom onjuist. Het oorspronkelijke auditrapport stelde niet dat dit pad onbereikbaar was.
 
 Als de maaier elders staat, wordt die plek de nieuwe referentie voor het oude dockanker. Zelfs bij correct docken kan de absolute GNSS-bias de zorgvuldig geplaatste beeldpin opnieuw meters verzetten.
 
@@ -58,6 +62,8 @@ Nodig: deze dubbele procedure samenvoegen met de actuele herankering; beeldpin e
 
 Daarmee blijft de live aangetroffen tegenspraak op .244 bestaan en kan zij volgende kopieën, getekende zones en herankeringen beïnvloeden. Nodig: één gevalideerd dockanker, met consistentiecontrole tussen CSV, map_info, YAML en verse dockpositie. Bij tegenspraak geen automatische nieuwe geometrie of oorsprong toepassen.
 
+Een verse, stabiele Fixed-meting terwijl .244 aantoonbaar gedockt en gezond gelokaliseerd is, kan bepalen welke opgeslagen referentie overeenkomt met de huidige voertuigpose. Daarbij moeten beide waarden hetzelfde fysieke voertuigpunt voorstellen. Een match met één waarde bewijst op zichzelf nog niet de historische oorzaak van het verschil. Tot die vergelijking is uitgevoerd, geen kaartwijziging of herankering op .244.
+
 ### 6. P2 - Server en maaier zoeken verschillende dockkanalen bij herankeren
 
 De server accepteert iedere `mapNtocharge_unicom`. [extended_commands.py:4605](../../research/extended_commands.py#L4605) leest alleen `map0tocharge_unicom` en valt anders stil terug op `(0,0)`. [dashboard.ts:3504](../../server/src/routes/dashboard.ts#L3504) geeft geen expliciet anker mee, hoewel Python `anchor_x/y` ondersteunt.
@@ -68,9 +74,9 @@ Na verwijderen van map0 terwijl map1 met dockkanaal overblijft, kan de firmware 
 
 [dashboard.ts:3413](../../server/src/routes/dashboard.ts#L3413) leest elke seconde dezelfde cache en telt elke uitlezing als nieuw sample. Er is geen ontvangsttijd- of sequencecontrole. Dezelfde GPS-waarde wordt na zeven seconden als acht samples met nul spreiding geaccepteerd; dit is met de daadwerkelijke functie geïsoleerd gereproduceerd.
 
-Dat bewijst geen stabiliteit. Als de cache nog een positie van vóór het docken bevat, kan de nieuwe oorsprong daarop worden gebaseerd. Nodig: afzonderlijke verse GPS-berichten tellen, met bijbehorende kwaliteit en dockstatus. De timeout moet bij de echte berichtfrequentie passen. De genoemde circa 50 s GPS-cadans is in deze audit niet opnieuw gemeten.
+Dat bewijst geen stabiliteit. De wizard controleert vooraf wel dockstatus en RTK Fixed ([dashboard.ts:3457](../../server/src/routes/dashboard.ts#L3457)); die bestaande controles begrenzen het risico, maar koppelen de GPS-waarde niet aan een vers bericht met dezelfde kwaliteit en dockstatus. Als de cache nog een positie van vóór het docken bevat, kan de nieuwe oorsprong daarop worden gebaseerd. Nodig: afzonderlijke verse GPS-berichten tellen, met bijbehorende kwaliteit en dockstatus. De timeout moet bij de echte berichtfrequentie passen. De genoemde circa 50 s GPS-cadans is in deze audit niet opnieuw gemeten.
 
-### 8. P1 - Zonekopie verliest bestaande polygonverschuivingen
+### 8. P2 - Zonekopie verliest bestaande polygonverschuivingen
 
 [zoneCopy.ts:284](../../server/src/services/zoneCopy.ts#L284) transformeert ruwe DB-punten. A’s ingestelde polygon-offset ontbreekt. [mapConverter.ts:356](../../server/src/mqtt/mapConverter.ts#L356) voegt B’s offset bij het maken van de ZIP alsnog toe.
 
@@ -82,7 +88,7 @@ Voor dezelfde UTM-assen hoort het opslagmodel te zijn:
 pDB_B = pDB_A + offset_A − dockA_in_A + dockA_in_B − offset_B
 ```
 
-Kanaalplanning moet de uiteindelijke geometrie gebruiken, met behoud van het niet-meeschuivende dockanker.
+Kanaalplanning moet de uiteindelijke geometrie gebruiken, met behoud van het niet-meeschuivende dockanker. De prioriteit is na de tweede beoordeling P2: de fout is aantoonbaar, maar bij de vastgestelde nuloffsets slapend. Een beperkte eerste oplossing is kopiëren expliciet weigeren zodra A of B een niet-nul polygon-offset heeft. Ondersteuning van zulke offsets vereist vervolgens de juiste transformatie voor werkzones, obstakels en kanalen.
 
 ### 9. P2 - Tekenen en penseelbewerking draaien de weergavetransformatie niet volledig terug
 
@@ -94,9 +100,9 @@ Dezelfde instelling wordt ook bij live maaierposities opgeteld, terwijl een fysi
 
 ### 10. P1 - Meetknop dwingt de beloofde meetkwaliteit niet af
 
-[MowerMap.tsx:2106](../../dashboard/src/components/map/MowerMap.tsx#L2106) controleert alleen of `mapX/mapY` eindig zijn. Online, verse pose, RTK Fixed, stabiele stilstand en een gevalideerd kaartframe ontbreken als voorwaarden. De server ontvangt alleen x/y en kent de kwaliteit van deze referentiemeting niet.
+[MowerMap.tsx:2106](../../dashboard/src/components/map/MowerMap.tsx#L2106) controleert alleen of `mapX/mapY` eindig zijn. Online, verse pose, RTK Fixed, gezonde lokalisatie, stabiele stilstand en een gevalideerd kaartframe ontbreken als voorwaarden. De server ontvangt alleen x/y en kent de kwaliteit van deze referentiemeting niet.
 
-Nodig: verse metingen met kwaliteitsstatus opslaan en slechte metingen weigeren. B moet bovendien met hetzelfde fysieke voertuigreferentiepunt op de plaats staan waar A’s dockanker is opgenomen; “de maaier staat bij het dock” is geen centimetermeting.
+Nodig: verse metingen met kwaliteitsstatus opslaan en slechte metingen weigeren. Alleen drie statuschecks op Fixed, lokalisatie en gevalideerd frame bewijzen nog geen verse of stabiele pose. B moet bovendien met hetzelfde fysieke voertuigreferentiepunt op de plaats staan waar A’s dockanker is opgenomen; “de maaier staat bij het dock” is geen centimetermeting.
 
 ### 11. P2 - Automatisch voorgestelde verbindingen zijn niet bewezen berijdbaar
 
@@ -120,6 +126,8 @@ Ook de GPS-input van [dashboard.ts:1826](../../server/src/routes/dashboard.ts#L1
 
 Nodig: alle export/import/API-conversies aan hetzelfde expliciete framecontract laten voldoen. De circa 0.95 m fout op 25 m afstand is alleen in de bijgewerkte paden opgelost.
 
+De tweede beoordeling noemt ook de gewone appkaart in `MapScreen.tsx`, maar die conclusie volgt niet uit de huidige code. De maaiermarker gebruikt [native `map_position_x/y`](../../app/src/screens/MapScreen.tsx#L490), het pad en de polygonen gebruiken lokale meters, en de dockmarker gebruikt [`mower.dockPose`](../../app/src/screens/MapScreen.tsx#L1143), met `(0,0)` alleen als fallback. De oude `111320`-conversies bestaan bij [patroonplaatsing](../../app/src/screens/MapScreen.tsx#L1192), maar dat pad vereist `PatternContext.isPlacing`. Die waarde begint `false` en wordt alleen door [`startPlacement`](../../app/src/context/PatternContext.tsx#L55) geactiveerd; een zoekactie door `app` vindt geen aanroeper. `StartMowSheet` heeft een afzonderlijke lokale preview en verstuurt [geen patrooncentrum of GPS-punten](../../app/src/components/StartMowSheet.tsx#L508) in zijn maaicommando. Dit is slapende oude conversiecode, geen aangetoonde huidige projectiefout van circa een meter op de gewone appkaart.
+
 ## Andere uitvoeringsrisico’s
 
 De gedeelde automatische push start per aanvraag onafhankelijk. [dashboard.ts:2712](../../server/src/routes/dashboard.ts#L2712) herkent antwoorden alleen op commandonaam; twee gelijktijdige pushes kunnen hetzelfde antwoord accepteren. De Python-sync gebruikt gedeelde tijdelijke paden en schrijft dezelfde directories. Dit is een uit de code afgeleid risico, niet live uitgelokt. Serialiseer toepassen per maaier en koppel antwoord aan operatie.
@@ -134,11 +142,12 @@ Na een planner-timeout meldt [dashboard.ts:2696](../../server/src/routes/dashboa
 | Correctie voor meridiaanconvergentie is hier nodig | Juist; circa 2.2° en circa 0.95 m dwarsafwijking op 25 m. De huidige dashboardcheck tegen PROJ-referentiewaarden slaagt. |
 | Het frame heet ENU | Technisch onnauwkeurig: lokaal UTM-grid, niet waar oost/noord. Juist het verschil verklaart de convergentiecorrectie. |
 | Charger gebruikt altijd autonome zelf-inmeting | Te stellig in de samenvatting. AUTO, MOVING en FIXED komen in firmware voor; de actuele modus is niet vastgesteld. |
-| 24 m en 1.9 m afwijking bewijzen uitsluitend basisfout | Plausibele verklaring, geen sluitend bewijs: pins en foto zijn niet onafhankelijk landmeetkundig gecontroleerd. Ankerfouten, beeldplaatsing en voertuigreferentie zijn alternatieve bijdragen. |
+| 24 m en 1.9 m afwijking bewijzen uitsluitend basisfout | Basis-/oorsprongbias is de sterkste werkhypothese voor de grote afwijking. Als pin, beeld en voertuigreferentie ieder minder dan een meter bijdragen, verklaren die samen geen 24 m. Hun fouten zijn hier echter niet onafhankelijk ingemeten, en een basisfout is niet onderscheiden van een foutieve opgeslagen oorsprong. Vooral de 1.9 m kan meerdere bijdragen bevatten. De audit weerspreekt de waarschijnlijke verklaring niet, maar bevestigt haar niet als exclusief bewezen oorzaak. |
 | Basisfout is alleen translatie | Bruikbare lokale benadering voor dezelfde tuin/UTM-zone, geen universele exacte garantie. De rotatie/schaalaanname moet bij overdracht met extra controlepunten worden getoetst. |
 | Alle posities zijn centimeter-consistent zodra RTK Fixed | Te absoluut. Ontvangst, multipath, lokalisatie, referentiepunt en mechanische herhaalbaarheid blijven bijdragen. Het document noemt zelf 10–20 cm interne afwijking. |
 | Herankeren na basisdrift en na fysiek dockverplaatsen is hetzelfde | Onjuist als de zones op dezelfde grond moeten blijven. `origin = UTM(nieuwDock) − oudAnker` laat de oude zones meeverhuizen met het dock. Een gemeten fysieke koppeling/nieuwe dockpose is dan nodig. |
 | Na `reanchor_pos` is er geen oorsprong tot de eerste fix | Onjuist geformuleerd: deze handler schrijft juist een berekende oorsprong en laadt die live. |
+| `gps_latitude` wordt in productie niet gevuld (REANCHOR.md) | Weerlegd door de server-reportcaptures van beide maaiers op 1 juni 2026 en de cacheverwerking; ook de oude Restore + Realign-route kan deze velden dus gebruiken. |
 | Alle dockankers bevatten hetzelfde getal | Op .100 praktisch waar; op .244 nu aantoonbaar onwaar. |
 | De beeldpin verandert de navigatie-oorsprong niet bij gewone sync | Dit is de huidige bedoelde gate; de oude restore-and-realign is een uitzondering met gebrekkige voorwaarden. |
 | Alle kaartacties gebruiken exact dezelfde inverse | Onwaar bij offsets en de oude GPS-API/exportpaden. |
@@ -149,6 +158,8 @@ Na een planner-timeout meldt [dashboard.ts:2696](../../server/src/routes/dashboa
 Firmwarebewijs: `research/firmware/mower_firmware_v6.0.2/install/robot_combination_localization/lib/robot_combination_localization/robot_combination_localization` (lokaal firmwarebinary, niet in Git opgenomen), `latlonToUtmXY`/`proj_trans` bij 0x83600/0x83674, aanroep bij 0x87a08 en oorsprongaftrek bij 0x87a4c–0x87a58. Geen nieuwe volledige analyse van alle abonnementen/firmwareversies uitgevoerd. De stelling over het ontbreken van ArUco in lokalisatie wordt ondersteund door het onderzochte binary, maar is hier niet opnieuw voor iedere versie bewezen.
 
 ## Wat nodig is voor enkele centimeters op de grond
+
+Dit onderdeel behandelt de aanvullende gebruikerswens en hoort bij feature `Novabot-55f.17`. Het is geen verwijt dat FRAMES-GPS-UTM al enkele centimeters totale nauwkeurigheid zou beloven. Het nauwkeurigheidsbudget in dat document maakt zelf onderscheid tussen circa 10–20 cm frameconsistentie en een beeldpin met decimeter- tot meterafwijking. De afzonderlijke stellige zinnen over centimeterconsistentie blijven wel aan die voorwaarden gebonden.
 
 WGS84 zegt welke coördinaten worden gebruikt, niet hoe nauwkeurig het beeld of de maaier is. Leaflet krijgt lat/lng; de gebruikte achtergrondtiles worden onder meer in Web Mercator/EPSG:3857 geleverd. Dat is een normale weergaveketen, geen centimetergarantie.
 
@@ -175,7 +186,10 @@ Voor uitsluitend dezelfde tuin is een nauwkeurige lokale beeld↔maaierkoppeling
 - Dashboard PROJ-referentiecheck: 2 geslaagd.
 - Aanvullend geïsoleerd gereproduceerd: globale import-ID-botsing, voortijdige framevrijgave, achtmaal hetzelfde GPS-cachebericht, fout bij tekenen met +1 m offset, genegeerd B-obstakel en verbinding met een geïsoleerde zone.
 - Live alleen-lezen gecontroleerd: `pos.json`, dock-CSV, dock-YAML en server-calibratie/maps/dock-drift voor beide maaiers.
+- Tweede beoordeling: call chain van de oude herstelroute, aanwezige GPS-velden in twee opgeslagen juni-captures, bestaande dock/Fixed-precheck en alle aanroepers van de app-patroonplaatsing gecontroleerd. Geen extra live meting of fysieke test uitgevoerd.
 
 Totaal **160 bestaande checks geslaagd, 12 overgeslagen**. Die groene checks dekken de aangetoonde fouten dus niet volledig af. Er is geen fysieke herstel- of maaitest uitgevoerd en geen functionele broncode gewijzigd.
 
 Op verzoek is dit rapport opgeslagen in de Novabot-repository en is Beads 1.3.0 geïnstalleerd. De bevindingen staan onder epic `Novabot-55f`: `.1` tot en met `.13` volgen de genummerde bevindingen hierboven; `.14` en `.15` behandelen gelijktijdige pushes en de planner-timeout; `.16` betreft documentcorrecties en `.17` onafhankelijke grondpuntvalidatie. Bestaand herstelwerk is via Beads-relaties gekoppeld. Deze issues staan open; de beschreven fouten zijn in deze sessie niet gerepareerd.
+
+Voor gebruik op .244 komt de verse ankercontrole eerst. Softwareherstel voor de oude vrijgavepaden, gegevensverlies en onterechte succesmeldingen hoeft daar niet op te wachten. De meetknop moet vóór een volgende zoneoverdracht betrouwbare metingen afdwingen; deze P1 hoort daarom niet achter de slapende offsetproblemen. De oorspronkelijke referentiedocumenten zijn bij deze aanvulling niet gewijzigd; hun correcties blijven onderdeel van `Novabot-55f.16`.
