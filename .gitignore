@@ -105,6 +105,7 @@ app/node_modules
 
 # Beads / Dolt files (added by bd init)
 .dolt/
+.beads.gate.lock
 *.db
 .beads-credential-key
 .superpowers/
