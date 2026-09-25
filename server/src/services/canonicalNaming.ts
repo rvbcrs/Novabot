@@ -22,6 +22,28 @@ import type { MapRow } from '../db/repositories/maps.js';
 import { pointInPolygon, type XY } from '../maps/editGeometry.js';
 import { getPolygonAnchor } from './anchor.js';
 import { getDockPose } from '../mqtt/sensorData.js';
+import { dockSamplesRepo } from '../db/repositories/index.js';
+import { median } from './dockDrift.js';
+
+/** How far back docking stints count for the dock position. */
+const DOCK_SAMPLE_DAYS = 30;
+/** Stints closer than this are the same dock. */
+const DOCK_CLUSTER_M = 0.5;
+
+/** The dock the stints spent the most reports on; median of that cluster. */
+function homeDock(stints: Array<{ map_x: number; map_y: number; n: number }>): XY | null {
+  const near = (a: { map_x: number; map_y: number }) =>
+    stints.filter(b => Math.hypot(a.map_x - b.map_x, a.map_y - b.map_y) <= DOCK_CLUSTER_M);
+  let best: typeof stints = [];
+  let bestWeight = 0;
+  for (const s of stints) {
+    const cluster = near(s);
+    const w = cluster.reduce((sum, c) => sum + c.n, 0);
+    if (w > bestWeight) { best = cluster; bestWeight = w; }
+  }
+  // ponytail: O(n²) over at most a few hundred stints in 30 days.
+  return best.length ? { x: median(best.map(c => c.map_x)), y: median(best.map(c => c.map_y)) } : null;
+}
 import { translator, type Translate } from './serverText.js';
 
 /** Een eindpunt dat hier vlakbij ligt hoort bij het laadstation, niet bij een gebied. */
@@ -87,6 +109,12 @@ export function dockPoint(sn: string): XY | null {
   try {
     const anchor = getPolygonAnchor(sn);
     if (anchor) return { x: anchor.x, y: anchor.y };
+    // No dock channel (e.g. its zone was just deleted): where it stood
+    // longest on RTK Fixed. A mower parked on another mower's dock records
+    // that stint too, so take the cluster with the most reports, not a
+    // median over all stints (that can land between two docks).
+    const home = homeDock(dockSamplesRepo.listSince(sn, DOCK_SAMPLE_DAYS));
+    if (home) return home;
     const dock = getDockPose(sn);
     if (dock && (dock.x !== 0 || dock.y !== 0)) return { x: dock.x, y: dock.y };
   } catch {

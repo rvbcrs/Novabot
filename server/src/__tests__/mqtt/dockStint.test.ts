@@ -45,3 +45,18 @@ describe('dock samples', () => {
     expect(dockSamplesRepo.listSince(SN, 1).length).toBe(1);
   });
 });
+
+describe('live dock pose', () => {
+  it('is only taken while RTK Fixed, and a Float report never replaces it', async () => {
+    const { getDockPose } = await import('../../mqtt/sensorData.js');
+    const sn = 'LFIN_DOCK_POSE_RTK';
+    const rep = (fields: Record<string, unknown>) =>
+      updateDeviceData(sn, Buffer.from(JSON.stringify({ report_state_robot: fields })));
+    rep({ recharge_status: 9, rtk_fix_quality: 5, map_position_x: -1.70, map_position_y: 1.19 });
+    expect(getDockPose(sn)).toBeNull();
+    rep({ recharge_status: 9, rtk_fix_quality: 4, map_position_x: 0.03, map_position_y: 0.73 });
+    expect(getDockPose(sn)).toMatchObject({ x: 0.03, y: 0.73 });
+    rep({ recharge_status: 9, rtk_fix_quality: 5, map_position_x: -1.70, map_position_y: 1.19 });
+    expect(getDockPose(sn)).toMatchObject({ x: 0.03, y: 0.73 });
+  });
+});

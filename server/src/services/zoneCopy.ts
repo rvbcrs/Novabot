@@ -11,8 +11,6 @@ import { db } from '../db/database.js';
 import { mapRepo } from '../db/repositories/index.js';
 import { pointInPolygon, polygonArea, polygonContains, segIntersects, MIN_WORK_AREA_M2, type XY } from '../maps/editGeometry.js';
 import { distanceToPolygon, dockPoint, nextChannelIndex, nextFreeWorkSlot, workSlots } from './canonicalNaming.js';
-import { getPolygonAnchor } from './anchor.js';
-import { getDockPose } from '../mqtt/sensorData.js';
 import { translator, type Translate } from './serverText.js';
 
 /** ponytail: knop. Max afstand dock→zone voor een gegenereerd dockkanaal. */
@@ -248,14 +246,6 @@ function obstaclesOf(sn: string, slot: number): XY[][] {
     .filter(p => p.length >= 3);
 }
 
-/** A's dock in A's frame: het anker (rij 1 van map0tocharge_unicom), anders de live gedockte pose. */
-function sourceDock(sn: string): XY | null {
-  const anchor = getPolygonAnchor(sn);
-  if (anchor) return { x: anchor.x, y: anchor.y };
-  const live = getDockPose(sn);
-  if (live && (live.x !== 0 || live.y !== 0)) return { x: live.x, y: live.y };
-  return null;
-}
 
 export function previewZoneCopy(
   targetSn: string,
@@ -274,7 +264,7 @@ export function previewZoneCopy(
   }
   const areaM2 = polygonArea(srcPts);
   if (areaM2 < MIN_WORK_AREA_M2) return { ok: false, status: 409, reason: 'too_small', error: T`Het werkgebied is kleiner dan ${MIN_WORK_AREA_M2} m².` };
-  const dockAInA = sourceDock(sourceSn);
+  const dockAInA = dockPoint(sourceSn);
   if (!dockAInA) {
     return { ok: false, status: 409, reason: 'source_no_anchor', error: T`De bronmaaier heeft geen dock-anker (geen map0tocharge_unicom en niet gedockt online); zonder anker is de zone niet te plaatsen.` };
   }

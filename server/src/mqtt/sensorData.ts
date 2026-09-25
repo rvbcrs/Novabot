@@ -1287,7 +1287,11 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     snValues.set('mow_speed', '0.00');
     changes.set('mow_speed', '0.00');
   }
-  if (docked) {
+  // Only on RTK Fixed: on Float the mower can sit on its dock and report a
+  // position metres away, and a zone copy once drew its dock channel from
+  // such a reading. A Float report keeps the last Fixed pose.
+  const rtkQ = snValues.get('rtk_fix_quality') ?? '';
+  if (docked && (rtkQ === '4' || /fixed/i.test(rtkQ))) {
     const mx = parseFloat(snValues.get('map_position_x') ?? '');
     const my = parseFloat(snValues.get('map_position_y') ?? '');
     const mo = parseFloat(snValues.get('map_position_orientation') ?? '0');
