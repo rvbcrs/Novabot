@@ -127,3 +127,16 @@ describe('sensor definitions', () => {
     expect(SENSORS.find(s => s.field === 'finished_area')?.state_class).toBeUndefined();
   });
 });
+
+describe('ingestSensorStream (novabot/sensor/<SN> from extended_commands.py)', () => {
+  it('forwards the RTK fix quality as its label, like the regular sensor path, and caches the raw code', async () => {
+    const { ingestSensorStream, deviceCache } = await import('../../mqtt/sensorData.js');
+    const sn = 'LFIN_SENSOR_STREAM';
+    const changes = ingestSensorStream(sn, { rtk_fix_quality: 4, rtk_sat: 35 });
+    expect(changes.get('rtk_fix_quality')).toBe('RTK Fixed');
+    expect(changes.get('rtk_sat')).toBe('35');
+    expect(deviceCache.get(sn)?.get('rtk_fix_quality')).toBe('4');
+    // unchanged values are not forwarded again
+    expect(ingestSensorStream(sn, { rtk_fix_quality: 4 }).size).toBe(0);
+  });
+});

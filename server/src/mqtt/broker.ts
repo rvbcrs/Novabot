@@ -13,7 +13,7 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot } from './sensorData.js';
+import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
 import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice } from './mapSync.js';
@@ -1169,16 +1169,7 @@ export async function startMqttBroker(): Promise<void> {
         try {
           const parsed = JSON.parse(payloadBuf.toString());
           if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            if (!deviceCache.has(sensorSn)) deviceCache.set(sensorSn, new Map());
-            const cache = deviceCache.get(sensorSn)!;
-            const changes = new Map<string, string>();
-            for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-              if (v == null) continue;
-              const sv = String(v);
-              if (cache.get(k) === sv) continue; // unchanged
-              cache.set(k, sv);
-              changes.set(k, sv);
-            }
+            const changes = ingestSensorStream(sensorSn, parsed as Record<string, unknown>);
             if (changes.size > 0) forwardToDashboard(sensorSn, changes);
           }
         } catch {

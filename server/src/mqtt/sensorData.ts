@@ -865,6 +865,26 @@ function sshCatPosJson(ip: string): Promise<string | null> {
   });
 }
 
+/**
+ * novabot/sensor/<SN>: flat telemetry from extended_commands.py (blade RPM,
+ * RTK fix quality and satellites, heading). Raw values go into the cache like
+ * every other field; the changes are translated for the dashboard, so the RTK
+ * chip shows "RTK Fixed" and not the bare GGA code 4.
+ */
+export function ingestSensorStream(sn: string, data: Record<string, unknown>): Map<string, string> {
+  if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
+  const cache = deviceCache.get(sn)!;
+  const changes = new Map<string, string>();
+  for (const [k, v] of Object.entries(data)) {
+    if (v == null || typeof v === 'object') continue;
+    const sv = String(v);
+    if (cache.get(k) === sv) continue;
+    cache.set(k, sv);
+    changes.set(k, translateValue(k, sv));
+  }
+  return changes;
+}
+
 export function getDockPose(sn: string): DockPose | null {
   return dockPoseBySn.get(sn) ?? null;
 }
