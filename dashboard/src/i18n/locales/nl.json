@@ -555,13 +555,13 @@
     "copyZoneWithObstacles": "Obstakels meenemen",
     "copyZoneHint": "Sleep de oranje marker (of klik op de kaart) naar de plek waar het laadstation van {{name}} echt staat. De zone schuift mee.",
     "copyZoneMeasure": "Gebruik de huidige positie van deze maaier",
-    "copyZoneMeasureHint": "Nauwkeuriger dan de foto: rijd deze maaier met de joystick precies naar de plek waar {{name}} gedockt staat en druk dan op de knop. De marker springt naar die positie.",
+    "copyZoneMeasureHint": "Rijd deze maaier precies naar de plek waar {{name}} gedockt staat en laat hem stilstaan met RTK Fixed. De server accepteert alleen een verse, stabiele meting in een gevalideerd kaartframe.",
     "copyZoneMarker": "Laadstation {{name}}",
     "copyZoneVerdictOk": "Wordt {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Overlapt {{zone}}: geen kanaal nodig",
     "copyZoneChannelDock": "Dockkanaal van {{m}} m wordt aangemaakt",
     "copyZoneChannelLink": "Kanaal naar {{zone}} wordt voorgesteld (blauw gestippeld)",
-    "copyZoneNeedsChannel": "Geen kanaal mogelijk: teken er na het plaatsen zelf een.",
+    "copyZoneNeedsChannel": "Bereikbaarheid is niet aangetoond: teken na het plaatsen een veilige verbinding.",
     "copyZoneWarn": {
       "full_overlap": "De ene zone omsluit de andere volledig; dat is in de firmware nooit getest.",
       "existing_zones_unlinked": "De bestaande zones krijgen geen kanaal naar deze zone."
@@ -1684,5 +1684,6 @@
       "body": "Maak van je tuin een 3D-render, van bovenaf of schuin, bij dag of bij avond. Je zones, obstakels en de maaier staan er live op. Kies hem onder Ondergrond in de kaartbalk. Let op: de render wordt door AI getekend op basis van de luchtfoto, dus hij lijkt op je tuin maar klopt niet tot in elk detail met de werkelijkheid."
     },
     "button": "Nieuw"
-  }
+  },
+  "reanchor.returnToDockHint": "Rij met de joystick terug op het dock en druk op Verifieer."
 }

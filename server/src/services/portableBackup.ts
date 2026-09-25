@@ -14,12 +14,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { exportBundle } from './portableMap.js';
+import { exportBundle, type ParsedBundle } from './portableMap.js';
+import { geometryFromMowerFiles, mowerFilesManifest, parseMapCsv } from './portableSnapshot.js';
+import { readMowerMapSnapshot } from './mowerMapOperation.js';
 import { synthesizeMowerFiles } from '../maps/synthMowerFiles.js';
 import { mapRepo } from '../db/repositories/maps.js';
 import { getPolygonAnchor } from './anchor.js';
-import { getDockPose } from '../mqtt/sensorData.js';
-import { publishToExtended, onExtendedResponse, offExtendedResponse, readLatestZipChargingPose } from '../mqtt/mapSync.js';
+import { getDockPose, deviceCache } from '../mqtt/sensorData.js';
+import { readLatestZipChargingPose } from '../mqtt/mapSync.js';
 
 const BACKUP_ROOT = path.join(process.env.STORAGE_PATH ?? './storage', 'portable_backups');
 const RETENTION = 20;
@@ -156,6 +158,11 @@ async function buildAndSaveSynthBundle(sn: string, reason: string, inp: SynthBun
     workMaps: inp.workMaps.map((w) => ({ canonical: w.canonical, alias: w.alias, points: w.points })),
     obstacles: inp.obstacles.map((o) => ({ canonical: o.canonical, alias: o.canonical, points: o.points })),
     unicom: inp.unicom.map((u) => ({ canonical: u.canonical, targetMapName: u.targetMapName, points: u.points })),
+    snapshot: { kind: 'generated', capturedAt: new Date().toISOString(), consistencyVerified: false,
+      complete: false, missing: ['pos.json'], files: mowerFilesManifest({
+        csvFiles: synth.csvFiles, chargingStationYaml: synth.chargingStationYaml,
+        mapFilesText: synth.mapFilesText, mapFilesB64: synth.mapFilesB64,
+      }) },
     csvFilesRaw: synth.csvFiles,
     chargingStationYaml: synth.chargingStationYaml,
     mapFilesText: synth.mapFilesText,
@@ -182,11 +189,7 @@ export async function createBundleFromCsvFiles(
   csvFiles: Record<string, string>,
   reason: string,
 ): Promise<BackupEntry | null> {
-  const parsePts = (text: string): { x: number; y: number }[] =>
-    text.trim().split('\n').map((l) => {
-      const [x, y] = l.split(',').map(Number);
-      return { x, y };
-    }).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  const parsePts = (text: string) => parseMapCsv(text, 'import.csv');
 
   const workMaps: SynthBundleInput['workMaps'] = [];
   const obstacles: SynthBundleInput['obstacles'] = [];
@@ -337,154 +340,65 @@ export async function createBundleFromDb(sn: string, reason: string): Promise<Ba
   });
 }
 
-export async function createBackup(sn: string, reason: string): Promise<BackupEntry | null> {
-  const cal = mapRepo.getCalibration(sn);
-  if (!cal?.charger_lat || !cal?.charger_lng) {
-    console.warn(`[portable-backup] ${sn}: skip — no charger anchor`);
-    return null;
+/** Capture one stable file set. A DB edit can change labels, never the backed-up geometry. */
+export async function capturePortableBundle(sn: string): Promise<Buffer> {
+  const sensors = deviceCache.get(sn);
+  const battery = (sensors?.get('battery_state') ?? '').toUpperCase();
+  const recharge = sensors?.get('recharge_status') ?? '';
+  if (battery !== 'CHARGING' && recharge !== '9' && recharge !== '1' && !recharge.startsWith('Charging')) {
+    throw new Error('Snapshot requires the mower to be docked and idle');
   }
-  const workRows = mapRepo.findAllByMowerSnAndType(sn, 'work').filter((w) => w.map_area);
-  if (workRows.length === 0) {
-    console.warn(`[portable-backup] ${sn}: skip — no work polygon in DB`);
-    return null;
+  const raw = await readMowerMapSnapshot(sn);
+  if (!raw || raw.result !== 0 || raw.snapshot_consistent !== true) {
+    throw new Error('A consistent snapshot requires supported firmware and a correlated file response');
   }
-  const obstacles = mapRepo.findAllByMowerSnAndType(sn, 'obstacle');
-  const unicom = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
-
-  // Live mower files via MQTT extended (8s timeout — same as export endpoint)
-  const mowerData = await new Promise<{
-    csvFiles?: Record<string, string>;
-    chargingStationYaml?: string;
-    chargingPose?: { x: number; y: number; orientation: number };
-    posJson?: string;
-    mapFilesText?: Record<string, string>;
-    mapFilesB64?: Record<string, string>;
-  }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const r = data.read_map_files_respond as {
-        result?: number;
-        csv_files?: Record<string, string>;
-        charging_station_yaml?: string;
-        pos_json?: string | null;
-        map_files_text?: Record<string, string>;
-        map_files_b64?: Record<string, string>;
-      } | undefined;
-      if (!r || settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      if (r.result !== 0) { resolve({}); return; }
-      let chargingPose: { x: number; y: number; orientation: number } | undefined;
-      const mapInfoStr = r.csv_files?.['map_info.json'];
-      if (mapInfoStr) {
-        try {
-          const mi = JSON.parse(mapInfoStr) as { charging_pose?: { x: number; y: number; orientation: number } };
-          if (mi.charging_pose
-            && Number.isFinite(mi.charging_pose.x)
-            && Number.isFinite(mi.charging_pose.y)
-            && Number.isFinite(mi.charging_pose.orientation)) {
-            chargingPose = mi.charging_pose;
-          }
-        } catch { /* malformed map_info.json */ }
-      }
-      resolve({
-        csvFiles: r.csv_files,
-        chargingStationYaml: r.charging_station_yaml,
-        chargingPose,
-        posJson: r.pos_json ?? undefined,
-        mapFilesText: r.map_files_text,
-        mapFilesB64: r.map_files_b64,
-      });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { read_map_files: {} });
-    // Longer timeout — bundle now ships pgm/png base64 which can push the
-    // response payload past 3 MB on a 3-map mower. Old 8 s budget assumed
-    // CSV-only response which fit in <50 KB.
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({});
-    }, 20000);
-  });
-
-  if (!mowerData.csvFiles) {
-    console.warn(`[portable-backup] ${sn}: skip — mower didn't return read_map_files (offline or no extended_commands?)`);
-    return null;
-  }
-
-  // Prefer the LIVE mower pose (read above from its map_info.json). Only when
-  // the mower didn't supply one do we fall back to the DB-derived real dock
-  // pose (anchor position + saved orientation). NEVER emit {0,0,0}: a zeroed
-  // dock pose silently breaks auto-docking when this bundle is restored. If
-  // neither a live nor a real DB pose exists, skip the backup with a warning
-  // rather than writing a corrupt one (return null — every caller already
-  // handles the null/offline case).
-  let chargingPose = mowerData.chargingPose;
-  if (!chargingPose) {
-    const anchor = getPolygonAnchor(sn);
-    const savedOrient = resolveDockOrientation(sn);
-    if (anchor && savedOrient != null && Number.isFinite(savedOrient)) {
-      chargingPose = { x: anchor.x, y: anchor.y, orientation: savedOrient };
-    } else {
-      console.warn(
-        `[portable-backup] ${sn}: skip — mower returned no charging_pose and no resolvable DB dock pose ` +
-        `(anchor=${anchor ? 'set' : 'null'}, savedOrientation=${savedOrient ?? 'null'}); ` +
-        `refusing to write a zeroed {0,0,0} pose. (Re)calibrate the dock first.`,
-      );
-      return null;
+  const strings = (value: unknown, label: string): Record<string, string> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.entries(value).some(([name, data]) => !/^[A-Za-z0-9_.-]+$/.test(name) || name.includes('..') || typeof data !== 'string')) {
+      throw new Error(`Invalid snapshot ${label}`);
     }
-  }
-
-  const zip = await exportBundle({
-    sn,
-    chargerLat: cal.charger_lat,
-    chargerLng: cal.charger_lng,
-    rtkQuality: null,
-    chargingPose,
-    workMaps: workRows.map((w, i) => ({
-      canonical: w.canonical_name ?? `map${i}`,
-      alias: w.map_name ?? `work${i}`,
-      points: JSON.parse(w.map_area as string),
-    })),
-    obstacles: obstacles.filter((o) => o.map_area).map((o) => ({
-      canonical: o.canonical_name ?? '',
-      alias: o.map_name ?? '',
-      points: JSON.parse(o.map_area as string),
-    })),
-    // Do NOT filter unicoms by map_area. Inter-zone connectors can be
-    // metadata-only (0-byte) and must still be listed so a restore knows the
-    // channel exists; the verbatim mower CSV (csvFilesRaw) carries the real
-    // geometry when present. Keeps unicom.json consistent with createBundleFromDb.
-    unicom: unicom.map((u) => {
-      const m = (u.canonical_name ?? '').match(/^map\d+to(.+?)_?unicom$/);
-      return {
-        canonical: u.canonical_name ?? '',
-        targetMapName: m?.[1] ?? 'charge',
-        points: u.map_area ? (JSON.parse(u.map_area as string) as { x: number; y: number }[]) : [],
-      };
-    }),
-    csvFilesRaw: mowerData.csvFiles,
-    chargingStationYaml: mowerData.chargingStationYaml,
-    posJson: mowerData.posJson,
-    mapFilesText: mowerData.mapFilesText,
-    mapFilesB64: mowerData.mapFilesB64,
-  });
-
-  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const safeReason = reason.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 32);
-  const fname = `${ts}_${safeReason}.novabotmap`;
-  const full = path.join(backupDir(sn), fname);
-  fs.writeFileSync(full, zip);
-  prune(sn);
-
-  const stat = fs.statSync(full);
-  console.log(`[portable-backup] ${sn}: saved ${fname} (${stat.size} B, reason=${safeReason})`);
-  return {
-    filename: fname,
-    bytes: stat.size,
-    createdAt: stat.mtimeMs,
-    reason: safeReason,
+    return value as Record<string, string>;
   };
+  const files: NonNullable<ParsedBundle['mowerFiles']> = {
+    csvFiles: strings(raw.csv_files, 'csv_files'), x3CsvFiles: strings(raw.x3_csv_files, 'x3_csv_files'),
+    chargingStationYaml: typeof raw.charging_station_yaml === 'string' ? raw.charging_station_yaml : null,
+    posJson: typeof raw.pos_json === 'string' ? raw.pos_json : null,
+    mapFilesText: strings(raw.map_files_text, 'map_files_text'), mapFilesB64: strings(raw.map_files_b64, 'map_files_b64'),
+  };
+  const actual = mowerFilesManifest(files);
+  const reported = raw.snapshot_manifest as Record<string, string> | undefined;
+  if (!reported || typeof reported !== 'object' || Array.isArray(reported)) throw new Error('Snapshot manifest is missing');
+  if (Object.keys(actual).length !== Object.keys(reported).length || Object.entries(actual).some(([name, hash]) => reported[name] !== hash)) {
+    throw new Error('Snapshot bytes do not match the captured manifest');
+  }
+  const aliases = Object.fromEntries(mapRepo.findByMowerSn(sn).filter(r => r.canonical_name)
+    .map(r => [r.canonical_name!, r.map_name ?? r.canonical_name!]));
+  const geometry = geometryFromMowerFiles(files, aliases);
+  const required = ['csv_file/map_info.json', 'charging_station.yaml', 'pos.json',
+    ...['map', ...geometry.workMaps.map(w => w.canonical)].flatMap(name => [`map_files/${name}.yaml`, `map_files/${name}.pgm`])];
+  const missing = required.filter(name => !actual[name]);
+  if (missing.length) throw new Error(`Incomplete live snapshot: ${missing.join(', ')}`);
+  const capturedAt = raw.captured_at;
+  if (typeof capturedAt !== 'string' || !Number.isFinite(Date.parse(capturedAt))) throw new Error('Snapshot capture time is missing');
+  const calibration = mapRepo.getCalibration(sn);
+  return exportBundle({ sn, chargerLat: calibration?.charger_lat ?? 0, chargerLng: calibration?.charger_lng ?? 0,
+    rtkQuality: null, ...geometry,
+    csvFilesRaw: files.csvFiles, x3CsvFilesRaw: files.x3CsvFiles,
+    chargingStationYaml: files.chargingStationYaml ?? undefined, posJson: files.posJson ?? undefined,
+    mapFilesText: files.mapFilesText, mapFilesB64: files.mapFilesB64,
+    snapshot: { kind: 'live', capturedAt, consistencyVerified: true, complete: true, missing, files: actual },
+  });
+}
+
+export async function createBackup(sn: string, reason: string): Promise<BackupEntry | null> {
+  const zip = await capturePortableBundle(sn);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const safeReason = reason.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 32);
+  const filename = `${ts}_${safeReason}.novabotmap`;
+  const full = path.join(backupDir(sn), filename);
+  fs.writeFileSync(`${full}.tmp`, zip);
+  fs.renameSync(`${full}.tmp`, full);
+  prune(sn);
+  const stat = fs.statSync(full);
+  return { filename, bytes: stat.size, createdAt: stat.mtimeMs, reason: safeReason };
 }

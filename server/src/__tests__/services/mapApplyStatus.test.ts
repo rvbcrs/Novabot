@@ -1,3 +1,4 @@
+import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
 /**
  * Status van het toepassen van een kaart op de maaier (sync_map →
  * regenerate_per_map_files → wachten tot de planner terug is), als virtuele
@@ -60,30 +61,37 @@ describe('errorCodeOf', () => {
 
 describe('waitForPlannerBack', () => {
   const timing = { settleMinMs: 30, settleMaxMs: 400, pollMs: 5 };
-  beforeEach(() => { deviceCache.clear(); deviceCache.set(SN, new Map()); });
+  beforeEach(() => { deviceCache.clear(); clearPositionTelemetry(SN); deviceCache.set(SN, new Map()); });
 
   it('wacht zolang Error 140 (planner herstart) staat, en is klaar zodra hij weg is', async () => {
-    deviceCache.get(SN)!.set('error_status', '140');
-    setTimeout(() => deviceCache.get(SN)!.set('error_status', '0'), 80);
+    ingestPositionTelemetry(SN, { error_status: 140 });
+    setTimeout(() => ingestPositionTelemetry(SN, { error_status: 0 }), 80);
     const t0 = Date.now();
     expect(await waitForPlannerBack(SN, timing)).toBe('settled');
     expect(Date.now() - t0).toBeGreaterThanOrEqual(80);
   });
 
   it('wacht altijd minstens settleMinMs, ook zonder fout (140 kan nog komen)', async () => {
-    deviceCache.get(SN)!.set('error_status', '0');
+    ingestPositionTelemetry(SN, { error_status: 0 });
     const t0 = Date.now();
     expect(await waitForPlannerBack(SN, timing)).toBe('settled');
     expect(Date.now() - t0).toBeGreaterThanOrEqual(timing.settleMinMs);
   });
 
   it('geeft op na settleMaxMs als 140 blijft staan', async () => {
-    deviceCache.get(SN)!.set('error_status', '140');
+    ingestPositionTelemetry(SN, { error_status: 140 });
+    expect(await waitForPlannerBack(SN, timing)).toBe('timeout');
+  });
+
+  it('een oud of ontbrekend rapport is geen bewijs dat de planner terug is', async () => {
+    ingestPositionTelemetry(SN, { error_status: 0 }, Date.now() - 1);
+    expect(await waitForPlannerBack(SN, timing)).toBe('timeout');
+    clearPositionTelemetry(SN);
     expect(await waitForPlannerBack(SN, timing)).toBe('timeout');
   });
 
   it('een andere fout hoort niet bij de push: niet op wachten', async () => {
-    deviceCache.get(SN)!.set('error_status', '151');
+    ingestPositionTelemetry(SN, { error_status: 151 });
     expect(await waitForPlannerBack(SN, timing)).toBe('settled');
   });
 });

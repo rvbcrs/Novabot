@@ -59,6 +59,7 @@ vi.mock('../../mqtt/mapSync.js', () => ({
   onExtendedResponse: vi.fn(),
   offExtendedResponse: vi.fn(),
   applyVerbatimToMower: vi.fn(),
+  verifyMowerMapFiles: vi.fn(),
   notifyRespond: vi.fn(),
   setDemoInterceptor: vi.fn(),
   onMowerConnected: vi.fn(),
@@ -107,11 +108,15 @@ vi.mock('../../mqtt/mapConverter.js', () => ({
   generateMapZipFromDb: vi.fn(),
   gpsToLocal: vi.fn(),
   localToGps: vi.fn(),
+  gridLocalToGps: vi.fn(() => ({ lat: 52.14, lng: 6.23 })),
   parseMapZip: vi.fn(),
   polygonArea: vi.fn().mockReturnValue(10),
 }));
 
+vi.mock('../../services/portableBackup.js', () => ({ capturePortableBundle: vi.fn() }));
+
 // ── Now import the router + deps ─────────────────────────────────────────────
+import { capturePortableBundle } from '../../services/portableBackup.js';
 import { adminStatusRouter } from '../../routes/adminStatus.js';
 import { db } from '../../db/database.js';
 import { equipmentRepo, mapRepo } from '../../db/repositories/index.js';
@@ -119,7 +124,7 @@ import { exportBundle, parseBundle } from '../../services/portableMap.js';
 import * as mapSyncMock from '../../mqtt/mapSync.js';
 import * as sensorDataMock from '../../mqtt/sensorData.js';
 import { getPolygonAnchor } from '../../services/anchor.js';
-import { isFrameUnvalidated, clearFrameUnvalidated } from '../../services/frameValidation.js';
+import { isFrameUnvalidated, clearFrameUnvalidated, markFrameUnvalidated } from '../../services/frameValidation.js';
 
 // Inject fake userId to bypass auth middleware
 const app = express();
@@ -144,6 +149,11 @@ const SN = 'LFIN_TEST_EXP';
 // so we must re-seed in beforeEach (not beforeAll) to survive that wipe.
 
 beforeEach(() => {
+  vi.mocked(capturePortableBundle).mockImplementation(async sn => exportBundle({
+    sn, chargerLat: 52.14, chargerLng: 6.23, rtkQuality: null, chargingPose: { x: -1.21, y: .48, orientation: 1.5 },
+    workMaps: mapRepo.findAllByMowerSnAndType(sn, 'work').map(r => ({ canonical: r.canonical_name!, alias: r.map_name!, points: JSON.parse(r.map_area!) })),
+    obstacles: [], unicom: mapRepo.findAllByMowerSnAndType(sn, 'unicom').map(r => ({ canonical: r.canonical_name!, targetMapName: 'charge', points: r.map_area ? JSON.parse(r.map_area) : [] })),
+  }));
   db.prepare(
     `INSERT INTO map_calibration (mower_sn, charger_lat, charger_lng) VALUES (?, ?, ?)`,
   ).run(SN, 52.14, 6.23);
@@ -408,10 +418,10 @@ describe('POST /apply-verbatim verifies the frame before asking for a re-anchor'
     vi.mocked(getPolygonAnchor).mockReturnValue({ x: 0.03, y: 0.73, orientation: -1.5, orientationSource: 'saved' });
     // applyVerbatimToMower is synchroon en gemockt; zonder resultaat gooit de
     // route op `.pushed` en blijft het antwoord uit.
-    vi.mocked(mapSyncMock.applyVerbatimToMower).mockReturnValue({ pushed: true, validation: { hardFailures: [], warnings: [] } } as unknown as ReturnType<typeof mapSyncMock.applyVerbatimToMower>);
+    vi.mocked(mapSyncMock.applyVerbatimToMower).mockImplementation(async target => { markFrameUnvalidated(target); return { pushed: true, validation: { ok: true, hardFailures: [], warnings: [] } } as any; });
   });
 
-  it('docked with RTK Fixed on the anchor: no dock-anchor refresh, frame stays validated', async () => {
+  it('old cached dock pose cannot validate a restore', async () => {
     const stagingId = await stageVerbatimBundle(sn);
     seedSensorCache(sn, '52.14', '6.23');
     getSensorMap(sn).set('rtk_fix_quality', '4');
@@ -419,9 +429,9 @@ describe('POST /apply-verbatim verifies the frame before asking for a re-anchor'
     getSensorMap(sn).set('map_position_y', '0.78');
     const res = await request(server).post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`);
     expect(res.status).toBe(200);
-    expect(res.body.requires_dock_anchor_refresh).toBe(false);
-    expect(res.body.frameCheck).toMatchObject({ ok: true, reason: 'ok' });
-    expect(isFrameUnvalidated(sn)).toBe(false);
+    expect(res.body.requires_dock_anchor_refresh).toBe(true);
+    expect(res.body.mowerVerified).toBe(true);
+    expect(isFrameUnvalidated(sn)).toBe(true);
   });
 
   it('docked but 2 m off the anchor: refresh required, frame unvalidated', async () => {
@@ -433,7 +443,7 @@ describe('POST /apply-verbatim verifies the frame before asking for a re-anchor'
     const res = await request(server).post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`);
     expect(res.status).toBe(200);
     expect(res.body.requires_dock_anchor_refresh).toBe(true);
-    expect(res.body.frameCheck).toMatchObject({ ok: false, reason: 'off' });
+    expect(res.body.frameCheck.ok).toBe(false);
     expect(isFrameUnvalidated(sn)).toBe(true);
   });
 
@@ -700,5 +710,94 @@ describe.skip('POST /cancel and GET /active', () => {
       .get(`/api/admin-status/maps/LFIN_T15C/import-portable/active`);
     expect(res.status).toBe(200);
     expect(res.body.stagingId).toBeNull();
+  });
+});
+
+describe('confirmed restore transaction and recovery', () => {
+  let sequence = 0;
+  let sn: string;
+  const validation = { ok: true, hardFailures: [], warnings: [] };
+  beforeEach(() => {
+    sn = `LFIN_CONFIRMED_${++sequence}`;
+    equipmentRepo.create({ equipment_id: `eq-${sn}`, mower_sn: sn, charger_sn: `LFIC_C_${sequence}`, mower_version: 'v6.0.2-custom-45' });
+    vi.mocked(mapSyncMock.applyVerbatimToMower).mockReset();
+    vi.mocked(mapSyncMock.verifyMowerMapFiles).mockReset();
+    vi.mocked(mapSyncMock.publishToDevice).mockClear();
+    vi.mocked(mapSyncMock.publishToExtended).mockClear();
+    mapRepo.create({ map_id: `${sn}-before`, mower_sn: sn, map_type: 'work', canonical_name: 'map8', map_area: '[{"x":0,"y":0},{"x":2,"y":0},{"x":0,"y":2}]' });
+  });
+
+  it('holds the old DB until confirmation and rejects a second operation or navigation', async () => {
+    const stagingId = await stageVerbatimBundle(sn);
+    let finish!: (value: any) => void;
+    let started!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    vi.mocked(mapSyncMock.applyVerbatimToMower).mockImplementation(async () => {
+      started();
+      return new Promise(resolve => { finish = resolve; });
+    });
+    const applying = request(server).post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`).then(r => r);
+    await entered;
+    expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
+    expect((await request(server).post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`)).status).toBe(409);
+    const navigation = await request(server).post('/api/admin-status/send-command').send({ sn, command: 'start_navigation', noWait: true });
+    expect(navigation.status).toBe(409);
+    expect(navigation.body.error).toBe('map_operation_busy');
+    expect(mapSyncMock.publishToDevice).not.toHaveBeenCalled();
+    finish({ pushed: true, validation });
+    const result = await applying;
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ state: 'APPLIED', mowerVerified: true });
+    expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toContain('map0');
+  });
+
+  it('preserves an unknown write outcome and retries with readback only', async () => {
+    const stagingId = await stageVerbatimBundle(sn);
+    const url = `/api/admin-status/maps/${sn}/import-portable/${stagingId}`;
+    vi.mocked(mapSyncMock.applyVerbatimToMower).mockResolvedValue({ pushed: false, validation, uncertain: true, error: 'write_ack_timeout' });
+    const first = await request(server).post(`${url}/apply-verbatim`);
+    expect(first.status).toBe(409);
+    expect(first.body.state).toBe('RECONCILE_REQUIRED');
+    expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
+    expect((await request(server).post(`${url}/cancel`)).status).toBe(409);
+    vi.mocked(mapSyncMock.verifyMowerMapFiles).mockResolvedValue({ pushed: true, validation });
+    const second = await request(server).post(`${url}/apply-verbatim`);
+    expect(second.status).toBe(200);
+    expect(mapSyncMock.applyVerbatimToMower).toHaveBeenCalledTimes(1);
+    expect(mapSyncMock.verifyMowerMapFiles).toHaveBeenCalledTimes(1);
+    expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toContain('map0');
+  });
+
+  it('keeps the original DB and recovery bundle when the DB commit fails after confirmed files', async () => {
+    const stagingId = await stageVerbatimBundle(sn);
+    const url = `/api/admin-status/maps/${sn}/import-portable/${stagingId}`;
+    vi.mocked(mapSyncMock.applyVerbatimToMower).mockResolvedValue({ pushed: true, validation });
+    db.exec(`CREATE TEMP TRIGGER reject_portable_commit BEFORE INSERT ON maps WHEN NEW.mower_sn = '${sn}' BEGIN SELECT RAISE(ABORT, 'forced DB failure'); END`);
+    try {
+      const first = await request(server).post(`${url}/apply-verbatim`);
+      expect(first.status).toBe(409);
+      expect(first.body.state).toBe('RECONCILE_REQUIRED');
+      expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
+      expect(isFrameUnvalidated(sn)).toBe(true);
+    } finally { db.exec('DROP TRIGGER reject_portable_commit'); }
+    vi.mocked(mapSyncMock.verifyMowerMapFiles).mockResolvedValue({ pushed: true, validation });
+    expect((await request(server).post(`${url}/apply-verbatim`)).status).toBe(200);
+    expect(mapSyncMock.applyVerbatimToMower).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires the legacy mutation and drive routes without commands or DB changes', async () => {
+    for (const url of [
+      `/maps/${sn}/refresh-dock-anchor`,
+      `/map-backups/${sn}/backup.zip/restore-and-realign`,
+      `/maps/${sn}/import-portable/old-session/confirm`,
+      `/maps/${sn}/import-portable/old-session/start-drive`,
+    ]) {
+      const res = await request(server).post(`/api/admin-status${url}`);
+      expect(res.status).toBe(410);
+    }
+    expect(mapSyncMock.applyVerbatimToMower).not.toHaveBeenCalled();
+    expect(mapSyncMock.publishToExtended).not.toHaveBeenCalled();
+    expect(mapSyncMock.publishToDevice).not.toHaveBeenCalled();
+    expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
   });
 });

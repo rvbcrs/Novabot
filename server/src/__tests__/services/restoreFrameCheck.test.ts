@@ -1,10 +1,4 @@
-/**
- * settleRestoredFrame: na een restore eerst kijken of het frame al klopt
- * (gedockt, RTK Fixed, map_position op het dock-anker uit de DB) en alleen
- * anders frame_unvalidated zetten. Aanleiding: een zone-kopie werkt zonder
- * her-ankeren omdat alles in het live frame staat; een restore op dezelfde
- * maaier met een ongewijzigd frame is dezelfde situatie.
- */
+/** Fresh telemetry can diagnose a restored frame, but cannot release its navigation lock. */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../mqtt/sensorData.js', () => ({
@@ -16,6 +10,7 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { mapRepo } from '../../db/repositories/index.js';
 import { isFrameUnvalidated, clearFrameUnvalidated, markFrameUnvalidated } from '../../services/frameValidation.js';
+import { clearPositionTelemetry, ingestPositionTelemetry } from '../../services/positionTelemetry.js';
 import { settleRestoredFrame } from '../../services/restoreFrameCheck.js';
 
 const SN = 'LFIN_RESTORE_CHECK';
@@ -27,23 +22,27 @@ function seed(over: Record<string, string> = {}) {
     map_position_x: '-0.01', map_position_y: '0.78', ...over,
   }));
   deviceCache.set(SN, m);
+  const now = Date.now();
+  for (let i = 0; i < 8; i++) ingestPositionTelemetry(SN,
+    { ...Object.fromEntries(m), localization_state: 'RUNNING' }, now - 700 + i * 100);
 }
 
 describe('settleRestoredFrame', () => {
   beforeEach(() => {
     deviceCache.clear();
+    clearPositionTelemetry(SN);
     clearFrameUnvalidated(SN);
     for (const r of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(r.map_id);
     mapRepo.create({ map_id: `${SN}-u`, mower_sn: SN, map_type: 'unicom', canonical_name: 'map0tocharge_unicom',
       map_area: JSON.stringify([anchor, { x: -0.4, y: 0.94 }]) });
   });
 
-  it('gedockt op het anker met RTK Fixed: frame blijft gevalideerd, ook als hij eerder ongevalideerd was', () => {
+  it('gedockt op het anker met verse RTK Fixed: diagnose slaagt, frame blijft geblokkeerd', () => {
     markFrameUnvalidated(SN);
     seed();
     const r = settleRestoredFrame(SN);
     expect(r.ok).toBe(true);
-    expect(isFrameUnvalidated(SN)).toBe(false);
+    expect(isFrameUnvalidated(SN)).toBe(true);
   });
 
   it('gedockt maar 2 m van het anker: ongevalideerd, met reden off', () => {

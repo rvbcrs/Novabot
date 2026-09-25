@@ -30,10 +30,10 @@ import {
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
   applyPolygonOffset, fetchPolygonOffset, isUnsupportedFirmwareError,
-  previewZoneCopy, copyZone, fetchDevices, type ZoneCopyPlan, applyMapsToMower,
+  previewZoneCopy, copyZone, fetchDevices, type ZoneCopyPlan, applyMapsToMower, fetchMapMeasurement,
   type VirtualWall, type EditGeometryDto, type CoveragePathEntry,
 } from '../../api/client';
-import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
+import { localToGps, gpsToLocal, isUsableChargerGps, calibrateGps, uncalibrateGps, splitMapCalibration } from '../../utils/coords';
 import { applyBrush, densifyPolygon, hitTestEdge, offsetPolygon, pointInPolygon as pointInPolygonXY, polygonArea, simplifyPolygon, type XY } from '../../utils/editGeometry';
 import { paintCircle, eraseCircle, makeValidPolygon } from '../../utils/brushPaint';
 import { getSocket } from '../../api/socket';
@@ -116,6 +116,8 @@ interface CopyPanelState {
   plan: ZoneCopyPlan | null;
   busy: boolean;
   error: string | null;
+  measurement?: { x: number; y: number; measurementId: string };
+  measuring?: boolean;
 }
 
 /** Bepaal kaarttype — primair uit mapType veld, fallback op mapId/mapName patronen */
@@ -773,37 +775,11 @@ function calibratePoints(
   cal: MapCalibration,
   center: { lat: number; lng: number },
   excludeAnchor0 = false,
+  geometryOffset: GpsPoint = { lat: 0, lng: 0 },
 ): [number, number][] {
-  const totalOffLat = cal.offsetLat;
-  const totalOffLng = cal.offsetLng;
-
-  if (totalOffLat === 0 && totalOffLng === 0 && cal.rotation === 0 && cal.scale === 1) {
-    return points.map(p => [p.lat, p.lng]);
-  }
-
-  const rad = (cal.rotation * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-
   return points.map((p, i) => {
-    // Translate to center
-    let dLat = p.lat - center.lat;
-    let dLng = p.lng - center.lng;
-
-    // Scale
-    dLat *= cal.scale;
-    dLng *= cal.scale;
-
-    // Rotate
-    const rLat = dLat * cos - dLng * sin;
-    const rLng = dLat * sin + dLng * cos;
-
-    // Dok-anker (unicom punt 0) krijgt geen handmatige offset (zie shiftPoints).
-    const offLat = excludeAnchor0 && i === 0 ? 0 : totalOffLat;
-    const offLng = excludeAnchor0 && i === 0 ? 0 : totalOffLng;
-
-    // Translate back + manual offset
-    return [center.lat + rLat + offLat, center.lng + rLng + offLng] as [number, number];
+    const g = calibrateGps(p, cal, center, excludeAnchor0 && i === 0 ? undefined : geometryOffset);
+    return [g.lat, g.lng];
   });
 }
 
@@ -1139,7 +1115,7 @@ function CelebrationOverlay({ area, onDismiss }: { area: number; onDismiss: () =
   );
 }
 
-export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, progressSuppressed, sensors, signals, mowing, pathDirectionPreview, previewRequest, onMapSaved: _onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes, controlsSlot, onPreviewLoading, highlightMapId }: Props) {
+export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActive, progressSuppressed, sensors, signals, mowing, pathDirectionPreview, previewRequest, onMapSaved: _onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes, controlsSlot, onPreviewLoading, highlightMapId }: Props) {
   const dialog = useDialog();
   const { t } = useTranslation();
   const mowingSensors = sensors ?? {};
@@ -1816,6 +1792,37 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [editCal, setEditCal] = useState<MapCalibration | null>(null);
   const calibrating = editCal !== null;
   const activeCal = editCal ?? savedCal;
+  const [polygonOffset, setPolygonOffset] = useState<LocalPoint>({ x: 0, y: 0 });
+  const { display: displayCal, geometryOffset } = useMemo(() =>
+    isUsableChargerGps(chargerGps)
+      ? splitMapCalibration(activeCal, savedCal, polygonOffset, chargerGps)
+      : { display: activeCal, geometryOffset: { lat: 0, lng: 0 } },
+  [activeCal, savedCal, polygonOffset, chargerGps]);
+
+  // Keep the established rotation pivot, computed before all click handlers.
+  const polyCenter = useMemo(() => {
+    if (!isUsableChargerGps(chargerGps)) return { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
+    const points = maps.filter(m => m.mapArea.length >= (m.mapType === 'unicom' ? 2 : 3))
+      .flatMap(m => m.mapArea).filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (!points.length) return chargerGps;
+    return localToGps({
+      x: points.reduce((sum, p) => sum + p.x, 0) / points.length - (chargingPose?.x ?? 0),
+      y: points.reduce((sum, p) => sum + p.y, 0) / points.length - (chargingPose?.y ?? 0),
+    }, chargerGps);
+  }, [maps, chargerGps, chargingPose]);
+
+  // DB geometry receives polygonOffset when exported. Telemetry/navigation
+  // already use effective mower metres and must never receive it a second time.
+  const localFromDisplay = useCallback((p: GpsPoint, storedGeometry = false): LocalPoint => {
+    if (!isUsableChargerGps(chargerGps)) return { x: NaN, y: NaN };
+    const raw = uncalibrateGps(p, displayCal, polyCenter, storedGeometry ? geometryOffset : undefined);
+    const local = gpsToLocal(raw, chargerGps);
+    return { x: local.x + (chargingPose?.x ?? 0), y: local.y + (chargingPose?.y ?? 0) };
+  }, [chargerGps, chargingPose, displayCal, polyCenter, geometryOffset]);
+  const displayFromMower = useCallback((p: LocalPoint): GpsPoint => {
+    if (!isUsableChargerGps(chargerGps)) return { lat: NaN, lng: NaN };
+    return calibrateGps(localToGps({ x: p.x - (chargingPose?.x ?? 0), y: p.y - (chargingPose?.y ?? 0) }, chargerGps), displayCal, polyCenter);
+  }, [chargerGps, chargingPose, displayCal, polyCenter]);
 
   // Area type labels (translated)
   const AREA_TYPE_META: Record<AreaType, { color: string; label: string }> = useMemo(() => ({
@@ -1835,6 +1842,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       // type-naam) — gebruik ze rechtstreeks als lokale trail.
       fetchTrail(sn).then(pts => setTrail(pts as unknown as Array<{ x: number; y: number; ts: number }>)).catch(() => setTrail([]));
       fetchCalibration(sn).then(setSavedCal).catch(() => {});
+      setPolygonOffset({ x: 0, y: 0 });
+      fetchPolygonOffset(sn).then(p => setPolygonOffset({ x: p.dxM, y: p.dyM })).catch(() => {});
       // Initialize undo/redo history to a single fresh snapshot once the editor's
       // geometry has loaded for this mower (usually an empty snapshot = no drafts).
       refreshEditGeometry().then(resetHistory);
@@ -1951,7 +1960,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // while every un-touched point is preserved on save.
     // Stock firmware: bewerken kan de maaier nooit bereiken; niet eens de modus in.
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
-    const verts = mapArea.map(p => [p.lat, p.lng] as [number, number]);
+    const dockChannel = isToChargeUnicomName(maps.find(m => m.mapId === mapId)?.canonicalName);
+    const verts = calibratePoints(mapArea, displayCal, polyCenter, dockChannel, geometryOffset);
     setEditingMapId(mapId);
     setEditVertices(verts);
     setEditMode('edit');
@@ -1961,7 +1971,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setMoveTargetCanonical(null);
     setMoveWorking(null);
     setUserInteracted(true);
-  }, [chargerGps, mapWriteSupported, t]);
+  }, [maps, displayCal, polyCenter, geometryOffset, mapWriteSupported, t]);
 
   // Start drawing a new polygon
   // Maten tijdens het tekenen: de lengte van de lijn die je nu trekt, en het
@@ -2033,18 +2043,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   /** Klik/sleep op de kaart → lokale meters van deze maaier, dezelfde formule als tekenen. */
   const copyLocalFromLatLng = useCallback((lat: number, lng: number): LocalPoint | null => {
-    if (!isUsableChargerGps(chargerGps)) return null;
-    // De kaart tekent lokale punten met de weergave-offset erbij (calibratePoints);
-    // hier dus dezelfde inverse als navigate-to, anders landt de zone naast de marker.
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
-    const l = gpsToLocal({ lat: lat - offLat, lng: lng - offLng }, chargerGps);
-    return { x: l.x + (chargingPose?.x ?? 0), y: l.y + (chargingPose?.y ?? 0) };
-  }, [chargerGps, chargingPose, activeCal]);
+    const p = localFromDisplay({ lat, lng });
+    return Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+  }, [localFromDisplay]);
 
   const runCopyPreview = useCallback((state: CopyPanelState) => {
     if (!sn || !state.sourceSn || !state.canonical || !state.marker) return;
-    const local = copyLocalFromLatLng(state.marker[0], state.marker[1]);
+    const local = state.measurement ?? copyLocalFromLatLng(state.marker[0], state.marker[1]);
     if (!local) return;
     if (copyPreviewTimer.current) clearTimeout(copyPreviewTimer.current);
     const seq = ++copyPreviewSeq.current;
@@ -2053,7 +2058,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     const withObstacles = state.withObstacles;
     copyPreviewTimer.current = setTimeout(async () => {
       try {
-        const plan = await previewZoneCopy(sn, sourceSn, canonical, local, withObstacles);
+        const plan = await previewZoneCopy(sn, sourceSn, canonical, local, withObstacles, state.measurement?.measurementId);
         if (seq !== copyPreviewSeq.current) return;
         setCopyPanel(prev => (prev ? { ...prev, plan, error: null } : prev));
       } catch (err) {
@@ -2070,6 +2075,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setNavigateMode(false);
     setWallDrawMode(false);
     setPlacingCharger(false);
+    setEditCal(null);
     setSelectedMapId(null);
     setCopyPanel({ sources, sourceSn: null, sourceMaps: [], canonical: null, marker: null, withObstacles: true, plan: null, busy: false, error: null });
   }, [mapWriteSupported, sn, t]);
@@ -2084,7 +2090,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       : (isUsableChargerGps(chargerGps) ? [chargerGps.lat, chargerGps.lng] : null);
     setCopyPanel(prev => {
       if (!prev) return prev;
-      const next: CopyPanelState = { ...prev, sourceSn, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, marker, plan: null, error: null };
+      const next: CopyPanelState = { ...prev, sourceSn, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, marker, measurement: undefined, measuring: false, plan: null, error: null };
       runCopyPreview(next);
       return next;
     });
@@ -2092,27 +2098,36 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   const setCopyMarker = useCallback((lat: number, lng: number) => {
     setCopyPanel(prev => {
-      if (!prev) return prev;
-      const next: CopyPanelState = { ...prev, marker: [lat, lng], plan: null };
+      if (!prev || prev.measuring) return prev;
+      const next: CopyPanelState = { ...prev, marker: [lat, lng], measurement: undefined, plan: null };
       runCopyPreview(next);
       return next;
     });
   }, [runCopyPreview]);
 
-  // Meetstand: de maaier staat fysiek op de plek waar de bronmaaier dockt, dus
-  // zijn eigen map_position IS het laadstation van de bron in dit frame. Op
-  // centimeters nauwkeurig, waar een klik op de foto decimeters tot een meter
-  // ernaast zit (live gezien: 1,5 m te ver het terras op, 2026-09-24).
-  const copyMarkerFromMower = useCallback(() => {
-    const mx = parseFloat(mapX ?? ''), my = parseFloat(mapY ?? '');
-    if (!Number.isFinite(mx) || !Number.isFinite(my) || !isUsableChargerGps(chargerGps)) return;
-    // Inverse van copyLocalFromLatLng: lokale meters → marker-lat/lng inclusief de weergave-offset.
-    const g = localToGps({ x: mx - (chargingPose?.x ?? 0), y: my - (chargingPose?.y ?? 0) }, chargerGps);
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
-    setCopyMarker(g.lat + offLat, g.lng + offLng);
-  }, [mapX, mapY, chargerGps, chargingPose, activeCal, setCopyMarker]);
-  const copyMarkerFromMowerReady = Number.isFinite(parseFloat(mapX ?? '')) && Number.isFinite(parseFloat(mapY ?? ''));
+  // The server validates fresh Fixed/localized samples and frame identity;
+  // cached client coordinates are never accepted as a measurement.
+  const copyMarkerFromMower = useCallback(async () => {
+    if (!sn || !copyPanel?.sourceSn || copyPanel.measuring) return;
+    const sourceSn = copyPanel.sourceSn;
+    copyPreviewSeq.current++;
+    if (copyPreviewTimer.current) clearTimeout(copyPreviewTimer.current);
+    setCopyPanel(prev => prev ? { ...prev, measuring: true, error: null, plan: null, measurement: undefined } : prev);
+    try {
+      const measurement = await fetchMapMeasurement(sn);
+      const g = displayFromMower(measurement);
+      if (!Number.isFinite(g.lat) || !Number.isFinite(g.lng)) throw new Error(t('map.copyZoneFailed'));
+      setCopyPanel(prev => {
+        if (!prev || prev.sourceSn !== sourceSn) return prev;
+        const next: CopyPanelState = { ...prev, measurement, marker: [g.lat, g.lng], measuring: false, plan: null };
+        runCopyPreview(next);
+        return next;
+      });
+    } catch (err) {
+      setCopyPanel(prev => prev?.sourceSn === sourceSn ? { ...prev, measuring: false, error: err instanceof Error ? err.message : String(err) } : prev);
+    }
+  }, [sn, copyPanel, displayFromMower, runCopyPreview, t]);
+  const copyMarkerFromMowerReady = online === true && !copyPanel?.measuring;
 
   const updateCopyPanel = useCallback((patch: Partial<CopyPanelState>) => {
     setCopyPanel(prev => {
@@ -2125,11 +2140,11 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   const placeCopiedZone = useCallback(async () => {
     if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || !copyPanel.marker || !copyPanel.plan?.ok) return;
-    const local = copyLocalFromLatLng(copyPanel.marker[0], copyPanel.marker[1]);
+    const local = copyPanel.measurement ?? copyLocalFromLatLng(copyPanel.marker[0], copyPanel.marker[1]);
     if (!local) return;
     setCopyPanel(prev => (prev ? { ...prev, busy: true, error: null } : prev));
     try {
-      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, local, { withObstacles: copyPanel.withObstacles, acceptChannel: true });
+      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, local, { withObstacles: copyPanel.withObstacles, acceptChannel: true, measurementId: copyPanel.measurement?.measurementId });
       if (!r.ok || !r.map) throw new Error(t('map.copyZoneFailed'));
       await reloadMaps();
       setSelectedMapId(r.map.mapId);
@@ -2576,17 +2591,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (editVertices.length < minDrawPoints || !chargerGps) return;
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     const gpsArea = editVertices.map(([lat, lng]) => ({ lat, lng }));
-    // Add the chargingPose offset back. The display projects stored local points
-    // as localToGps(p - chargingPose, charger), so the inverse for saving is
-    // gpsToLocal(gps, charger) + chargingPose. Without this, every saved vertex was
-    // shifted by -chargingPose, moving the WHOLE map on save (this matches the
-    // paste/paint/brush save paths, which already add the offset back).
-    const offX = chargingPose?.x ?? 0;
-    const offY = chargingPose?.y ?? 0;
-    const localArea = gpsArea.map(p => {
-      const l = gpsToLocal(p, chargerGps!);
-      return { x: l.x + offX, y: l.y + offY };
-    });
+    const dockChannel = editMode === 'edit' && isToChargeUnicomName(maps.find(m => m.mapId === editingMapId)?.canonicalName);
+    const localArea = gpsArea.map((p, i) => localFromDisplay(p, !(dockChannel && i === 0)));
+    if (localArea.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) return;
     const points = localArea.map(p => ({ x: p.x, y: p.y }));
 
     const finishEdit = () => {
@@ -2658,7 +2665,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         setEditStatusKind('error');
       });
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, chargingPose, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints]);
+  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, localFromDisplay, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints]);
 
   // Afronden na een dubbelklik: pas ná de render met de opgeschoonde punten,
   // zodat handleSavePolygon precies opslaat wat er op de kaart staat.
@@ -2910,10 +2917,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (lmap && isUsableChargerGps(chargerGps)) {
       try {
         const center = lmap.getCenter();
-        const offX = chargingPose?.x ?? 0;
-        const offY = chargingPose?.y ?? 0;
-        const l = gpsToLocal({ lat: center.lat, lng: center.lng }, chargerGps);
-        const vc = { x: l.x + offX, y: l.y + offY };
+        const vc = localFromDisplay({ lat: center.lat, lng: center.lng }, true);
         if (Number.isFinite(vc.x) && Number.isFinite(vc.y)) {
           targetCx = vc.x;
           targetCy = vc.y;
@@ -2969,7 +2973,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }
     setEditStatus(t('map.edit.pasted'));
     setEditStatusKind('info');
-  }, [sn, applying, obstacleClipboard, maps, selectedMapId, chargerGps, chargingPose, refreshEditGeometry, recordHistory, reloadMaps, t]);
+  }, [sn, applying, obstacleClipboard, maps, selectedMapId, chargerGps, localFromDisplay, refreshEditGeometry, recordHistory, reloadMaps, t]);
 
   // ── Push/pull brush (R3, Part B) ────────────────────────────────
   // Working state for a brush stroke: the densified base ring + the anchor that
@@ -3077,12 +3081,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // GPS → mapArea-local frame for the brush. gpsToLocal yields {p.x-offX, p.y-offY}
   // (the frame gpsMaps renders into); add the pose offset back to match mapArea.
   const brushToLocal = useCallback((latlng: L.LatLng): XY => {
-    if (!isUsableChargerGps(chargerGps)) return { x: NaN, y: NaN };
-    const offX = chargingPose?.x ?? 0;
-    const offY = chargingPose?.y ?? 0;
-    const l = gpsToLocal({ lat: latlng.lat, lng: latlng.lng }, chargerGps);
-    return { x: l.x + offX, y: l.y + offY };
-  }, [chargerGps, chargingPose]);
+    return localFromDisplay({ lat: latlng.lat, lng: latlng.lng }, true);
+  }, [localFromDisplay]);
 
   // ── Paint/erase brush (primary tool) ────────────────────────────
   // Working ring mirrored in a ref so mouseup reads the exact last value
@@ -3381,8 +3381,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // kaart verdween zodra zijn GPS niets meldde.
   const hasGps = lat && lng && lat !== '0' && lng !== '0';
   const resolvedPosition: [number, number] | null = (() => {
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
     // Prefer the live, cm-accurate local map_position projected through the
     // charger origin — exactly the same frame as the polygons. The mower's
     // reported GPS only updates sporadically (~every 50s) and carries the
@@ -3391,14 +3389,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     const mx = mapX != null ? parseFloat(mapX) : NaN;
     const my = mapY != null ? parseFloat(mapY) : NaN;
     if (Number.isFinite(mx) && Number.isFinite(my) && isUsableChargerGps(chargerGps)) {
-      const g = localToGps({ x: mx - (chargingPose?.x ?? 0), y: my - (chargingPose?.y ?? 0) }, chargerGps);
-      const pLat = g.lat + offLat;
-      const pLng = g.lng + offLng;
+      const g = displayFromMower({ x: mx, y: my });
+      const pLat = g.lat;
+      const pLng = g.lng;
       if (Number.isFinite(pLat) && Number.isFinite(pLng)) return [pLat, pLng];
     }
     if (!hasGps) return null;
-    const numLat = parseFloat(lat) + offLat;
-    const numLng = parseFloat(lng) + offLng;
+    const numLat = parseFloat(lat);
+    const numLng = parseFloat(lng);
     if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
     return [numLat, numLng];
   })();
@@ -3453,8 +3451,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const TRAIL_GAP_M = 5;
   const trailSegments: [number, number][][] = (() => {
     if (!isUsableChargerGps(chargerGps)) return [];
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
     const segs: [number, number][][] = [];
     let cur: [number, number][] = [];
     let prev: { x: number; y: number } | null = null;
@@ -3464,9 +3460,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         cur = [];
       }
       prev = p;
-      const g = localToGps({ x: p.x - (chargingPose?.x ?? 0), y: p.y - (chargingPose?.y ?? 0) }, chargerGps);
-      const lat = g.lat + offLat;
-      const lng = g.lng + offLng;
+      const g = displayFromMower(p);
+      const lat = g.lat;
+      const lng = g.lng;
       if (Number.isFinite(lat) && Number.isFinite(lng)) cur.push([lat, lng]);
     }
     if (cur.length >= 2) segs.push(cur);
@@ -3485,21 +3481,19 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const missedPointsGps: [number, number][] = useMemo(() => {
     const raw = mowingSensors.missed_points;
     if (!raw || !isUsableChargerGps(chargerGps)) return [];
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
     const result: [number, number][] = [];
     for (const part of raw.split(';')) {
       const [xs, ys] = part.trim().split(/\s+/);
       const x = parseFloat(xs);
       const y = parseFloat(ys);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      const g = localToGps({ x: x - (chargingPose?.x ?? 0), y: y - (chargingPose?.y ?? 0) }, chargerGps);
-      const lat = g.lat + offLat;
-      const lng = g.lng + offLng;
+      const g = displayFromMower({ x, y });
+      const lat = g.lat;
+      const lng = g.lng;
       if (Number.isFinite(lat) && Number.isFinite(lng)) result.push([lat, lng]);
     }
     return result;
-  }, [mowingSensors.missed_points, chargerGps, chargingPose, activeCal.offsetLat, activeCal.offsetLng]);
+  }, [mowingSensors.missed_points, chargerGps, displayFromMower]);
 
   // Mower heading icon — `heading` carries the firmware `theta` field in
   // radians using the ENU convention (0 = East, π/2 = North). The icon
@@ -3536,12 +3530,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const chargerIcon = useMemo(() => makeChargerIcon(false), []);
   const chargerHasGps = !!(resolvedChargerLat && resolvedChargerLng);
 
-  // Set the charger's DISPLAYED position (menu "Laadstation" click OR marker drag
-  // — both routes call this, so they behave identically). The mower-reported
-  // GPS (charger base) stays the source of truth and is NEVER overwritten; we
-  // only store a VISUAL offset = target − base. Nothing is pushed to the mower.
-  // When there is no base yet (mower never auto-detected) we adopt the clicked
-  // point as the base so a charger can still be placed manually.
+  // Change the photo reference, preserving the applied physical polygon shift.
+  // Existing local geometry and the mower's frame remain unchanged.
   const handlePlaceCharger = useCallback((lat: number, lng: number) => {
     // Always set the real charger anchor (base) — never a visual offset. The
     // drop point IS where the charger physically sits, so the anchor moves there
@@ -3549,7 +3539,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // polygon coords are unchanged and nothing is pushed to the mower. Setting
     // the base (not an offset) keeps the app consistent with the dashboard — the
     // app reads chargerGps directly and ignores offset.
-    const updated: MapCalibration = { ...savedCal, chargerLat: lat, chargerLng: lng, offsetLat: 0, offsetLng: 0 };
+    const shift = gridMetresToOffsetDeg(polygonOffset.x, polygonOffset.y, { lat, lng });
+    const updated: MapCalibration = { ...savedCal, chargerLat: lat, chargerLng: lng, offsetLat: shift.offsetLat, offsetLng: shift.offsetLng };
     setSavedCal(updated);
     // The zones, drawing, copying and navigate-to all project from chargerGps;
     // without this only the icon moved and everything else kept the old pin
@@ -3559,7 +3550,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     saveCalibration(sn, updated).then(() => {
       toast(t('map.chargerSaved'), 'success');
     });
-  }, [sn, savedCal, t]);
+  }, [sn, savedCal, polygonOffset, t]);
 
   // Push maps to mower via SSH
   // Navigate-to: the click is a map point, the mower wants map metres. Undo
@@ -3569,11 +3560,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const handleNavigateClick = useCallback(async (lat: number, lng: number) => {
     setNavigateMode(false);
     if (!isUsableChargerGps(chargerGps)) return;
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
-    const l = gpsToLocal({ lat: lat - offLat, lng: lng - offLng }, chargerGps);
-    const x = l.x + (chargingPose?.x ?? 0);
-    const y = l.y + (chargingPose?.y ?? 0);
+    const { x, y } = localFromDisplay({ lat, lng });
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     setNavigateTarget({ lat, lng });
     if (!(await dialog.confirm({
       title: t('map.nav.confirmTitle'), message: t('map.nav.confirmMsg'),
@@ -3584,7 +3572,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       setNavigateTarget(null);
       toast(`✗ ${(r as { error?: string } | null)?.error ?? t('controls.navigateTo')}`, 'error');
     }
-  }, [sn, chargerGps, activeCal, chargingPose, dialog, t, toast]);
+  }, [sn, chargerGps, localFromDisplay, dialog, t, toast]);
 
   // The drive reports its phase through the sensors; say it, and drop the
   // target marker once it is over.
@@ -3637,29 +3625,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }).catch(() => toast(`✗ ${t('map.noGo.deleteFailed')}`, 'error'));
   }, [sn, toast, t]);
 
-  // Center of all polygon points (used as rotation/scale pivot). Skip
-  // any non-finite vertex so a single NaN doesn't propagate into the
-  // pathDirection preview polylines and crash Leaflet (issue #15).
-  const polyCenter = useMemo(() => {
-    let totalLat = 0, totalLng = 0, count = 0;
-    for (const m of polygonMaps) {
-      for (const p of m.mapArea) {
-        if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
-        totalLat += p.lat;
-        totalLng += p.lng;
-        count++;
-      }
-    }
-    if (count === 0) {
-      const [pLat, pLng] = position;
-      if (Number.isFinite(pLat) && Number.isFinite(pLng)) {
-        return { lat: pLat, lng: pLng };
-      }
-      return { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
-    }
-    return { lat: totalLat / count, lng: totalLng / count };
-  }, [polygonMaps, position]);
-
   /** Lokale meters van deze maaier → Leaflet-posities, dezelfde projectie als gpsMaps/draftOverlays. */
   const copyPositions = useCallback((pts: LocalPoint[]): [number, number][] => {
     if (!isUsableChargerGps(chargerGps)) return [];
@@ -3669,8 +3634,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       const g = localToGps({ x: p.x - offX, y: p.y - offY }, chargerGps);
       return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? [g] : [];
     });
-    return calibratePoints(gps, activeCal, polyCenter);
-  }, [chargerGps, chargingPose, activeCal, polyCenter]);
+    return calibratePoints(gps, displayCal, polyCenter, false, geometryOffset);
+  }, [chargerGps, chargingPose, displayCal, polyCenter, geometryOffset]);
 
   // Calibration handlers
   // De edit-offset houden we in GRADEN aan zodat de bestaande preview
@@ -3723,6 +3688,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // toegepaste maai-offset zodat de kaart ook na sluiten van het paneel klopt.
     saveCalibration(sn, calForDisplay).catch(() => {});
     setSavedCal(calForDisplay);
+    setPolygonOffset({ x: dxM, y: dyM });
     setEditCal(null);
     toast(offline ? t('map.shiftOffline') : t('map.shiftApplied'), offline ? 'info' : 'success');
     return true;
@@ -3938,7 +3904,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {polygonMaps.map(m => {
             // Dok-route-unicom: punt 0 (het dok-anker) niet meeschuiven — zelfde
             // uitsluiting als server-side shiftPoints, dus preview == maaier.
-            const positions = calibratePoints(m.mapArea, activeCal, polyCenter, isToChargeUnicomName(m.canonicalName));
+            const positions = calibratePoints(m.mapArea, displayCal, polyCenter, isToChargeUnicomName(m.canonicalName), geometryOffset);
             const outline = m.mapType === 'work' ? sourceColor(m.source) : undefined;
             const baseStyle = { ...getAreaStyle(m.mapType, m.mapId, m.mapName), ...(outline ? { color: outline } : {}) };
             const isBeingEdited = editMode === 'edit' && editingMapId === m.mapId;
@@ -3991,7 +3957,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Pending draft overlays (R2) — dashed, drawn on top of saved maps.
               Hidden while actively editing so the in-progress editor is clear. */}
           {editMode === 'none' && draftOverlays.map(d => {
-            const positions = calibratePoints(d.gps, activeCal, polyCenter);
+            const positions = calibratePoints(d.gps, displayCal, polyCenter, false, geometryOffset);
             const base = getAreaStyle(d.mapType);
             return (
               <Polygon
@@ -4011,7 +3977,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               {laneStrokes(cp.id).map((st, i) => {
                 const pts = st.upTo === null ? cp.gps : cp.gps.slice(0, st.upTo);
                 return pts.length >= 2 ? (
-                  <Polyline key={i} positions={calibratePoints(pts, activeCal, polyCenter)}
+                  <Polyline key={i} positions={calibratePoints(pts, displayCal, polyCenter)}
                     pathOptions={{ color: st.color, weight: st.weight, opacity: st.opacity, lineCap: 'round', lineJoin: 'round' }} />
                 ) : null;
               })}
@@ -4020,7 +3986,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Push/pull brush (R3): live in-progress stroke + pointer handler. */}
           {brushMode && brushOverlayGps && brushOverlayGps.length >= 3 && (
             <Polygon
-              positions={calibratePoints(brushOverlayGps, activeCal, polyCenter)}
+              positions={calibratePoints(brushOverlayGps, displayCal, polyCenter, false, geometryOffset)}
               pathOptions={{ color: '#a78bfa', weight: 2, dashArray: '6 4', fillOpacity: 0.12, fillColor: '#a78bfa' }}
             />
           )}
@@ -4035,7 +4001,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Paint/erase brush (primary tool): live in-progress stroke. */}
           {paintMode && paintOverlayGps && paintOverlayGps.length >= 3 && (
             <Polygon
-              positions={calibratePoints(paintOverlayGps, activeCal, polyCenter)}
+              positions={calibratePoints(paintOverlayGps, displayCal, polyCenter, false, geometryOffset)}
               pathOptions={{
                 color: paintTool === 'paint' ? '#34d399' : '#f59e0b',
                 weight: 2, dashArray: '6 4', fillOpacity: 0.14,
@@ -4057,7 +4023,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               its dragged position, plus the pointer handler. */}
           {moveMode && moveOverlayGps && moveOverlayGps.length >= 3 && (
             <Polygon
-              positions={calibratePoints(moveOverlayGps, activeCal, polyCenter)}
+              positions={calibratePoints(moveOverlayGps, displayCal, polyCenter, false, geometryOffset)}
               pathOptions={{ color: '#22d3ee', weight: 2, dashArray: '6 4', fillOpacity: 0.14, fillColor: '#22d3ee' }}
             />
           )}
@@ -4124,7 +4090,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             const offX = chargingPose?.x ?? 0, offY = chargingPose?.y ?? 0;
             const fromG = localToGps({ x: offsetAnnotation.from.x - offX, y: offsetAnnotation.from.y - offY }, chargerGps);
             const toG = localToGps({ x: offsetAnnotation.to.x - offX, y: offsetAnnotation.to.y - offY }, chargerGps);
-            const pts = calibratePoints([fromG, toG], activeCal, polyCenter);
+            const pts = calibratePoints([fromG, toG], displayCal, polyCenter, false, geometryOffset);
             if (pts.length < 2) return null;
             const cm = offsetAnnotation.cm;
             const color = cm >= 0 ? '#38bdf8' : '#f59e0b';
@@ -4149,7 +4115,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             const wPolys = polygonMaps
               .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
               .map(m => {
-                const calPts = calibratePoints(m.mapArea, activeCal, polyCenter);
+                const calPts = calibratePoints(m.mapArea, displayCal, polyCenter, false, geometryOffset);
                 return calPts.map(([lat, lng]) => ({ lat, lng }));
               });
             return <CoverageStripes lanes={coveredLanes} workPolys={wPolys} />;
@@ -4274,7 +4240,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Charger marker (draggable to reposition) — apply same calibration offset as polygons */}
           {chargerHasGps && (
             <Marker
-              position={[resolvedChargerLat! + activeCal.offsetLat, resolvedChargerLng! + activeCal.offsetLng]}
+              position={[resolvedChargerLat!, resolvedChargerLng!]}
               icon={chargerIcon}
               draggable
               eventHandlers={{
@@ -4290,7 +4256,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <Popup>
                 <div className="text-xs">
                   <div className="font-semibold">{t('map.chargingStation')}</div>
-                  <div>{(resolvedChargerLat! + activeCal.offsetLat).toFixed(6)}, {(resolvedChargerLng! + activeCal.offsetLng).toFixed(6)}</div>
+                  <div>{resolvedChargerLat!.toFixed(6)}, {resolvedChargerLng!.toFixed(6)}</div>
                   {/* Slepen verplaatst alleen de weergegeven marker-anker (map_calibration.
                       charger_lat/lng) — nooit de fysieke laadstation-positie op de maaier. */}
                   <div className="mt-1 font-medium text-gray-500">{t('map.displayCalTitle')}</div>
@@ -4312,7 +4278,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             const workPolys = polygonMaps
               .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
               .map(m => {
-                const calPts = calibratePoints(m.mapArea, activeCal, polyCenter);
+                const calPts = calibratePoints(m.mapArea, displayCal, polyCenter, false, geometryOffset);
                 return calPts.map(([lat, lng]) => ({ lat, lng }));
               });
             if (workPolys.length === 0) return null;
@@ -5255,11 +5221,11 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
                     <p className="text-[11px] leading-snug text-gray-400">{t('map.copyZoneMeasureHint', { name: copySourceName })}</p>
                     <button
-                      onClick={copyMarkerFromMower}
+                      onClick={() => void copyMarkerFromMower()}
                       disabled={!copyMarkerFromMowerReady}
                       className="w-full text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-200 hover:bg-gray-600 disabled:opacity-40 transition-colors"
                     >
-                      {t('map.copyZoneMeasure')}
+                      {copyPanel.measuring ? t('common.loading') : t('map.copyZoneMeasure')}
                     </button>
                   </div>
                 )}
@@ -5805,7 +5771,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       />
 
       {/* Charger placement is now a single unified action (menu click OR marker
-          drag → handlePlaceCharger), which stores a VISUAL offset only and never
+          drag → handlePlaceCharger), which updates only the photo reference and never
           pushes to the mower. The old relocate-vs-correct dialog (which could
           recalc + push maps to the mower) has been removed. */}
     </div>

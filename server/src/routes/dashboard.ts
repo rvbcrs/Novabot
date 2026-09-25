@@ -23,12 +23,12 @@ import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
-import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked, FRAME_TOLERANCE_M } from '../services/frameValidation.js';
+import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked, FRAME_TOLERANCE_M } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { gpsSpreadMeters, medianGps, type LatLng } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
-import { areaFileName, generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
+import { areaFileName, generateMapZipFromDb, gridGpsToLocal, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { isDemoMode, setDemoMode as setDemo, getDemoStatus } from '../services/demoSimulator.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
@@ -36,6 +36,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
+import unzipper from 'unzipper';
 import { tgm1ToDisplayTgr1, mergeIntoTgm1, tgmoToDisplayTgo1 } from '../services/terrainGrid.js';
 import { loadMergedTgmo, runRecognition } from '../services/terrainRecognition.js';
 import { groupClusters, groupKeysFor } from '../services/terrainClusterGroups.js';
@@ -63,7 +64,9 @@ import {
 } from '../services/coveragePlannerRadius.js';
 import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
 import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
-import { getPolygonAnchor } from '../services/anchor.js';
+import { getPolygonAnchor, snapshotAnchorMatches } from '../services/anchor.js';
+import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot, awaitExtended, type MowerMapOperation } from '../services/mowerMapOperation.js';
+import { positionTelemetry, freshPositionState, stablePosition, POSITION_MAX_AGE_MS } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, persistZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
 import { beginMapApply, waitForPlannerBack } from '../services/mapApplyStatus.js';
@@ -120,6 +123,15 @@ import { computeDockDrift } from '../services/dockDrift.js';
 import { firmwareAdvisory, getManifest, ensureTargetDownloaded } from '../services/firmwareAdvisory.js';
 
 export const dashboardRouter = Router();
+// Guard before database mutations, so an in-flight device operation sees one map set.
+dashboardRouter.use(['/maps/:sn', '/calibration/:sn'], (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) { next(); return; }
+  const { sn } = req.params;
+  if (isMowerMapOperationBusy(sn) || isFrameUnvalidated(sn)) {
+    res.status(409).json({ ok: false, reason: isMowerMapOperationBusy(sn) ? 'map_operation_busy' : 'frame_unvalidated', error: 'Rond eerst de kaart- of herankerprocedure af.' }); return;
+  }
+  next();
+});
 
 // Dronefoto als kaartachtergrond (#124): eigen module, zelfde gate.
 dashboardRouter.use('/overlay', droneOverlayRouter);
@@ -1824,7 +1836,9 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       res.status(400).json({ error: T`Positie van het laadstation onbekend: plaats eerst het laadstation op de kaart` });
       return;
     }
-    localPoints = mapArea.map(p => gpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps));
+    const anchor = getPolygonAnchor(sn);
+    if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
+    localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); return { x: point.x + anchor.x, y: point.y + anchor.y }; });
   }
 
   const bounds = {
@@ -1897,6 +1911,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
 // De kopie is een getekende zone met voorgevulde geometrie: zelfde rijen,
 // zelfde push (autoPushMapsInBackground), zelfde kanaal-prompt in het dashboard.
 interface ZoneCopyBody {
+  measurementId?: string;
   canonical?: string;
   dockAtB?: { x?: unknown; y?: unknown };
   withObstacles?: boolean;
@@ -1917,11 +1932,34 @@ function zoneCopyRefusalText(refusal: NonNullable<CopyPlan['refusal']>, T: Trans
   }
 }
 
+const mapMeasurements = new Map<string, { sn: string; x: number; y: number; at: number; signature: string; revision: number }>();
+const mapSignature = (sn: string) => crypto.createHash('sha256').update(JSON.stringify(mapRepo.findByMowerSn(sn))).digest('hex');
+dashboardRouter.get('/maps/:sn/measurement', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const sample = stablePosition(sn);
+  if (!isDeviceOnline(sn) || isFrameUnvalidated(sn) || isMowerMapOperationBusy(sn) || !getPolygonAnchor(sn) || !sample) {
+    res.status(409).json({ ok: false, reason: 'measurement_unavailable', error: 'Meten vereist een gevalideerd frame en acht verse, stabiele RUNNING + RTK Fixed-posities.' }); return;
+  }
+  for (const [id, m] of mapMeasurements) if (Date.now() - m.at > 300_000) mapMeasurements.delete(id);
+  const measurementId = crypto.randomUUID();
+  mapMeasurements.set(measurementId, { sn, x: sample.x, y: sample.y, at: Date.now(), signature: mapSignature(sn), revision: getFrameRevision(sn) });
+  res.json({ ok: true, ...sample, measurementId });
+});
+
+function measurementMatches(sn: string, body: ZoneCopyBody): boolean {
+  if (body.measurementId === undefined) return true; // Explicit image placement has no survey claim.
+  const sample = mapMeasurements.get(body.measurementId);
+  return !!sample && sample.sn === sn && Date.now() - sample.at <= 300_000 && !isFrameUnvalidated(sn) && sample.revision === getFrameRevision(sn) && sample.signature === mapSignature(sn) && body.dockAtB?.x === sample.x && body.dockAtB?.y === sample.y;
+}
+
 dashboardRouter.post('/maps/:sn/copy-from/:source/preview', (req: Request, res: Response) => {
   const T = reqT(req);
   const { sn, source } = req.params;
   if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
   const body = (req.body ?? {}) as ZoneCopyBody;
+  if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source) || !measurementMatches(sn, body)) {
+    res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
+  }
   const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false }, T);
   if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
   res.json({
@@ -1941,6 +1979,9 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', (req: Request, res: Response
     return;
   }
   const body = (req.body ?? {}) as ZoneCopyBody;
+  if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source) || !measurementMatches(sn, body)) {
+    res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
+  }
   // Altijd server-side herberekenen: de client stuurt alleen de correspondentie, nooit geometrie.
   const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false }, T);
   if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
@@ -2016,7 +2057,9 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
         res.status(400).json({ error: T`Positie van het laadstation onbekend` });
         return;
       }
-      localPoints = mapArea.map(p => gpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps));
+      const anchor = getPolygonAnchor(sn);
+    if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
+    localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); return { x: point.x + anchor.x, y: point.y + anchor.y }; });
     }
 
     const bounds = {
@@ -2569,7 +2612,7 @@ dashboardRouter.get('/maps/:sn/sync-zip', async (req: Request, res: Response) =>
 function generatePosJson(
   charger: GpsPoint,
   anchor?: { x: number; y: number } | null,
-): Record<string, unknown> {
+): { time_stamp: number; utm_origin: { x: number; y: number; z: number; utm_zone: number }; wgs84_origin: { latitude: number; longitude: number } } {
   const { lat, lng } = charger;
   const a = 6378137.0;
   const f = 1 / 298.257223563;
@@ -2649,92 +2692,72 @@ function refreshLatestZip(sn: string): void {
 // big garden that is tens of seconds.
 const REGENERATE_TIMEOUT_MS = 120_000;
 
+const syncSnapshots = new Map<string, { sn: string; bytes: Buffer }>();
+dashboardRouter.get('/maps/:sn/sync-operation/:id', (req: Request, res: Response) => {
+  const snapshot = syncSnapshots.get(req.params.id);
+  if (!snapshot || snapshot.sn !== req.params.sn) { res.sendStatus(404); return; }
+  res.type('application/zip').send(snapshot.bytes);
+});
+
 async function autoPushMapsInBackground(sn: string): Promise<void> {
-  // Update the on-disk "<SN>_latest.zip" and ping the mower over MQTT — the
-  // mower's extended_commands.py handles the actual pull + install. This path
-  // is SSH-free and works regardless of mower IP/mDNS availability.
-  refreshLatestZip(sn);
-
-  // MQTT kick: extended_commands.py on the mower subscribes to
-  // novabot/extended/<SN> and will pull the new ZIP from our sync-info/sync-zip
-  // endpoints. No SSH, no mower-IP lookup needed.
-  //
-  // WAIT for its answer before regenerating (#118). The mower runs every
-  // extended command in its own thread, so a regenerate sent right behind the
-  // kick listed csv_file/ before sync_map had downloaded and unpacked the new
-  // ZIP: the freshly drawn zone got no map<N>.yaml until the NEXT push, and
-  // starting it failed with error 118 (Petrov's map10, 2026-09-16).
-  // Het dashboard toont elke stap (map_apply_phase): de zone staat al op de
-  // kaart, maar de maaier is pas klaar na deze drie stappen.
-  const apply = beginMapApply(sn);
-  apply.phase('syncing');
-  const sync = await awaitExtended(sn, 'sync_map', {}, SYNC_MAP_TIMEOUT_MS);
-  if (!sync) {
-    console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op sync_map`);
-    apply.fail('sync_timeout');
-    return;
+  // Taking the lease is synchronous, before any awaited work or further edits.
+  let apply: ReturnType<typeof beginMapApply> | undefined;
+  try {
+    await withMowerMapOperation(sn, async operation => {
+      apply = beginMapApply(sn);
+      apply.phase('syncing');
+      const anchor = getPolygonAnchor(sn);
+      if (!isDeviceOnline(sn) || !freshPositionState(sn).docked || isFrameUnvalidated(sn) || !anchor) { apply.fail('sync_failed'); return; }
+      const before = await readMowerMapSnapshot(sn, operation);
+      if (!before || !snapshotAnchorMatches(before, anchor)) { apply.fail('sync_failed'); return; }
+      refreshLatestZip(sn);
+      const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
+      const zipPath = regenerateLatestZipFromBackup(sn);
+      if (!zipPath) { apply.fail('sync_failed'); return; }
+      const bytes = readFileSync(zipPath);
+      const zip = await unzipper.Open.buffer(bytes);
+      const expectedCsv = new Map<string, string>();
+      for (const file of zip.files) if (file.type === 'File' && /^csv_file\/[^/]+$/.test(file.path)) expectedCsv.set(file.path.slice(9), (await file.buffer()).toString('utf8'));
+      if (!expectedCsv.size) { apply.fail('sync_failed'); return; }
+      markFrameUnvalidated(sn); // survives server failure while the device is replacing files
+      syncSnapshots.set(operation.id, { sn, bytes });
+      try {
+        const sync = await operation.command('sync_map', {
+          zip_url: `/api/dashboard/maps/${encodeURIComponent(sn)}/sync-operation/${operation.id}`,
+          expected_md5: crypto.createHash('md5').update(bytes).digest('hex'),
+        }, SYNC_MAP_TIMEOUT_MS);
+        if (!sync || sync.result !== 0) { markFrameUnvalidated(sn); apply.fail(sync ? 'sync_failed' : 'sync_timeout'); return; }
+        apply.phase('regenerating');
+        const regen = await regeneratePerMapFiles(sn, operation);
+        if (regen !== 'ok') { markFrameUnvalidated(sn); apply.fail(regen); return; }
+        apply.phase('settling');
+        if (await waitForPlannerBack(sn) === 'timeout') { apply.fail('planner_timeout'); return; }
+        const after = await readMowerMapSnapshot(sn, operation);
+        const actualCsv = after?.csv_files as Record<string, string> | undefined;
+        if (!after || !actualCsv || !snapshotAnchorMatches(after, anchor) || after.pos_json !== before.pos_json || after.charging_station_yaml !== before.charging_station_yaml || Object.keys(actualCsv).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualCsv[name] !== contents)) { apply.fail('sync_failed'); return; }
+        // This operation did not change the origin or dock pose. A verified
+        // readback permits restoring its pre-operation validated frame state.
+        clearFrameUnvalidated(sn);
+        apply.done();
+      } finally { syncSnapshots.delete(operation.id); }
+    });
+  } catch (error) {
+    console.warn(`[AUTO-PUSH] ${sn}:`, error);
+    // A competing request must not replace the status of the operation owning the lease.
+    if (apply) apply.fail('sync_failed');
   }
-  if (sync.result !== 0) {
-    console.warn(`[AUTO-PUSH] ${sn}: sync_map faalde: ${String(sync.error ?? '')}`);
-    apply.fail('sync_failed');
-    return;
-  }
-  console.log(`[AUTO-PUSH] ${sn}: sync_map ok${sync.unchanged ? ' (unchanged)' : ''}`);
-
-  // The CSVs alone are not enough: the mower plans coverage on per-slot
-  // occupancy grids, and those are only written by regenerate_per_map_files.
-  // Without this step a freshly drawn area has no grid at all (error 107), and
-  // an area beyond the scanned terrain has no free cells in the shared raster
-  // (error 125) until that handler grows it. Both needed a manual command
-  // before, so every dashboard-drawn zone looked broken.
-  apply.phase('regenerating');
-  const regen = await regeneratePerMapFiles(sn);
-  if (regen !== 'ok') { apply.fail(regen); return; }
-
-  // sync_map herstart novabot_mapping en de coverage planner; tot die terug
-  // zijn meldt robot_decision Error 140 en kan er niet gemaaid worden.
-  apply.phase('settling');
-  if (await waitForPlannerBack(sn) === 'timeout') {
-    console.warn(`[AUTO-PUSH] ${sn}: planner na de push nog niet terug (Error 140 blijft)`);
-  }
-  apply.done();
 }
 
 // The mower downloads the ZIP, unpacks it and restarts its mapping node.
 const SYNC_MAP_TIMEOUT_MS = 120_000;
 
-/** Send one extended command and resolve with its `<cmd>_respond`, or null on timeout. */
-async function awaitExtended(
-  sn: string, cmd: string, params: Record<string, unknown>, timeoutMs: number,
-): Promise<Record<string, unknown> | null> {
-  const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
-  return new Promise((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const respond = data[`${cmd}_respond`] as Record<string, unknown> | undefined;
-      if (!respond || settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve(respond);
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { [cmd]: params });
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve(null);
-    }, timeoutMs);
-  });
-}
-
 /**
  * Ask the mower to rebuild its per-slot grids after a map push, and wait for
  * the answer so the log tells us whether the shared raster had to grow.
  */
-async function regeneratePerMapFiles(sn: string): Promise<'ok' | 'regenerate_timeout' | 'regenerate_failed'> {
+async function regeneratePerMapFiles(sn: string, operation: MowerMapOperation): Promise<'ok' | 'regenerate_timeout' | 'regenerate_failed'> {
   try {
-    const result = await awaitExtended(sn, 'regenerate_per_map_files', {}, REGENERATE_TIMEOUT_MS);
+    const result = await operation.command('regenerate_per_map_files', {}, REGENERATE_TIMEOUT_MS);
     if (!result) {
       console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op regenerate_per_map_files`);
       return 'regenerate_timeout';
@@ -3295,535 +3318,132 @@ dashboardRouter.get('/demo/:sn', (req: Request, res: Response) => {
 
 // ── MQTT command publishing ─────────────────────────────────────
 
-// POST /api/dashboard/command/:sn — stuur een MQTT commando naar een apparaat
-// POST /api/dashboard/reanchor/:sn  body: { action?: 'auto' | 'verify' | 'drive' | 'spin' | 'dock' }
-// Post-restore re-anchor. After a bundle import the saved map frame no longer
-// agrees with the live UTM frame, so frame_unvalidated is set and nav is blocked
-// until the frame is re-anchored on the dock.
-//
-// 'auto' (the wizard's one-button path) orchestrates the whole sequence on the
-// server and reports progress via GET /reanchor/:sn/status:
-//   1. precheck      — mower must be on the dock (charging) AND on a real RTK Fixed
-//   2. reanchor_pos  — write /userdata/pos.json origin = the docked Fixed GPS
-//                      (precise WGS84->UTM, no lock) + /load_utm_origin_info live
-//                      (no localization restart). Sent over the extended channel.
-//   3. relock        — drive ~1m straight back so localization re-inits and
-//                      re-locks against the freshly loaded origin
-//   4. wait re-lock  — poll until localization RUNNING + RTK Fixed
-//   5. dock          — auto_recharge (visual ArUco dock, no map-frame guide pose)
-//   6. verify        — the docked map_position must land within ~0.4 m of the
-//                      origin; only then is frame_unvalidated cleared. Otherwise
-//                      the flag stays set and the wizard offers the manual backup.
-//
-// Manual backup (when re-lock or docking times out): the app keeps the joystick
-// available, and 'verify' re-runs step 6 alone after the operator has joysticked
-// the mower back onto the dock — clearing the flag only if it lands on the origin.
-//
-// Why this works (Ghidra + live-verified, see
-// research/documents/reanchor-polygon-charging-pose-diagnosis.md): localization is
-// GPS/RTK only (no ArUco input). reanchor_pos sets the origin to the dock's GPS,
-// /load_utm_origin_info makes it authoritative, and the drive-off + wait-for-Fixed
-// makes localization re-lock against it, so the docked position matches the
-// canonical charger pose. We deliberately do NOT recalibrate the charging_pose
-// from the live docked position (that bakes a wrong pose in when the frame is bad,
-// e.g. RTK Float while charging), and do NOT use go_to_charge (it GPS-navigates to
-// where the still-unvalidated frame *thinks* the charger is). The legacy
-// 'drive' / 'spin' / 'dock' single-step actions remain for diagnostics.
-// Movement uses the exact joystick mst List format [x_w*100, y_v*100, 8]
-// (x_w angular, y_v linear) + start_move keepalive.
-
-// ── auto re-anchor progress (polled by the wizard) ──────────────
-type ReanchorPhase = 'idle' | 'check' | 'anchor' | 'relock' | 'wait' | 'needs_drive' | 'needs_position' | 'dock' | 'verify' | 'done' | 'error';
-// `message` is stored as a Msg and rendered in the reader's language by
-// GET /reanchor/:sn/status (the dashboard + apps that predate msgKey show it
-// as-is). `msgKey` is a stable i18n key the app translates (en/nl/de/fr),
-// interpolated with pose ({{x}},{{y}}) and dist ({{dist}}).
+// Herankeren verandert uitsluitend de GPS-oorsprong. Het dockanker en de
+// polygonen blijven vast. Alle beweging doet de aanwezige operator per joystick.
+type ReanchorPhase = 'idle' | 'check' | 'anchor' | 'needs_drive' | 'needs_position' | 'verify' | 'done' | 'error';
 interface ReanchorStat { phase: ReanchorPhase; message: Msg; msgKey?: string; ok?: boolean; error?: string; pose?: { x: number; y: number }; dist?: number; ts: number; }
 const reanchorStatus = new Map<string, ReanchorStat>();
-// The "has re-locked since the re-anchor began" lifecycle latch lives in
-// frameValidation (persisted, shared) via setReanchorRelocked / isReanchorRelocked.
+const reanchorCycles = new Map<string, { anchor: { x: number; y: number }; loadedAt: number; relockedAt: number; verify: boolean }>();
 function setReanchor(sn: string, phase: ReanchorPhase, message: Msg, extra: Partial<ReanchorStat> = {}): void {
   reanchorStatus.set(sn, { phase, message, ts: Date.now(), ...extra });
-  console.log(`[reanchor-auto] ${sn}: [${phase}] ${renderMsg('nl', message)}${extra.error ? ` (err=${extra.error})` : ''}`);
 }
+const reanchorOnDock = (sn: string) => freshPositionState(sn).docked;
+const reanchorRtkFixed = (sn: string) => freshPositionState(sn).fixed;
+const reanchorSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-// Live readers off the device cache used by both the auto flow and verify.
-// "Currently physically on the dock." battery_state === 'FULL' is intentionally
-// NOT accepted here: a full battery keeps reporting FULL for a while after the
-// mower undocks, which would let the verify / retry-auto gates fire while the
-// mower is off the dock (it then writes pos.json or verifies against a stale
-// frame from the wrong place). recharge_status 9 (docked / charging finished)
-// and battery CHARGING only hold while the mower is actually on the dock.
-function reanchorOnDock(sn: string): boolean {
-  const s = deviceCache.get(sn);
-  const b = (s?.get('battery_state') ?? '').toUpperCase();
-  const r = String(s?.get('recharge_status') ?? '');
-  return b === 'CHARGING' || r === '9' || r === '1' || r.startsWith('Charging');
-}
-function reanchorRtkFixed(sn: string): boolean {
-  const s = deviceCache.get(sn);
-  const fq = s?.get('rtk_fix_quality');
-  const rtk = s?.get('rtk');
-  // deviceCache stores the RAW relay value: the GGA quality code (4 = RTK
-  // Fixed, 5 = RTK Float), not the display label. translateValue maps it to
-  // the same 'RTK Fixed' string the app shows, so compare on the translated
-  // value (translateValue is a passthrough if it's already a label). Mowers
-  // without the LoRa relay only expose the rtk bool, so accept that as fallback.
-  if (fq != null && fq !== '') return translateValue('rtk_fix_quality', fq) === 'RTK Fixed';
-  return rtk === 'true';
-}
-function reanchorMapPos(sn: string): { x: number; y: number } {
-  const s = deviceCache.get(sn);
-  return { x: parseFloat(s?.get('map_position_x') ?? 'NaN'), y: parseFloat(s?.get('map_position_y') ?? 'NaN') };
-}
-const REANCHOR_TOLERANCE_M = FRAME_TOLERANCE_M; // docked map_position must land this close to the dock anchor
-// Stability gate: the origin GPS must SETTLE before we anchor on it. A single
-// instantaneous reading can be mid-wander, which puts the dock in the wrong
-// place. We require a window of consecutive Fixed readings that agree within the
-// spread threshold and anchor on their median; if it never settles we refuse
-// (clear error) rather than anchor on a wandering fix.
-const REANCHOR_STABLE_SPREAD_M = 0.10;     // window must agree within this (m)
-const REANCHOR_STABLE_WINDOW = 8;          // consecutive Fixed samples that must agree
-const REANCHOR_STABLE_TIMEOUT_MS = 30000;  // give up waiting for a stable fix
-const REANCHOR_STABLE_STEP_MS = 1000;      // sample cadence
-const REANCHOR_ANCHOR_RETRIES = 3;         // resend reanchor_pos on a failed/timed-out load
-
-// Self-verify the docked frame: if map_position is within tolerance of the DOCK
-// ANCHOR (first point of map0tocharge_unicom — the charger's position in the
-// polygon frame), clear frame_unvalidated; otherwise leave it set.
-//
-// NOT (0,0): reanchor_pos subtracts the anchor from the origin so a docked
-// mower lands ON the anchor. Measuring against (0,0) rejected every correctly
-// anchored frame whose anchor is >0.4m from origin — including the known-good
-// LFIN1231000211 (anchor (0.13,-0.52), docked (0.09,-0.51) = 4cm from anchor
-// but 0.52m from origin).
-function reanchorVerifyAndClear(sn: string): { ok: boolean; pose: { x: number; y: number }; dist: number } {
-  const pose = reanchorMapPos(sn);
-  const anchor = getPolygonAnchor(sn, deviceCache.get(sn));
-  const dist = Math.hypot(pose.x - (anchor?.x ?? 0), pose.y - (anchor?.y ?? 0));
-  const ok = Number.isFinite(dist) && dist <= REANCHOR_TOLERANCE_M;
-  if (ok) clearFrameUnvalidated(sn);
-  return { ok, pose, dist };
-}
-
-// Wait for the docked RTK to SETTLE, then return the median lat/lng of a stable
-// window to anchor on. Returns an error instead when the fix never settles
-// within the timeout (anchoring on a wandering RTK is what puts the dock in the
-// wrong place). The window resets whenever the fix drops or leaves Fixed, so we
-// never average across a gap. Emits live 'anchor' progress with the live spread.
-async function reanchorStableGps(
-  sn: string,
-  sleep: (ms: number) => Promise<unknown>,
-): Promise<LatLng | { error: 'no_gps' | 'unstable'; spread: number }> {
-  const win: LatLng[] = [];
-  const t0 = Date.now();
-  let sawGps = false;
-  let lastSpread = NaN;
-  while (Date.now() - t0 < REANCHOR_STABLE_TIMEOUT_MS) {
-    const s = deviceCache.get(sn);
-    const lat = parseFloat(s?.get('latitude') ?? s?.get('gps_latitude') ?? 'NaN');
-    const lng = parseFloat(s?.get('longitude') ?? s?.get('gps_longitude') ?? 'NaN');
-    if (Number.isFinite(lat) && Number.isFinite(lng) && reanchorRtkFixed(sn)) {
-      sawGps = true;
-      win.push({ lat, lng });
-      if (win.length > REANCHOR_STABLE_WINDOW) win.shift();
-      if (win.length === REANCHOR_STABLE_WINDOW) {
-        lastSpread = gpsSpreadMeters(win);
-        setReanchor(sn, 'anchor', M`Stabiliteit controleren op de dock (±${(lastSpread * 100).toFixed(0)} cm)...`, { msgKey: 'reanchorMsgStability', dist: lastSpread });
-        if (lastSpread <= REANCHOR_STABLE_SPREAD_M) return medianGps(win);
-      } else {
-        setReanchor(sn, 'anchor', M`Stabiliteit controleren op de dock...`, { msgKey: 'reanchorMsgStability' });
-      }
-    } else {
-      win.length = 0; // fix dropped or not Fixed — don't average across the gap
-    }
-    await sleep(REANCHOR_STABLE_STEP_MS);
+async function reanchorStableGps(sn: string): Promise<LatLng | null> {
+  const started = Date.now();
+  while (Date.now() - started < 90_000) {
+    const state = freshPositionState(sn);
+    if (!state.docked || !state.fixed || !isDeviceOnline(sn)) return null;
+    const samples = (positionTelemetry(sn)?.gps ?? []).filter(p => p.at > started).slice(-8);
+    if (samples.length === 8 && samples.every((p, i) => p.fixed && p.docked && (!i || (p.at > samples[i - 1].at && p.at - samples[i - 1].at <= POSITION_MAX_AGE_MS))) && Date.now() - samples[7].at <= POSITION_MAX_AGE_MS && gpsSpreadMeters(samples) <= 0.10) return medianGps(samples);
+    await reanchorSleep(500);
   }
-  if (!sawGps) return { error: 'no_gps', spread: NaN };
-  return { error: 'unstable', spread: Number.isFinite(lastSpread) ? lastSpread : NaN };
+  return null;
 }
 
-// Full server-side orchestration for action:'auto'. Fire-and-forget; the wizard
-// polls GET /reanchor/:sn/status. Each phase updates reanchorStatus.
 async function runAutoReanchor(sn: string): Promise<void> {
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  const poll = async (cond: () => boolean, timeoutMs: number, stepMs = 2000): Promise<boolean> => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeoutMs) { if (cond()) return true; await sleep(stepMs); }
-    return cond();
-  };
   try {
-    // 1. precheck — on the dock + a real RTK Fixed
-    setReanchor(sn, 'check', M`Controle: maaier op de dock en RTK Fixed?`, { msgKey: 'reanchorMsgCheck' });
-    if (!reanchorOnDock(sn)) {
-      setReanchor(sn, 'error', M`Maaier staat niet op de dock (laden). Dok hem eerst, dan opnieuw.`, { error: 'not_docked', msgKey: 'reanchorMsgErrNotDocked' });
-      return;
-    }
-    if (!reanchorRtkFixed(sn)) {
-      setReanchor(sn, 'error', M`Nog geen RTK Fixed. Wacht tot de fix Fixed is en probeer opnieuw.`, { error: 'not_fixed', msgKey: 'reanchorMsgErrNotFixed' });
-      return;
-    }
-
-    // A fresh re-anchor write invalidates any prior relock: verify must wait for
-    // the new origin to be re-locked (off-dock -> RUNNING + Fixed -> re-docked).
+    await withMowerMapOperation(sn, async operation => {
+      setReanchorRelocked(sn, false);
+      const anchor = getPolygonAnchor(sn);
+      if (!anchor) throw new Error('Dockanker ontbreekt of dockkanalen spreken elkaar tegen.');
+      const snapshot = await readMowerMapSnapshot(sn, operation);
+      if (!snapshot || !snapshotAnchorMatches(snapshot, anchor)) throw new Error('De dockankers in server, kanalen en maaierbestanden spreken elkaar tegen. Eerst onderzoeken; niets gewijzigd.');
+      const cycle = { anchor: { x: anchor.x, y: anchor.y }, loadedAt: 0, relockedAt: 0, verify: false };
+      reanchorCycles.set(sn, cycle);
+      setReanchor(sn, 'anchor', M`Wachten op acht verse, stabiele Fixed-metingen op het dock.`);
+      const gps = await reanchorStableGps(sn);
+      if (!gps) throw new Error('Geen acht verse, stabiele Fixed-metingen op het dock ontvangen.');
+      const currentAnchor = getPolygonAnchor(sn);
+      if (!currentAnchor || Math.hypot(currentAnchor.x - anchor.x, currentAnchor.y - anchor.y) > 0.001) throw new Error('Dockanker gewijzigd tijdens de procedure.');
+      // Exactly one write request. The firmware owns its bounded ROS reload retries.
+      const response = await operation.command('reanchor_pos', { ...gps, anchor_x: anchor.x, anchor_y: anchor.y }, 70_000);
+      const expected = generatePosJson(gps, anchor).utm_origin;
+      const actual = response?.utm_origin as { x?: number; y?: number; utm_zone?: number } | undefined;
+      const echoed = response?.anchor as { x?: number; y?: number } | undefined;
+      if (response?.result !== 0 || !actual || actual.utm_zone !== expected.utm_zone || !Number.isFinite(actual.x) || !Number.isFinite(actual.y) || Math.hypot(actual.x! - expected.x, actual.y! - expected.y) > 0.02 || echoed?.x !== anchor.x || echoed?.y !== anchor.y) {
+        throw new Error('Oorsprong niet aantoonbaar geladen. Uitkomst onzeker; frame blijft geblokkeerd.');
+      }
+      cycle.loadedAt = Date.now();
+      setReanchor(sn, 'needs_drive', M`Rij onder toezicht met de joystick ongeveer één meter van het dock. Wacht op verse RUNNING + RTK Fixed.`);
+      const deadline = Date.now() + 5 * 60_000;
+      while (Date.now() < deadline) {
+        if (!isDeviceOnline(sn)) throw new Error('Verbinding met de maaier verloren. Start de procedure opnieuw.');
+        const current = getPolygonAnchor(sn);
+        if (!current || Math.hypot(current.x - anchor.x, current.y - anchor.y) > 0.001) throw new Error('Dockanker gewijzigd tijdens de procedure.');
+        const state = freshPositionState(sn);
+        if (!cycle.relockedAt && state.dockKnown && !state.docked && state.fixed && state.running && state.pose && state.pose.at > cycle.loadedAt && state.pose.fixed && state.pose.running && !state.pose.docked && Math.hypot(state.pose.x - anchor.x, state.pose.y - anchor.y) >= 0.4) {
+          cycle.relockedAt = state.pose.at;
+          setReanchorRelocked(sn, true);
+          setReanchor(sn, 'needs_position', M`Lokalisatie hersteld. Rij met de joystick terug op het dock en druk op Verifieer.`);
+        }
+        if (cycle.verify && cycle.relockedAt) {
+          cycle.verify = false;
+          setReanchor(sn, 'verify', M`Acht verse dockmetingen en de geladen oorsprong controleren.`);
+          const started = Date.now();
+          let sample = null as ReturnType<typeof stablePosition>;
+          while (Date.now() - started < 90_000) {
+            if (!isDeviceOnline(sn)) break;
+            sample = stablePosition(sn, { after: started, docked: true, maxSpread: 0.10 });
+            if (sample) break;
+            await reanchorSleep(500);
+          }
+          if (!sample) throw new Error('Geen acht verse, stabiele RUNNING + Fixed-dockmetingen ontvangen.');
+          const after = await readMowerMapSnapshot(sn, operation);
+          let origin: { x?: number; y?: number; utm_zone?: number } | undefined;
+          try { origin = JSON.parse(String(after?.pos_json)).utm_origin; } catch { /* rejected below */ }
+          if (!after || !snapshotAnchorMatches(after, anchor) || origin?.utm_zone !== expected.utm_zone || !Number.isFinite(origin?.x) || !Number.isFinite(origin?.y) || Math.hypot(origin!.x! - expected.x, origin!.y! - expected.y) > 0.02) throw new Error('Dockanker of oorsprong gewijzigd na het herankeren.');
+          const stillFresh = freshPositionState(sn);
+          const dist = Math.hypot(sample.x - anchor.x, sample.y - anchor.y);
+          if (!stillFresh.docked || !stillFresh.fixed || !stillFresh.running || !stillFresh.pose || stillFresh.pose.at < sample.sampledAt || Math.hypot(stillFresh.pose.x - anchor.x, stillFresh.pose.y - anchor.y) > FRAME_TOLERANCE_M || dist > FRAME_TOLERANCE_M) throw new Error('Gedockte positie wijkt meer dan 0,4 m af of meetkwaliteit is verloren.');
+          clearFrameUnvalidated(sn);
+          setReanchor(sn, 'done', M`Frame gecontroleerd: ${dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: sample, dist });
+          return;
+        }
+        await reanchorSleep(500);
+      }
+      throw new Error('Procedure verlopen. Het frame blijft geblokkeerd; start opnieuw op het dock.');
+    });
+  } catch (error) {
+    setReanchor(sn, 'error', M`${error instanceof Error ? error.message : String(error)}`, { error: 'reanchor_failed', ok: false });
+  } finally {
+    reanchorCycles.delete(sn);
     setReanchorRelocked(sn, false);
-
-    // 2. reanchor_pos — origin = the docked Fixed GPS, loaded live (no restart).
-    // First WAIT for the RTK to settle (a single reading can be mid-wander), then
-    // anchor on the median of a stable window. The live RTK position is cached
-    // under 'latitude'/'longitude' (from the mower's location report); the
-    // mower-side reanchor_pos converts the WGS84 origin to UTM.
-    setReanchor(sn, 'anchor', M`Stabiliteit controleren op de dock...`, { msgKey: 'reanchorMsgStability' });
-    const stable = await reanchorStableGps(sn, sleep);
-    if ('error' in stable) {
-      if (stable.error === 'no_gps') {
-        setReanchor(sn, 'error', M`Geen geldige GPS-coordinaten van de maaier.`, { error: 'no_gps', msgKey: 'reanchorMsgErrNoGps' });
-      } else {
-        const cm = Number.isFinite(stable.spread) ? (stable.spread * 100).toFixed(0) : '?';
-        setReanchor(sn, 'error', M`RTK te onrustig op de dock (zwabbert ±${cm} cm). Wacht op een rustige Fixed en probeer opnieuw.`, { error: 'rtk_unstable', dist: stable.spread, msgKey: 'reanchorMsgErrUnstable' });
-      }
-      return;
-    }
-    const { lat, lng } = stable;
-    setReanchor(sn, 'anchor', M`Dockpositie opslaan...`, { msgKey: 'reanchorMsgAnchor' });
-    const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
-    // Resend on a failed/timed-out load: pos.json is (re)written each attempt with
-    // the SAME stable origin, only the load_utm_origin_info reload is flaky. The
-    // mower retries that ROS call itself too; this is the outer safety net.
-    let anchored = false;
-    for (let attempt = 1; attempt <= REANCHOR_ANCHOR_RETRIES && !anchored; attempt++) {
-      anchored = await new Promise<boolean>((resolve) => {
-        let settled = false;
-        const handler = (data: Record<string, unknown>): void => {
-          const resp = data.reanchor_pos_respond as { result?: number } | undefined;
-          if (!resp || settled) return;
-          settled = true;
-          offExtendedResponse(sn, handler);
-          resolve(resp.result === 0);
-        };
-        onExtendedResponse(sn, handler);
-        publishToExtended(sn, { reanchor_pos: { lat, lng } });
-        setTimeout(() => { if (!settled) { settled = true; offExtendedResponse(sn, handler); resolve(false); } }, 15000);
-      });
-      if (!anchored && attempt < REANCHOR_ANCHOR_RETRIES) {
-        setReanchor(sn, 'anchor', M`Dockpositie opslaan (poging ${attempt + 1})...`, { msgKey: 'reanchorMsgAnchor' });
-        await sleep(2000);
-      }
-    }
-    if (!anchored) {
-      setReanchor(sn, 'error', M`De maaier bevestigde de nieuwe dockpositie niet op tijd. Probeer opnieuw.`, { error: 'reanchor_failed', msgKey: 'reanchorMsgErrAnchorFailed' });
-      return;
-    }
-
-    // 3-4. relock — drive off the dock, then wait for the localization to reach
-    // RUNNING + Fixed. A single ~1m straight drive usually gives the GPS-track
-    // heading the localization needs, but live testing showed 1m is sometimes not
-    // enough (localization stays "Not initialized"). The 360-spin escalation was
-    // unreliable (the mower never completed the turn), so instead we ASK the user
-    // to nudge the mower ~1m further straight back with the joystick while we keep
-    // polling, and continue automatically the moment it locks. Each poll re-checks
-    // so we stop as soon as RUNNING + Fixed is reached.
-    const relockOk = () =>
-      (deviceCache.get(sn)?.get('localization_state') ?? '') === 'RUNNING' && reanchorRtkFixed(sn);
-    const pollRelock = (ms: number) => poll(relockOk, ms, 1500);
-    // Drive straight back. untilOffDock: stop as soon as the mower leaves the
-    // dock (first leg ≈ 1m); otherwise drive the full window (the extra leg).
-    const driveBack = async (ms: number, untilOffDock: boolean): Promise<void> => {
-      publishToDevice(sn, { start_move: 4 });
-      await sleep(300);
-      const t0 = Date.now();
-      let tick = 0;
-      while (Date.now() - t0 < ms) {
-        publishToDevice(sn, { mst: [0, -50, 8] }); // x_w=0 (straight), y_v=-0.50 (backward)
-        tick++;
-        if (tick % 5 === 0) publishToDevice(sn, { start_move: 4 });
-        await sleep(150);
-        if (untilOffDock && Date.now() - t0 > 4000 && !reanchorOnDock(sn)) break;
-      }
-      publishToDevice(sn, { stop_move: null });
-    };
-
-    setReanchor(sn, 'relock', M`Achteruit rijden om te re-locken...`, { msgKey: 'reanchorMsgRelockBack' });
-    publishToDevice(sn, { quit_mapping_mode: { value: 1, cmd_num: getNextCmdNum(sn) } });
-    await sleep(500);
-    await driveBack(12000, true);
-
-    setReanchor(sn, 'wait', M`Wachten op re-lock (RUNNING + Fixed)...`, { msgKey: 'reanchorMsgWaitRelock' });
-    let isRelocked = await pollRelock(15000);
-    if (!isRelocked) {
-      // Not locked after the auto drive-back. Hand control to the user: ask them
-      // to drive ~1m further straight back with the joystick. Keep polling for a
-      // long window and continue automatically as soon as the localization locks.
-      setReanchor(sn, 'needs_drive', M`Nog niet gelockt. Rij met de joystick nog ~1 m recht achteruit; ik ga automatisch verder zodra de localisatie lockt.`, { msgKey: 'reanchorMsgNeedsDrive' });
-      isRelocked = await pollRelock(90000);
-    }
-    if (!isRelocked) {
-      setReanchor(sn, 'error', M`Nog steeds geen lock na extra achteruit rijden. Rij handmatig met de joystick terug naar de dock en start de automatische re-anchor opnieuw.`, { error: 'relock_timeout', msgKey: 'reanchorMsgErrRelockTimeout' });
-      return;
-    }
-    // Relock confirmed: the mower left the dock and reached RUNNING + Fixed, so the
-    // new origin is now the live localization frame. Verify becomes meaningful once
-    // it is re-docked.
-    setReanchorRelocked(sn, true);
-
-    // 4b. needs_position — PAUSE the auto flow. The visual ArUco dock only homes
-    // in reliably from close range, straight in front of the dock; auto-docking
-    // from wherever the mower ended up after the drive-back never succeeds. So we
-    // hand control to the user: drive the mower to ~50 cm directly in front of the
-    // dock, then press "Start docken" (POST action:'continue_dock' -> runReanchorDock
-    // below). We do NOT auto-attempt the dock here.
-    setReanchor(sn, 'needs_position', M`Re-lock gelukt. Rij de maaier nu zelf recht voor de dock, op ~50 cm afstand. Druk daarna op "Start docken".`, { msgKey: 'reanchorMsgNeedsPosition' });
-  } catch (err) {
-    setReanchor(sn, 'error', M`Onverwachte fout: ${err instanceof Error ? err.message : String(err)}`, { error: 'exception', msgKey: 'reanchorMsgErrException' });
   }
 }
 
-// Dock + self-verify continuation of the auto re-anchor. Triggered by POST
-// action:'continue_dock' once the user has manually positioned the mower ~50 cm
-// straight in front of the dock (the visual ArUco dock only homes in from close
-// range, so the auto flow does NOT attempt this by itself).
-async function runReanchorDock(sn: string): Promise<void> {
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  const poll = async (cond: () => boolean, timeoutMs: number, stepMs = 2000): Promise<boolean> => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeoutMs) { if (cond()) return true; await sleep(stepMs); }
-    return cond();
-  };
-  try {
-    // 5. dock — visual ArUco dock (no map-frame guide pose). suppressReanchorArm:
-    // the passive docked-report clear must not fire here — step 6's self-verify
-    // (docked map_position must land on the origin) is the sole authority.
-    setReanchor(sn, 'dock', M`Docken (visuele ArUco)...`, { msgKey: 'reanchorMsgDock' });
-    publishToDevice(sn, { quit_mapping_mode: { value: 1, cmd_num: getNextCmdNum(sn) } });
-    await sleep(500);
-    // Record the charge pose FIRST, exactly like the Novabot app's post-mapping
-    // dock (build_map_page/logic.dart _saveChargePosition -> save_recharge_pos,
-    // sent right before the <0.5 m auto_recharge). Without it the docker logs
-    // "No charge pose set" and falls back to a COLD visual search (step back +
-    // rotate to find the marker), which fails at ~0.5 m. With the pose set it does
-    // the short guided forward dock instead. The mower is <0.5 m in front of the
-    // dock and the frame is relocked, so the recorded pose is correct — same
-    // precondition as the mapping flow. awaitCommand sends save_recharge_pos and
-    // resolves on save_recharge_pos_respond (20 s, matching the app's timeout).
-    const { awaitCommand } = await import('../mqtt/mapSync.js');
-    try {
-      await awaitCommand(sn, 'save_recharge_pos', { mapName: 'map0', map0: '', cmd_num: getNextCmdNum(sn) }, 20000);
-      console.log(`[reanchor] ${sn}: save_recharge_pos acknowledged (charge pose set)`);
-    } catch (e) {
-      // Respond missed/late — proceed anyway; the pose may still have been set.
-      console.warn(`[reanchor] ${sn}: save_recharge_pos respond timeout (${e instanceof Error ? e.message : String(e)}); docking anyway`);
-    }
-    await sleep(1000); // let the charge pose settle before docking
-    publishToDevice(sn, { auto_recharge: { cmd_num: getNextCmdNum(sn) } }, { suppressReanchorArm: true });
-    const docked = await poll(() => reanchorOnDock(sn), 150000, 3000);
-    if (!docked) {
-      setReanchor(sn, 'error', M`Docken duurde te lang. Dok handmatig met de joystick en druk Verifieer.`, { error: 'dock_timeout', msgKey: 'reanchorMsgErrDockTimeout' });
-      return;
-    }
-
-    // 6. verify — docked map_position must land on the origin, else keep the flag
-    await sleep(4000); // let map_position settle after docking
-    setReanchor(sn, 'verify', M`Controle: gedockt op de origin?`, { msgKey: 'reanchorMsgVerify' });
-    const v = reanchorVerifyAndClear(sn); // clears frame_unvalidated + relock latch on ok
-    if (v.ok) {
-      setReanchor(sn, 'done', M`Geslaagd. Gedockt op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m.`, { ok: true, pose: v.pose, msgKey: 'reanchorMsgDone' });
-    } else {
-      setReanchor(sn, 'error', M`Buiten tolerantie: dock op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m, ${Number.isFinite(v.dist) ? v.dist.toFixed(2) : '?'} m van origin. Probeer opnieuw.`, { error: 'verify_failed', pose: v.pose, dist: v.dist, msgKey: 'reanchorMsgErrVerifyFailed' });
-    }
-  } catch (err) {
-    setReanchor(sn, 'error', M`Onverwachte fout: ${err instanceof Error ? err.message : String(err)}`, { error: 'exception', msgKey: 'reanchorMsgErrException' });
-  }
-}
-
-// GET /api/dashboard/reanchor/:sn/status — auto re-anchor progress for the wizard.
-// Augmented with LIVE gating booleans the app uses to enable/disable buttons:
-//   onDock   — mower physically on the dock right now (strict, no battery-FULL)
-//   rtkFixed — real RTK Fixed right now
-//   relocked — has completed off-dock -> RUNNING+Fixed since the re-anchor began
-// (verify requires relocked && onDock; retry-auto requires onDock && rtkFixed).
 dashboardRouter.get('/reanchor/:sn/status', (req: Request, res: Response) => {
   const { sn } = req.params;
   const stored = reanchorStatus.get(sn);
-  res.json({
-    ok: true,
-    status: {
-      ...(stored ?? { phase: 'idle' as ReanchorPhase, ts: 0 }),
-      message: stored ? renderMsg(langOf(req), stored.message) : '',
-      onDock: reanchorOnDock(sn),
-      rtkFixed: reanchorRtkFixed(sn),
-      relocked: isReanchorRelocked(sn),
-    },
-  });
+  res.json({ ok: true, status: { ...(stored ?? { phase: 'idle', ts: 0 }), message: stored ? renderMsg(langOf(req), stored.message) : '', onDock: reanchorOnDock(sn), rtkFixed: reanchorRtkFixed(sn), relocked: !!reanchorCycles.get(sn)?.relockedAt } });
 });
 
 dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
-  const T = reqT(req);
   const { sn } = req.params;
-  const action = ((req.body as { action?: string })?.action) ?? 'auto';
+  const action = req.body?.action ?? 'auto';
   if (rejectUnlessOpenNova(sn, req, res, M`Her-ankeren`)) return;
-
-  // 'invalidate' — operator-triggered frame invalidation. Marks the frame
-  // unvalidated IN-PROCESS (no DB write + restart needed) so the app's re-anchor
-  // wizard opens and a fresh re-anchor can run. Intentionally works regardless
-  // of the current flag: the whole point is to let the user re-invalidate and
-  // redo the re-anchor when the previous one didn't hold. Must run BEFORE the
-  // "already validated" guard below.
-  if (action === 'invalidate') {
-    markFrameUnvalidated(sn);
-    console.log(`[reanchor] ${sn}: frame marked unvalidated by operator (manual invalidate)`);
-    res.json({ ok: true, action, message: 'frame marked unvalidated — open the re-anchor wizard' });
-    return;
+  if (['drive', 'spin', 'dock'].includes(action)) {
+    res.status(410).json({ ok: false, error: 'Gebruik de begeleide herankerprocedure.' }); return;
   }
-
-  if (!isFrameUnvalidated(sn)) {
-    res.status(409).json({ ok: false, error: T`Het frame is al gevalideerd; her-ankeren is niet nodig` });
-    return;
-  }
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  // Strict, shared "on the dock now" — battery FULL alone does NOT count (it
-  // lingers after undocking). Same rule used by the auto flow and verify gate.
-  const onDock = () => reanchorOnDock(sn);
-
-  // 'auto' — the wizard's one-button path. Fire-and-forget; the wizard polls
-  // GET /reanchor/:sn/status for progress (see runAutoReanchor above).
-  if (action === 'auto') {
-    if (!onDock()) {
-      res.status(409).json({ ok: false, error: T`Automatisch her-ankeren moet beginnen met de maaier op het dock (laden).` });
-      return;
+  if (action === 'verify' || action === 'continue_dock') {
+    const cycle = reanchorCycles.get(sn);
+    if (!cycle?.relockedAt || cycle.verify || reanchorStatus.get(sn)?.phase !== 'needs_position' || !reanchorOnDock(sn) || !reanchorRtkFixed(sn)) {
+      res.status(409).json({ ok: false, error: 'Eerst binnen deze herankercyclus uitrijden, opnieuw lokaliseren en terugkeren op het dock met Fixed.' }); return;
     }
-    if (!reanchorRtkFixed(sn)) {
-      res.status(409).json({ ok: false, error: T`Automatisch her-ankeren vereist een echte RTK Fixed; wacht tot de fix Fixed is.` });
-      return;
-    }
-    setReanchor(sn, 'check', M`Re-anchor gestart...`, { msgKey: 'reanchorMsgStarted' });
-    res.json({ ok: true, action, message: 'auto re-anchor started; poll GET /reanchor/:sn/status' });
-    void runAutoReanchor(sn);
-    return;
+    cycle.verify = true;
+    res.json({ ok: true, action }); return;
   }
-
-  // 'verify' — manual backup. After the operator joysticks the mower back onto
-  // the dock, re-run the docked-on-origin check alone and clear the flag if it
-  // passes. Does not move the mower.
-  // Gated on the lifecycle: verify is only meaningful once the mower has left the
-  // dock, re-locked (RUNNING + RTK Fixed) against the new origin, AND is back on
-  // the dock. Verifying before the relock tests a stale frame; verifying off-dock
-  // checks the wrong position entirely.
-  if (action === 'verify') {
-    if (!isReanchorRelocked(sn)) {
-      res.status(409).json({ ok: false, error: T`Verifiëren vereist eerst de her-ankercyclus: de maaier moet het dock hebben verlaten, RUNNING + RTK Fixed hebben bereikt en daarna opnieuw gedockt zijn.` });
-      return;
-    }
-    if (!onDock()) {
-      res.status(409).json({ ok: false, error: T`Verifiëren moet gebeuren met de maaier terug op het dock.` });
-      return;
-    }
-    res.json({ ok: true, action, message: 'verifying docked position against origin' });
-    (async () => {
-      setReanchor(sn, 'verify', M`Controle: gedockt op de origin?`, { msgKey: 'reanchorMsgVerify' });
-      if (!onDock()) {
-        setReanchor(sn, 'error', M`Maaier staat niet op de dock. Dok hem eerst.`, { error: 'not_docked', msgKey: 'reanchorMsgErrNotDocked' });
-        return;
-      }
-      await sleep(3000); // let map_position settle
-      const v = reanchorVerifyAndClear(sn);
-      if (v.ok) {
-        setReanchor(sn, 'done', M`Geslaagd. Gedockt op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m.`, { ok: true, pose: v.pose, msgKey: 'reanchorMsgDone' });
-      } else {
-        setReanchor(sn, 'error', M`Buiten tolerantie: dock op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m, ${Number.isFinite(v.dist) ? v.dist.toFixed(2) : '?'} m van origin.`, { error: 'verify_failed', pose: v.pose, dist: v.dist, msgKey: 'reanchorMsgErrVerifyFailed' });
-      }
-    })();
-    return;
+  if (isMowerMapOperationBusy(sn)) { res.status(409).json({ ok: false, reason: 'map_operation_busy', error: 'Er loopt al een kaart- of herankeractie.' }); return; }
+  if (action === 'invalidate') { markFrameUnvalidated(sn); res.json({ ok: true, action }); return; }
+  if (action !== 'auto') { res.status(400).json({ ok: false, error: 'Unknown action' }); return; }
+  if (!isFrameUnvalidated(sn) || !isDeviceOnline(sn) || !reanchorOnDock(sn) || !reanchorRtkFixed(sn) || !getPolygonAnchor(sn)) {
+    res.status(409).json({ ok: false, error: 'Herankeren vereist een geblokkeerd frame, online maaier, verse Fixed-dockmeting en eenduidig dockanker.' }); return;
   }
-
-  if (action === 'drive') {
-    if (!onDock()) {
-      res.status(409).json({ ok: false, error: T`Rijden moet beginnen met de maaier op het dock (laden). Rij hem eerst op het dock.` });
-      return;
-    }
-    res.json({ ok: true, action, message: 'driving ~1m off the dock; wait for RTK Fixed then POST action:dock' });
-    (async () => {
-      const BACK_MST = [0, -50, 8]; // x_w=0 (straight), y_v=-0.50 (backward)
-      try {
-        publishToDevice(sn, { quit_mapping_mode: { value: 1, cmd_num: getNextCmdNum(sn) } });
-        await sleep(500);
-        publishToDevice(sn, { start_move: 4 });
-        await sleep(300);
-        const started = Date.now();
-        let tick = 0;
-        while (Date.now() - started < 12000) {
-          publishToDevice(sn, { mst: BACK_MST });
-          tick++;
-          if (tick % 5 === 0) publishToDevice(sn, { start_move: 4 });
-          await sleep(150);
-          if (Date.now() - started > 4000 && !onDock()) break;
-        }
-        publishToDevice(sn, { stop_move: null });
-        console.log(`[reanchor] ${sn}: drove off dock (off=${!onDock()})`);
-      } catch (err) { console.error(`[reanchor] ${sn}: drive failed`, err); }
-    })();
-    return;
-  }
-
-  if (action === 'spin') {
-    res.json({ ok: true, action, message: 'spinning ~360 to help acquire an RTK fix' });
-    (async () => {
-      const SPIN_MST = [50, 0, 8]; // x_w=+0.50 (rotate right), y_v=0
-      try {
-        publishToDevice(sn, { start_move: 2 }); // 2 = rotate right
-        await sleep(300);
-        const started = Date.now();
-        let tick = 0;
-        while (Date.now() - started < 11000) {
-          publishToDevice(sn, { mst: SPIN_MST });
-          tick++;
-          if (tick % 5 === 0) publishToDevice(sn, { start_move: 2 });
-          await sleep(150);
-        }
-        publishToDevice(sn, { stop_move: null });
-        console.log(`[reanchor] ${sn}: 360 spin done`);
-      } catch (err) { console.error(`[reanchor] ${sn}: spin failed`, err); }
-    })();
-    return;
-  }
-
-  // 'continue_dock' — the auto flow paused at 'needs_position'. The operator has
-  // joysticked the mower to ~50 cm straight in front of the dock; now run the full
-  // dock + self-verify continuation (runReanchorDock). Fire-and-forget; the wizard
-  // keeps polling GET /reanchor/:sn/status.
-  if (action === 'continue_dock') {
-    res.json({ ok: true, action, message: 'continuing auto re-anchor: visual ArUco dock + self-verify' });
-    void runReanchorDock(sn);
-    return;
-  }
-
-  if (action === 'dock') {
-    res.json({ ok: true, action, message: 'visual ArUco dock via auto_recharge; the docked report clears frame_unvalidated' });
-    (async () => {
-      try {
-        publishToDevice(sn, { quit_mapping_mode: { value: 1, cmd_num: getNextCmdNum(sn) } });
-        await sleep(500);
-        // auto_recharge = the local visual ArUco dock (same as post-mapping), NOT
-        // go_to_charge — see the route comment above. Purely visual: it homes on
-        // the charger's QR/ArUco marker nearby instead of GPS-navigating to the
-        // (wrong, unvalidated) map-frame charger pose.
-        publishToDevice(sn, { auto_recharge: { cmd_num: getNextCmdNum(sn) } });
-        console.log(`[reanchor] ${sn}: quit_mapping + auto_recharge (visual ArUco dock) dispatched`);
-        // The docked report (recharge_status 9) clears frame_unvalidated via
-        // noteDockState (armed by auto_recharge). We intentionally do NOT
-        // recalibrate the charging_pose here: the real re-anchor is the
-        // localization re-deriving its UTM origin on a CLEAN RTK Fixed (the
-        // drive-off + wait-for-Fixed), after which the docked position naturally
-        // matches the canonical charger pose. Writing charging_pose from the live
-        // docked map_position is unsafe — if the frame is bad (e.g. the rover is
-        // on RTK Float, which happens while charging on LFIN2230700238), it bakes
-        // a ~2 m-off pose into the marker. See
-        // research/documents/reanchor-polygon-charging-pose-diagnosis.md.
-      } catch (err) { console.error(`[reanchor] ${sn}: dock failed`, err); }
-    })();
-    return;
-  }
-
-  res.status(400).json({ ok: false, error: `unknown action '${action}'` });
+  setReanchor(sn, 'check', M`Dockanker en maaierbestanden controleren.`);
+  void runAutoReanchor(sn);
+  res.json({ ok: true, action });
 });
 
 dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {

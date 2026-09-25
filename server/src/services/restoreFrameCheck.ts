@@ -1,3 +1,4 @@
+import { stablePosition, freshPositionState } from './positionTelemetry.js';
 /**
  * Verify-first after a map restore. The restored files are in the frame the
  * bundle was exported in; on the same mower that is the live frame as long as
@@ -9,36 +10,17 @@
  * Why this file and not frameValidation.ts: sensorData imports
  * frameValidation, so the live-sensor reading lives one level up.
  */
-import { deviceCache, translateValue } from '../mqtt/sensorData.js';
+import { deviceCache } from '../mqtt/sensorData.js';
 import { getPolygonAnchor } from './anchor.js';
-import { checkDockedFrame, clearFrameUnvalidated, markFrameUnvalidated, type DockedFrameCheck } from './frameValidation.js';
-
-/** Physically on the dock: same signal as the re-anchor precheck (reanchorOnDock). */
-function docked(s: Map<string, string> | undefined): boolean {
-  const b = (s?.get('battery_state') ?? '').toUpperCase();
-  const r = String(s?.get('recharge_status') ?? '');
-  return b === 'CHARGING' || r === '9' || r === '1' || r.startsWith('Charging');
-}
-
-/** RTK Fixed on the raw GGA code (4) or the display label; the bare rtk bool as fallback. */
-function rtkFixed(s: Map<string, string> | undefined): boolean {
-  const fq = s?.get('rtk_fix_quality');
-  if (fq != null && fq !== '') return translateValue('rtk_fix_quality', fq) === 'RTK Fixed';
-  return s?.get('rtk') === 'true';
-}
+import { checkDockedFrame, markFrameUnvalidated, type DockedFrameCheck } from './frameValidation.js';
 
 export function settleRestoredFrame(sn: string): DockedFrameCheck {
-  const s = deviceCache.get(sn);
-  const x = parseFloat(s?.get('map_position_x') ?? 'NaN');
-  const y = parseFloat(s?.get('map_position_y') ?? 'NaN');
-  const anchor = getPolygonAnchor(sn, s);
-  const check = checkDockedFrame({
-    docked: docked(s),
-    rtkFixed: rtkFixed(s),
-    pose: Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null,
-    anchor: anchor ? { x: anchor.x, y: anchor.y } : null,
-  });
-  if (check.ok) clearFrameUnvalidated(sn);
-  else markFrameUnvalidated(sn);
+  const sample = stablePosition(sn, { docked: true });
+  const state = freshPositionState(sn);
+  const anchor = getPolygonAnchor(sn, deviceCache.get(sn));
+  const check = checkDockedFrame({ docked: state.docked, rtkFixed: state.fixed, pose: sample, anchor });
+  // Caller must first verify the actual written origin; a pose from before the
+  // restore cannot prove that the newly loaded origin is active.
+  if (!check.ok) markFrameUnvalidated(sn);
   return check;
 }

@@ -130,9 +130,9 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
     const url = await getServerUrl();
     if (!url) { setErr(t('reanchorNoServer')); return; }
     try {
-      const r = await new ApiClient(url).reanchor(sn, 'continue_dock');
+      const r = await new ApiClient(url).reanchor(sn, 'verify');
       if (!r.ok) { setErr(r.error ?? t('reanchorStartFailed')); return; }
-      setStatus((s) => (s ? { ...s, phase: 'dock', msgKey: 'reanchorMsgDock', message: '' } : s));
+      setStatus((s) => (s ? { ...s, phase: 'verify', msgKey: 'reanchorMsgVerify', message: '' } : s));
     } catch (e) {
       // Server firmware gate (409): explain instead of dumping the raw error.
       if (isUnsupportedFirmwareError(e)) setErr(t('requiresOpenNovaFirmware'));
@@ -228,7 +228,7 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
               {StatusBlock}
               {err && <Text style={{ color: '#ef4444', fontWeight: '700' }}>{err}</Text>}
               <ManualJoystick sn={sn} />
-              <Btn label={t('reanchorBtnDock')} onPress={startDock} />
+              <Btn label={t('reanchorBtnVerify')} onPress={startDock} />
               <Btn label={t('reanchorBtnLater')} onPress={onClose} secondary />
             </>
           ) : running || phaseRunning ? (

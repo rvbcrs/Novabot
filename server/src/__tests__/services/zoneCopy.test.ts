@@ -11,6 +11,7 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 import {
   transformPoints, nearestBoundaryPoint, polygonsOverlap, polygonGap, segmentCrossesPolygon, straightChannel, STEP_M,
   planZoneCopy, DOCK_MAX_M, MAX_SLOT, type PlanInput,
+  channelCorridorBlocked,
   previewZoneCopy, persistZoneCopy, MAX_DOCK_DISTANCE_M,
 } from '../../services/zoneCopy.js';
 import { mapRepo } from '../../db/repositories/index.js';
@@ -89,7 +90,7 @@ describe('planZoneCopy', () => {
     ({ slot, canonical: `map${slot}`, points, obstacles });
   const input = (over: Partial<PlanInput>): PlanInput => ({
     slot: 0, work: square(0, 0), obstacles: [], existing: [], dock: { x: 5, y: 5 },
-    dockChannelRowExists: false, linkIndex: () => 0, ...over,
+    dockChannelRowExists: false, ...over,
   });
 
   it('slot 0, dock in de zone: kort dockkanaal met het dock als rij 1, geen kanaal nodig', () => {
@@ -128,25 +129,22 @@ describe('planZoneCopy', () => {
     expect(p).toMatchObject({ ok: false, refusal: 'dock_channel_blocked' });
   });
 
-  it('slot 1, kopie overlapt map0: geen kanaal, verbonden via map0', () => {
+  it('overlap alleen bewijst geen bereikbaarheid: expliciet kanaal nodig', () => {
     const p = planZoneCopy(input({ slot: 1, work: square(5, 0), existing: [zone(0, square(0, 0))], dock: { x: 1, y: 1 } }));
-    expect(p).toMatchObject({ ok: true, canonical: 'map1', connectedVia: 'map0', channels: [], needsChannel: false, warnings: [] });
+    expect(p).toMatchObject({ ok: true, canonical: 'map1', connectedVia: null, channels: [], needsChannel: true, warnings: [] });
   });
 
-  it('slot 1, kopie omsluit map0 volledig: verbonden, met waarschuwing full_overlap', () => {
+  it('volledige omsluiting waarschuwt, maar bewijst geen verbinding met bestaande zones', () => {
     const p = planZoneCopy(input({ slot: 1, work: square(-10, -10, 30), existing: [zone(0, square(0, 0))], dock: { x: 1, y: 1 } }));
-    expect(p).toMatchObject({ ok: true, connectedVia: 'map0', warnings: ['full_overlap'] });
+    expect(p).toMatchObject({ ok: true, connectedVia: null, warnings: ['full_overlap', 'existing_zones_unlinked'] });
   });
 
-  it('slot 1, opening van 1 m naar map0: tussenkanaal met randpunten aan beide kanten', () => {
-    const p = planZoneCopy(input({ slot: 1, work: square(11, 0), existing: [zone(0, square(0, 0))], dock: { x: 1, y: 1 }, linkIndex: () => 2 }));
+  it('ook bij een opening van 1 m moet de gebruiker een echte doorgang aanwijzen', () => {
+    const p = planZoneCopy(input({ slot: 1, work: square(11, 0), existing: [zone(0, square(0, 0))], dock: { x: 1, y: 1 } }));
     expect(p.ok).toBe(true);
     expect(p.connectedVia).toBeNull();
-    expect(p.channels).toHaveLength(1);
-    expect(p.channels[0]).toMatchObject({ canonical: 'map0tomap1_2_unicom', kind: 'link' });
-    expect(p.channels[0].points[0].x).toBeCloseTo(10, 6);
-    expect(p.channels[0].points.at(-1)!.x).toBeCloseTo(11, 6);
-    expect(p.needsChannel).toBe(false);
+    expect(p.channels).toHaveLength(0);
+    expect(p.needsChannel).toBe(true);
   });
 
   it('slot 1, opening > LINK_MAX_M maar dock dichtbij: dockkanaal als terugval + waarschuwing', () => {
@@ -167,11 +165,11 @@ describe('planZoneCopy', () => {
     expect(p).toMatchObject({ ok: true, channels: [], needsChannel: true });
   });
 
-  it('slot 0 met een verweesde map3 (na cascade-delete): dockkanaal én tussenkanaal', () => {
+  it('slot 0 met een verweesde map3: dockkanaal, andere zones blijven expliciet onverbon­den', () => {
     const p = planZoneCopy(input({ slot: 0, work: square(0, 0), existing: [zone(3, square(-11, 0))], dock: { x: 1, y: 5 } }));
     expect(p.ok).toBe(true);
-    expect(p.channels.map(c => c.canonical)).toEqual(['map0tocharge_unicom', 'map3tomap0_0_unicom']);
-    expect(p.warnings).toEqual([]);
+    expect(p.channels.map(c => c.canonical)).toEqual(['map0tocharge_unicom']);
+    expect(p.warnings).toEqual(['existing_zones_unlinked']);
   });
 
   it('obstakels worden hernummerd naar het nieuwe slot', () => {
@@ -190,6 +188,18 @@ describe('planZoneCopy', () => {
   it('bestaande map0tocharge_unicom-rij wordt gemarkeerd als te vervangen', () => {
     const p = planZoneCopy(input({ dock: { x: 1, y: 5 }, dockChannelRowExists: true }));
     expect(p.channels[0].replaces).toBe(true);
+  });
+
+  it('dockkanaal controleert obstakels uit elke bestaande zone en de volle corridor', () => {
+    const obstacle = rect(-1.5, 5.4, -0.5, 5.6); // naast de middenlijn, binnen de 1.4 m corridor
+    expect(channelCorridorBlocked({ x: -2, y: 5 }, { x: 0, y: 5 }, [obstacle])).toBe(true);
+    const p = planZoneCopy(input({ dock: { x: -2, y: 5 }, existing: [zone(3, square(-20, 0), [obstacle])] }));
+    expect(p).toMatchObject({ ok: false, refusal: 'dock_channel_blocked' });
+  });
+
+  it('overlap met een geisoleerde zone ver weg van het dock blijft kanaalplichtig', () => {
+    const p = planZoneCopy(input({ slot: 2, work: square(95, 0), existing: [zone(0, square(0, 0)), zone(1, square(90, 0))], dock: { x: 1, y: 1 } }));
+    expect(p).toMatchObject({ ok: true, connectedVia: null, needsChannel: true });
   });
 });
 
@@ -234,6 +244,13 @@ describe('previewZoneCopy / persistZoneCopy (in-memory DB)', () => {
     expect(r.ok && r.plan.obstacles).toEqual([]);
   });
 
+  it.each([A, B])('weigert kopieren met een fysieke polygonoffset op %s voor mutatie', sn => {
+    const before = mapRepo.findByMowerSn(B);
+    mapRepo.setPolygonOffset(sn, 0.5, 0);
+    expect(previewZoneCopy(B, A, 'map0', dockB)).toMatchObject({ ok: false, status: 409, reason: 'polygon_offset_active' });
+    expect(mapRepo.findByMowerSn(B)).toEqual(before);
+  });
+
   it('een null-coördinaat in de bron wordt weggelaten, de kopie slaagt', () => {
     for (const m of mapRepo.findByMowerSn(A)) if (m.canonical_name === 'map0') mapRepo.deleteById(m.map_id);
     addRow(A, 'map0', 'work', [...square(0, 0), { x: null, y: 3 }], 'Grote tuin');
@@ -261,6 +278,7 @@ describe('previewZoneCopy / persistZoneCopy (in-memory DB)', () => {
     expect(previewZoneCopy(B, A, 'map7', dockB)).toMatchObject({ ok: false, status: 404, reason: 'source_not_found' });
     expect(previewZoneCopy(B, A, 'map0', undefined)).toMatchObject({ ok: false, status: 400, reason: 'bad_dock' });
     expect(previewZoneCopy(B, A, 'map0', { x: 'a', y: 1 })).toMatchObject({ ok: false, status: 400, reason: 'bad_dock' });
+    expect(previewZoneCopy(B, A, 'map0', { x: null, y: null })).toMatchObject({ ok: false, status: 400, reason: 'bad_dock' });
     expect(previewZoneCopy(B, A, 'map0', { x: dockB.x + MAX_DOCK_DISTANCE_M + 1, y: dockB.y })).toMatchObject({ ok: false, status: 400, reason: 'dock_too_far' });
     for (const m of mapRepo.findByMowerSn(B)) mapRepo.deleteById(m.map_id);
     expect(previewZoneCopy(B, A, 'map0', dockB)).toMatchObject({ ok: false, status: 409, reason: 'target_no_dock' });

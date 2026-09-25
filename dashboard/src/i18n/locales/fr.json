@@ -452,13 +452,13 @@
     "copyZoneWithObstacles": "Inclure les obstacles",
     "copyZoneHint": "Faites glisser le repère orange (ou cliquez sur la carte) à l'endroit réel de la station de charge de {{name}}. La zone suit.",
     "copyZoneMeasure": "Utiliser la position actuelle de cette tondeuse",
-    "copyZoneMeasureHint": "Plus précis que la photo : conduisez cette tondeuse avec le joystick exactement là où {{name}} est amarrée, puis appuyez sur le bouton. Le repère saute à cette position.",
+    "copyZoneMeasureHint": "Conduisez cette tondeuse exactement à l’endroit où {{name}} est amarrée et immobilisez-la avec RTK Fixed. Le serveur accepte uniquement une mesure récente et stable dans un repère de carte validé.",
     "copyZoneMarker": "Station de charge {{name}}",
     "copyZoneVerdictOk": "Deviendra {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Chevauche {{zone}} : pas de couloir nécessaire",
     "copyZoneChannelDock": "Un couloir de {{m}} m vers la station sera créé",
     "copyZoneChannelLink": "Un couloir vers {{zone}} est proposé (pointillé bleu)",
-    "copyZoneNeedsChannel": "Aucun couloir possible : tracez-en un après le placement.",
+    "copyZoneNeedsChannel": "L’accessibilité n’est pas démontrée : tracez une liaison sûre après le placement.",
     "copyZoneWarn": {
       "full_overlap": "Une zone englobe entièrement l'autre ; jamais testé dans le firmware.",
       "existing_zones_unlinked": "Les zones existantes n'auront pas de couloir vers cette zone."
@@ -1684,5 +1684,6 @@
       "body": "Transformez votre jardin en rendu 3D, vu de dessus ou en perspective, de jour comme en soirée. Vos zones, obstacles et la tondeuse y apparaissent en direct. Choisissez-le sous Fond de carte dans la barre de la carte. Remarque : le rendu est dessiné par une IA à partir de la photo aérienne. Il ressemble à votre jardin, mais ne correspond pas à la réalité dans chaque détail."
     },
     "button": "Nouveautés"
-  }
+  },
+  "reanchor.returnToDockHint": "Ramenez la tondeuse sur la station avec le joystick, puis appuyez sur Vérifier."
 }

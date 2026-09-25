@@ -234,7 +234,7 @@ export default {
   reanchorMsgNeedsDrive: 'Noch nicht eingerastet. Fahren Sie mit dem Joystick noch etwa 1 m gerade zurück; ich fahre automatisch fort, sobald die Lokalisierung einrastet.',
   reanchorNeedsDriveHint: 'Verwenden Sie den Joystick unten, um den Mäher noch etwa 1 m gerade zurückzufahren. Halten Sie den Bereich frei von Hindernissen. Der Ablauf wird automatisch fortgesetzt, sobald die Fixierung einrastet (RUNNING + Fixed).',
   reanchorMsgNeedsPosition: 'Neu-Einrasten erfolgreich. Fahren Sie den Mäher jetzt selbst auf etwa 50 cm gerade vor die Ladestation und drücken Sie dann "Andocken starten".',
-  reanchorNeedsPositionHint: 'Das visuelle ArUco-Andocken funktioniert nur aus der Nähe, gerade vor der Ladestation. Richten Sie den Mäher mit dem Joystick etwa 50 cm vor der Station aus, mit der Front zur Station, und drücken Sie dann Andocken starten. Ohne dies gelingt das Andocken nie.',
+  reanchorNeedsPositionHint: "Fahren Sie mit dem Joystick auf die Ladestation zurück und drücken Sie Prüfen.",
   reanchorMsgDock: 'Andocken (visuelles ArUco)...',
   reanchorMsgVerify: 'Prüfung: an der Ursprungsposition angedockt?',
   reanchorMsgDone: 'Erfolgreich. Angedockt bei ({{x}}, {{y}}) m.',

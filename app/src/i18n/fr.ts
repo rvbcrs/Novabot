@@ -234,7 +234,7 @@ export default {
   reanchorMsgNeedsDrive: 'Pas encore verrouillé. Reculez d’environ 1 m de plus en ligne droite avec le joystick ; je continue automatiquement dès que la localisation se verrouille.',
   reanchorNeedsDriveHint: 'Utilisez le joystick ci-dessous pour reculer la tondeuse d’environ 1 m de plus en ligne droite. Gardez la zone libre d’obstacles. Le processus reprend de lui-même dès que le fix se verrouille (RUNNING + Fixed).',
   reanchorMsgNeedsPosition: 'Reverrouillage réussi. Placez maintenant la tondeuse vous-même à environ 50 cm droit devant la station, puis appuyez sur "Démarrer l’amarrage".',
-  reanchorNeedsPositionHint: 'L’amarrage visuel ArUco ne fonctionne que de près, droit devant la station. Alignez la tondeuse avec le joystick à environ 50 cm devant la station, face à elle, puis appuyez sur Démarrer l’amarrage. Sans cela, l’amarrage ne réussit jamais.',
+  reanchorNeedsPositionHint: "Ramenez la tondeuse sur la station avec le joystick, puis appuyez sur Vérifier.",
   reanchorMsgDock: 'Amarrage (ArUco visuel)...',
   reanchorMsgVerify: 'Vérification : amarré sur l’origine ?',
   reanchorMsgDone: 'Réussi. Amarré à ({{x}}, {{y}}) m.',

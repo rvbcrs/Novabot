@@ -323,16 +323,21 @@ export interface ZoneCopyResult {
 }
 
 /** Plan zonder te schrijven. Invoerfouten (400/404/409) komen als Error met de servertekst. */
-export async function previewZoneCopy(sn: string, source: string, canonical: string, dockAtB: LocalPoint, withObstacles = true): Promise<ZoneCopyPlan> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, dockAtB, withObstacles });
+export async function previewZoneCopy(sn: string, source: string, canonical: string, dockAtB: LocalPoint, withObstacles = true, measurementId?: string): Promise<ZoneCopyPlan> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, dockAtB, withObstacles, measurementId });
   return res.json();
 }
 
 export async function copyZone(
   sn: string, source: string, canonical: string, dockAtB: LocalPoint,
-  opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean } = {},
+  opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean; measurementId?: string } = {},
 ): Promise<ZoneCopyResult> {
   const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, dockAtB, ...opts });
+  return res.json();
+}
+
+export async function fetchMapMeasurement(sn: string): Promise<{ x: number; y: number; measurementId: string; sampledAt: number; sampleCount: number; spreadM: number }> {
+  const res = await get(`${BASE}/maps/${encodeURIComponent(sn)}/measurement`);
   return res.json();
 }
 

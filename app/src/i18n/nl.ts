@@ -447,7 +447,7 @@ export default {
   reanchorMsgNeedsDrive: 'Nog niet gelockt. Rij met de joystick nog ~1 m recht achteruit; ik ga automatisch verder zodra de localisatie lockt.',
   reanchorNeedsDriveHint: 'Gebruik de joystick hieronder om de maaier nog ongeveer 1 m recht achteruit te rijden. Houd ruimte vrij van obstakels. De flow gaat vanzelf verder zodra de fix lockt (RUNNING + Fixed).',
   reanchorMsgNeedsPosition: 'Re-lock gelukt. Rij de maaier nu zelf op ~50 cm recht voor de dock, en druk dan op "Start docken".',
-  reanchorNeedsPositionHint: 'Het visuele ArUco-docken werkt alleen van dichtbij, recht voor de dock. Zet de maaier met de joystick ~50 cm recht voor de dock, met de neus ernaartoe, en druk dan op Start docken. Zonder dit lukt het docken nooit.',
+  reanchorNeedsPositionHint: "Rij met de joystick terug op het dock en druk op Verifieer.",
   reanchorMsgDock: 'Docken (visuele ArUco)...',
   reanchorMsgVerify: 'Controle: staat hij op de juiste plek gedockt?',
   reanchorMsgDone: 'Geslaagd. Gedockt op ({{x}}, {{y}}) m.',

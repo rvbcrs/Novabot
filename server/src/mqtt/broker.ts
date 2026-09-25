@@ -8,6 +8,7 @@ type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 
 import { deviceRepo, equipmentRepo, mapRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
+import { isMapMqttPacketBlocked } from './mapCommandGuard.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
@@ -505,6 +506,12 @@ export async function startMqttBroker(): Promise<void> {
   // De app stuurt altijd tz mee. Door tz te verwijderen en type:"full" te forceren
   // voordat het bericht de maaier bereikt, werkt OTA weer correct.
   (broker as any).authorizePublish = (client: Client | null, packet: AedesPublishPacket, callback: (error?: Error | null) => void) => {
+    // Direct app MQTT bypasses publishToDevice. Apply the same map/frame
+    // guard before forwarding either plaintext or encrypted device commands.
+    if (client && isMapMqttPacketBlocked(packet.topic, packet.payload)) {
+      callback(new Error('Map operation in progress or map frame unvalidated'));
+      return;
+    }
     // Race condition fix: de app stuurt een commando (bijv. get_map_list) en start
     // daarna pas de timeout listener. Op een lokaal netwerk antwoordt de maaier zo snel
     // dat het antwoord arriveert VOORDAT de listener actief is → timeout → "Get map failed".

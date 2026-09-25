@@ -28,7 +28,8 @@ import { emitDeviceBound, emitDevicePaired } from '../dashboard/socketHandler.js
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
 import { isSnBanned, isDeviceOnline } from './broker.js';
-import { isFrameNavBlocked, noteAutoRecharge } from '../services/frameValidation.js';
+import { isFrameNavBlocked, markFrameUnvalidated } from '../services/frameValidation.js';
+import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, type MowerMapOperation } from '../services/mowerMapOperation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
@@ -199,6 +200,10 @@ export function publishToDevice(
   command: Record<string, unknown>,
   opts?: { bypassFrameGuard?: boolean; suppressReanchorArm?: boolean },
 ): void {
+  if (isMapOperationCommandBlocked(sn, command)) {
+    console.warn(`${TAG} BLOCKED ${Object.keys(command)[0]} for ${sn}: map operation in progress`);
+    return;
+  }
   // Safety: while the map frame is unvalidated (post bundle-restore, pre
   // successful re-dock), go_to_charge / start_navigation navigate the wrong
   // frame and can drive the mower anywhere. Block them at this single choke
@@ -209,16 +214,6 @@ export function publishToDevice(
   if (!opts?.bypassFrameGuard && isFrameNavBlocked(sn, command)) {
     console.warn(`${TAG} BLOCKED ${Object.keys(command)[0]} for ${sn}: frame unvalidated (post-restore). Re-anchor via the dock-cycle first.`);
     return;
-  }
-  // Arm the re-anchor clear: a deliberate re-anchor dock (auto_recharge, or a
-  // bypassed go_to_charge from the dock-cycle) is what re-validates the frame.
-  // Only the docked report that follows clears frame_unvalidated.
-  // EXCEPTION: the auto re-anchor flow passes suppressReanchorArm — it owns the
-  // clear itself via a position self-verify (docked map_position must land on the
-  // origin), so the passive docked-report clear must NOT race ahead of it and
-  // clear the flag on a wrong-position dock. See runAutoReanchor in dashboard.ts.
-  if (!opts?.suppressReanchorArm && ('auto_recharge' in command || (opts?.bypassFrameGuard && 'go_to_charge' in command))) {
-    noteAutoRecharge(sn);
   }
 
   if (!aedesBroker) {
@@ -396,6 +391,11 @@ export function awaitCommand(
  * Gebruikt voor custom bridge-scripts op de maaier (bijv. led_bridge.py).
  */
 export function publishToTopic(topic: string, message: Record<string, unknown>): void {
+  const extendedSn = topic.startsWith('novabot/extended/') ? topic.slice('novabot/extended/'.length) : null;
+  if (extendedSn && (isFrameNavBlocked(extendedSn, message) || isMapOperationCommandBlocked(extendedSn, message))) {
+    console.warn(`${TAG} BLOCKED extended command for ${extendedSn}: map/frame is not ready`);
+    return;
+  }
   if (!aedesBroker) {
     console.error(`${TAG} Broker niet geinitialiseerd`);
     return;
@@ -678,73 +678,106 @@ export async function republishSeamFix(sn: string): Promise<void> {
   publishToExtended(sn, { set_seam_fix: { enabled: cfg.enabled, edge_margin_cm: cfg.edgeMarginCm } });
 }
 
-/**
- * Push een bundel's mower-files VERBATIM naar de maaier via `write_map_files`
- * — exact de push-mechaniek van de admin "Import bundle" → apply-verbatim route
- * (de single restore path). csv_files + charging_station.yaml + rasters worden
- * ongewijzigd naar de maaier geschreven; pos.json wordt NIET aangeraakt (de
- * dock-cyclus her-ankert het frame — dus geen realign, cloud-GPS blijft
- * behouden). `restart_mapping:false` voorkomt de iceoryx-shm leak die
- * novabot_mapping-bounces veroorzaakt. Alleen als de bundel geen whole-area
- * raster bevat valt het terug op save_map type:1 + regenerate_per_map_files om
- * de raster on-device te genereren.
- *
- * Gedeeld door de apply-verbatim HTTP-handler (adminStatus.ts) en de
- * cloud-import push (pushMapToMowerVerbatim) zodat beide identiek pushen.
- */
-export function applyVerbatimToMower(
-  sn: string,
-  mowerFiles: {
-    csvFiles: Record<string, string>;
-    chargingStationYaml?: string | null;
-    mapFilesText?: Record<string, string>;
-    mapFilesB64?: Record<string, string>;
-  },
-): { pushed: boolean; validation: BundleValidation } {
-  // SAFETY GATE — never overwrite a mower's (possibly working) map with a
-  // structurally broken raster. handle_write_map_files WIPES csv_file/ before
-  // writing, so a bad push is destructive + irreversible on the user's side.
-  // Validate the rasters first; refuse the push on a hard failure.
-  const validation = validateMapRasters(mowerFiles.mapFilesB64);
-  if (!validation.ok) {
-    console.error(`${TAG} apply-verbatim ${sn}: GEBLOKKEERD — kaartvalidatie faalt, NIETS gepusht (maaier-bestanden blijven intact):`);
-    for (const f of validation.hardFailures) console.error(`${TAG}   ✗ ${f}`);
-    return { pushed: false, validation };
-  }
-  for (const w of validation.warnings) console.warn(`${TAG} apply-verbatim ${sn}: ⚠ ${w}`);
+export interface VerbatimMowerFiles {
+  csvFiles: Record<string, string>;
+  x3CsvFiles?: Record<string, string>;
+  chargingStationYaml?: string | null;
+  mapFilesText?: Record<string, string>;
+  mapFilesB64?: Record<string, string>;
+}
 
-  const writePayload: Record<string, unknown> = {
-    csv_files: mowerFiles.csvFiles,
-    charging_station_yaml: mowerFiles.chargingStationYaml ?? null,
+export interface ApplyVerbatimResult {
+  /** True only after correlated, consistent read-back verifies the supplied bytes. */
+  pushed: boolean;
+  validation: BundleValidation;
+  error?: string;
+  uncertain?: boolean;
+  operationId?: string;
+}
+
+function validateVerbatimFiles(files: VerbatimMowerFiles): BundleValidation {
+  const validation = validateMapRasters(files.mapFilesB64);
+  const slots = Object.keys(files.csvFiles).filter(n => /^map\d+_work\.csv$/.test(n)).map(n => n.slice(0, -9));
+  for (const name of ['map', ...slots]) {
+    if (!files.mapFilesB64?.[`${name}.pgm`] || !files.mapFilesText?.[`${name}.yaml`]) {
+      validation.hardFailures.push(`incomplete_bundle: missing ${name}.pgm or ${name}.yaml`);
+    }
+  }
+  for (const [name, yaml] of Object.entries(files.mapFilesText ?? {})) {
+    const imageLine = yaml.match(/^\s*image\s*:\s*(.+)$/m)?.[1]?.split('#')[0].trim().replace(/^(['"])(.*)\1$/, '$2');
+    const imageName = imageLine && path.posix.basename(imageLine);
+    const validPath = imageName && (imageLine === imageName || imageLine === `./${imageName}` || imageLine === `/userdata/lfi/maps/home0/${imageName}`);
+    if (!validPath || !files.mapFilesB64?.[imageName]) validation.hardFailures.push(`invalid_raster_reference: ${name}`);
+  }
+  if (!slots.length) validation.hardFailures.push('incomplete_bundle: no work CSV');
+  validation.ok = validation.hardFailures.length === 0;
+  return validation;
+}
+
+function sameFileSet(actual: unknown, expected: Record<string, string>, binary = false): boolean {
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) return false;
+  const files = actual as Record<string, unknown>;
+  return Object.keys(files).length === Object.keys(expected).length && Object.entries(expected).every(([name, value]) => {
+    if (typeof files[name] !== 'string') return false;
+    return binary ? Buffer.from(files[name], 'base64').equals(Buffer.from(value, 'base64')) : files[name] === value;
+  });
+}
+
+function snapshotMatchesFiles(snapshot: Record<string, unknown>, files: VerbatimMowerFiles): boolean {
+  return snapshot.result === 0 && snapshot.snapshot_consistent === true
+    && sameFileSet(snapshot.csv_files, files.csvFiles)
+    && sameFileSet(snapshot.x3_csv_files, files.x3CsvFiles ?? files.csvFiles)
+    && sameFileSet(snapshot.map_files_text, files.mapFilesText ?? {})
+    && sameFileSet(snapshot.map_files_b64, files.mapFilesB64 ?? {}, true)
+    && (files.chargingStationYaml == null || snapshot.charging_station_yaml === files.chargingStationYaml);
+}
+
+/** Reconcile an uncertain restore without issuing another write. */
+export async function verifyMowerMapFiles(sn: string, files: VerbatimMowerFiles, operation?: MowerMapOperation): Promise<ApplyVerbatimResult> {
+  if (!operation) return withMowerMapOperation(sn, lease => verifyMowerMapFiles(sn, files, lease));
+  assertMowerMapOperation(sn, operation);
+  const validation = validateVerbatimFiles(files);
+  if (!validation.ok) return { pushed: false, validation, error: 'map_validation_failed' };
+  const snapshot = await readMowerMapSnapshot(sn, operation);
+  const pushed = !!snapshot && snapshotMatchesFiles(snapshot, files);
+  return { pushed, validation, operationId: operation.id, ...(pushed ? {} : { error: 'readback_mismatch', uncertain: true }) };
+}
+
+/** Restore complete files, keeping pos.json unchanged. No timer-based raster fallback. */
+export async function applyVerbatimToMower(
+  sn: string, mowerFiles: VerbatimMowerFiles, operation?: MowerMapOperation,
+): Promise<ApplyVerbatimResult> {
+  if (!operation) return withMowerMapOperation(sn, lease => applyVerbatimToMower(sn, mowerFiles, lease));
+  assertMowerMapOperation(sn, operation);
+  // Own the bytes throughout the await points, even if a caller edits its object.
+  const files = structuredClone(mowerFiles);
+  const validation = validateVerbatimFiles(files);
+  const fail = (error: string, uncertain = false): ApplyVerbatimResult => ({ pushed: false, validation, error, uncertain, operationId: operation.id });
+  if (!validation.ok) return fail('map_validation_failed');
+  if (!isDeviceOnline(sn)) return fail('mower_offline');
+  const sensors = deviceCache.get(sn);
+  const battery = (sensors?.get('battery_state') ?? '').toUpperCase();
+  const recharge = sensors?.get('recharge_status') ?? '';
+  if (battery !== 'CHARGING' && recharge !== '9' && recharge !== '1' && !recharge.startsWith('Charging')) return fail('mower_not_docked');
+
+  // Correlated read proves firmware capability BEFORE the destructive write.
+  const before = await readMowerMapSnapshot(sn, operation);
+  if (!before || before.result !== 0 || before.snapshot_consistent !== true) return fail('snapshot_unavailable');
+  markFrameUnvalidated(sn);
+  const written = await operation.command('write_map_files', {
+    csv_files: files.csvFiles,
+    x3_csv_files: files.x3CsvFiles ?? files.csvFiles,
+    charging_station_yaml: files.chargingStationYaml ?? null,
+    map_files_text: files.mapFilesText ?? {},
+    map_files_b64: files.mapFilesB64 ?? {},
     restart_mapping: false,
-    // Wij leveren de VOLLEDIGE set, kanalen inbegrepen. De mower-kant bewaarde
-    // tot nu toe elk kanaal dat wij niet meestuurden (fix van 2026-06-29, toen
-    // de server ze nog niet beheerde). Sinds de canonieke naamgeving doen we dat
-    // wel, en daardoor werd een VERWIJDERD kanaal trouw teruggezet: wissen had
-    // geen enkel effect, ook niet met forceren (live LFIN2230700238,
-    // 2026-09-14). Met deze vlag ruimt de maaier op wat wij niet sturen.
     prune_connectors: true,
-  };
-  if (mowerFiles.mapFilesText && Object.keys(mowerFiles.mapFilesText).length > 0) {
-    writePayload.map_files_text = mowerFiles.mapFilesText;
-  }
-  if (mowerFiles.mapFilesB64 && Object.keys(mowerFiles.mapFilesB64).length > 0) {
-    writePayload.map_files_b64 = mowerFiles.mapFilesB64;
-  }
-  publishToExtended(sn, { write_map_files: writePayload });
-
-  const hasWholeRaster = !!(mowerFiles.mapFilesB64 && mowerFiles.mapFilesB64['map.pgm']);
-  if (!hasWholeRaster) {
-    publishToDevice(sn, { save_map: { type: 1, mapName: 'map', totalArea: 0 } });
-    console.log(`${TAG} apply-verbatim ${sn}: geen raster in bundel — save_map type:1 (fallback)`);
-    setTimeout(() => {
-      publishToExtended(sn, { regenerate_per_map_files: {} });
-      console.log(`${TAG} apply-verbatim ${sn}: regenerate_per_map_files (fallback)`);
-    }, 3000);
-  } else {
-    console.log(`${TAG} apply-verbatim ${sn}: complete raster — on-device save_map/regen overgeslagen`);
-  }
-  return { pushed: true, validation };
+  }, 120_000);
+  if (!written) return fail('write_timeout', true);
+  if (written.result !== 0) return fail('write_failed', true);
+  const after = await readMowerMapSnapshot(sn, operation);
+  if (!after || !snapshotMatchesFiles(after, files) || after.pos_json !== before.pos_json) return fail('readback_mismatch', true);
+  return { pushed: true, validation, operationId: operation.id };
 }
 
 /**
@@ -794,7 +827,7 @@ export async function pushMapToMowerVerbatim(
 
   if (!isDeviceOnline(sn)) return { ok: false, offline: true };
 
-  const res = applyVerbatimToMower(sn, mowerFiles);
+  const res = await applyVerbatimToMower(sn, mowerFiles);
   if (!res.pushed) {
     console.error(`${TAG} pushMapToMowerVerbatim: ${sn} GEBLOKKEERD door kaartvalidatie — bundel NIET gepusht, maaier ongemoeid`);
     return { ok: false, invalidMap: true };

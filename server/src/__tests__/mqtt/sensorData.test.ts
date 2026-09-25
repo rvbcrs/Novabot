@@ -91,7 +91,7 @@ describe('frame_unvalidated lifecycle in updateDeviceData', () => {
     expect(isFrameUnvalidated(SN)).toBe(true); // must stay locked
   });
 
-  it('clears only after an auto_recharge command followed by a docked report', () => {
+  it('keeps the frame locked after auto_recharge and a passive docked report', () => {
     const SN = 'LFIN_DOCK_C';
     clearFrameUnvalidated(SN);
     markFrameUnvalidated(SN);
@@ -99,8 +99,8 @@ describe('frame_unvalidated lifecycle in updateDeviceData', () => {
     expect(isFrameUnvalidated(SN)).toBe(true);
     noteAutoRecharge(SN);             // wizard issued the deliberate dock
     expect(isFrameUnvalidated(SN)).toBe(true); // command alone does not clear
-    docked(SN);                       // dock confirmed after auto_recharge -> cleared
-    expect(isFrameUnvalidated(SN)).toBe(false);
+    docked(SN);                       // dock report does not verify the map frame
+    expect(isFrameUnvalidated(SN)).toBe(true);
   });
 
   it('surfaces frame_unvalidated as a device field while set (not docked)', () => {

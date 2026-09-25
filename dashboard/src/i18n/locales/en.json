@@ -484,13 +484,13 @@
     "copyZoneWithObstacles": "Include obstacles",
     "copyZoneHint": "Drag the orange marker (or click the map) to where {{name}}'s charging station really stands. The zone follows.",
     "copyZoneMeasure": "Use this mower's current position",
-    "copyZoneMeasureHint": "More precise than the photo: drive this mower with the joystick exactly to where {{name}} sits when docked, then press the button. The marker jumps to that position.",
+    "copyZoneMeasureHint": "Drive this mower exactly to where {{name}} sits when docked and leave it still with RTK Fixed. The server only accepts a fresh, stable measurement in a validated map frame.",
     "copyZoneMarker": "Charging station {{name}}",
     "copyZoneVerdictOk": "Becomes {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Overlaps {{zone}}: no channel needed",
     "copyZoneChannelDock": "A {{m}} m dock channel will be created",
     "copyZoneChannelLink": "A channel to {{zone}} is proposed (blue dashed)",
-    "copyZoneNeedsChannel": "No channel possible: draw one yourself after placing.",
+    "copyZoneNeedsChannel": "Reachability is unproven: draw a safe connection after placing.",
     "copyZoneWarn": {
       "full_overlap": "One zone fully encloses the other; never tested in the firmware.",
       "existing_zones_unlinked": "The existing zones get no channel to this zone."
@@ -1684,5 +1684,6 @@
       "body": "Turn your garden into a 3D render, top-down or angled, by day or in the evening. Your zones, obstacles and the mower appear on it live. Pick it under Base layer in the map toolbar. Note: the render is drawn by AI from the aerial photo, so it looks like your garden but does not match reality in every detail."
     },
     "button": "What's new"
-  }
+  },
+  "reanchor.returnToDockHint": "Use the joystick to return onto the dock, then press Verify."
 }

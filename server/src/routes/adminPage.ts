@@ -4102,6 +4102,7 @@ async function exportPortableBundle() {
 }
 
 var portableStagingId = null;
+var portableStagingState = null;
 
 // Live RTK badge polling — keeps a small indicator near the wizard header
 // updated every 2 s so the operator can SEE when loc_quality reaches 100
@@ -4740,6 +4741,7 @@ function pickMowerForBundle(b, devices) {
 }
 
 function renderPortableImportWizard(sn, state) {
+  portableStagingState = state;
   var panel = document.getElementById('portableImportPanel');
   panel.style.display = 'block';
   var html = '<div style="padding:10px;background:#0d0d20;border-radius:6px;font-size:11px;color:#cbd5e1;line-height:1.7">';
@@ -4748,6 +4750,10 @@ function renderPortableImportWizard(sn, state) {
   html += '<div id="portableRtkBadge" style="margin-top:4px;font-size:11px"></div>';
   html += '</div>';
   html += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">';
+  if (state === 'RECONCILE_REQUIRED') {
+    html += '<div>The previous restore has an unknown outcome. Compare the staged files with the mower before any new write.</div><button onclick="portableApplyVerbatim()">Verify existing mower files</button>';
+  }
+  if (state === 'APPLYING') html += '<div>Restoring and checking mower files. Keep this recovery session.</div>';
   if (state === 'UPLOADED') {
     if (portableVerbatimRestore) {
       // Single restore path. The bundle carries a complete map (csv_file/ +
@@ -4778,8 +4784,8 @@ function renderPortableImportWizard(sn, state) {
       }
     } else {
       if (portableMowerFileApplySupported) {
-        html += '<div style="flex-basis:100%;font-size:10px;color:#fbbf24;margin-bottom:4px">Legacy bundle with no map files — falls back to the drive+realign flow.</div>';
-        html += '<button onclick="portableStartDrive()" style="padding:6px 12px;background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.5);border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">1. Start drive backward + RTK lock</button>';
+        html += '<div style="flex-basis:100%;font-size:10px;color:#fbbf24;margin-bottom:4px">Legacy bundle with no complete mower files — import the server copy only; a complete snapshot is required for mower restore.</div>';
+        html += '<button onclick="portableImportServerCopy()" style="padding:6px 12px;background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.5);border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Import server copy only</button>';
       } else {
         html += '<div style="flex-basis:100%;font-size:10px;color:#fbbf24;margin-bottom:4px">' + portableServerCopyWarningText() + '</div>';
         html += '<button onclick="portableImportServerCopy()" style="padding:6px 12px;background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.5);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">Import server copy only</button>';
@@ -4864,8 +4870,9 @@ async function portableApplyVerbatim() {
     renderPortableImportWizard(sn, 'UPLOADED');
     return;
   }
-  var msg = 'Restore to mower: pushes csv_file/ + the rasterized map.pgm/png/yaml (+ per-map) back 1-to-1. No rotation, pos.json left untouched. After this, re-anchor in the app (Re-anchor wizard): the mower re-derives its pos.json origin from the dock RTK-Fixed GPS and re-locks by driving. Continue?';
-  if (!(await appConfirm(msg, { okText: 'Restore to mower' }))) return;
+  var reconciling = portableStagingState === 'RECONCILE_REQUIRED';
+  var msg = reconciling ? 'Compare the staged files with the mower and complete the server import only if they match? No mower files will be written.' : 'Replace the complete map set on this mower? The mower must be docked. Files are checked after writing; navigation stays blocked until the restored frame is verified. The origin is unchanged. Continue?';
+  if (!(await appConfirm(msg, { okText: reconciling ? 'Verify mower files' : 'Restore to mower' }))) return;
   var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/import-portable/' + portableStagingId + '/apply-verbatim', {
     method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
   });
@@ -4879,7 +4886,7 @@ async function portableApplyVerbatim() {
     }
     // Cross-SN block — let the operator force if they really know what they're doing.
     if (j.sourceSn && j.targetSn && j.sourceSn !== j.targetSn) {
-      var forceMsg = __t('Bundle was made on {source}, not {target}. The map is charger-relative and pos.json is left untouched, so this is generally safe; re-anchor in the app afterward. Continue?', { source: j.sourceSn, target: j.targetSn });
+      var forceMsg = __t('Bundle was made on {source}, not {target}. This replaces the entire map set. Frame verification is required afterward; use zone copy to retain a source zone at its physical location. Continue?', { source: j.sourceSn, target: j.targetSn });
       if (!(await appConfirm(forceMsg, { destructive: true, okText: 'Force verbatim' }))) {
         portableCheckActive(sn);
         return;
@@ -4897,7 +4904,7 @@ async function portableApplyVerbatim() {
   }
   var w = j.written || {};
   await appAlert(
-    __t('Verbatim restore applied.\\n\\nCSVs: {csv}\\npos.json: {pos}\\nmap text files: {txt}\\nmap binary files: {bin}\\ncharging_station.yaml: {yaml}', {
+    __t('Mower files verified and server map committed.\\n\\nCSVs: {csv}\\npos.json: {pos}\\nmap text files: {txt}\\nmap binary files: {bin}\\ncharging_station.yaml: {yaml}', {
       csv: (w.csvFiles || 0), pos: (w.posJson ? __t('yes') : __t('no')), txt: (w.mapFilesText || 0),
       bin: (w.mapFilesB64 || 0), yaml: (w.chargingStationYaml ? __t('yes') : __t('no')) }),
     { accent: 'success' }
@@ -4924,81 +4931,7 @@ async function portableApplyVerbatim() {
 // and stock firmware does NOT save_utm_origin on docking. See
 // docs/reference/REANCHOR.md.
 async function promptDockAnchorRefresh(sn) {
-  var explanation = __t(
-    'Polygons restored, but the mower\\'s UTM anchor is stale until you re-anchor. ' +
-    'Without it the local frame may be 1-2m off and polygons land in the wrong spot. ' +
-    'The app\\'s Re-anchor wizard is the recommended path (it re-derives pos.json from ' +
-    'the dock RTK-Fixed GPS). Or pick one here:');
-  var choice = await appModal({
-    title: 'Dock anchor refresh required',
-    body: explanation,
-    accent: 'warning',
-    dismissOnBackdrop: false,
-    buttons: [
-      { text: 'Skip (do later)', value: 'skip' },
-      { text: 'I will do it manually', value: 'manual' },
-      { text: 'Automatic (1m drive)', primary: true, value: 'auto' },
-    ],
-  });
-  if (choice === 'skip' || !choice) return;
-  var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/refresh-dock-anchor', {
-    method: 'POST',
-    headers: { 'Authorization': token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: choice }),
-  });
-  var j = await r.json();
-  if (!j.ok) { await appAlert(__t('Dock-anchor refresh failed: {msg}', { msg: (j.error || 'unknown') }), { accent: 'danger' }); return; }
-  if (choice === 'manual') {
-    await appAlert(j.instruction || 'Move mower off dock briefly then dock again.', { accent: 'info', title: 'Refresh instruction' });
-    return;
-  }
-  // Auto: poll battery_state until Charging returns (or timeout).
-  await pollDockAnchorAuto(sn);
-}
-
-async function pollDockAnchorAuto(sn) {
-  var startMs = Date.now();
-  var timeoutMs = 90000;
-  var modal = appModal({
-    title: 'Auto-redock in progress',
-    body: 'Starting...',
-    accent: 'info',
-    dismissOnBackdrop: false,
-    buttons: [{ text: 'Cancel', value: 'cancel' }],
-  });
-  var cancelled = false;
-  modal.then(function(v) { if (v === 'cancel') cancelled = true; });
-  while (Date.now() - startMs < timeoutMs && !cancelled) {
-    await new Promise(function(r) { return setTimeout(r, 2000); });
-    try {
-      var r = await fetch('/api/admin-status/devices', { headers: { 'Authorization': token } });
-      var j = await r.json();
-      var devs = (j && j.data) || j || [];
-      var dev = (Array.isArray(devs) ? devs : []).find(function(d) { return d.sn === sn; });
-      var sensors = (dev && dev.sensors) || {};
-      var battery = String(sensors.battery_state || '');
-      var batteryNorm = battery.toUpperCase();
-      var work = String(sensors.work_status || '');
-      var elapsed = Math.round((Date.now() - startMs) / 1000);
-      // Update modal body via textContent (XSS-safe).
-      var bodyEl = document.querySelector('.modal-box .modal-msg');
-      if (bodyEl) {
-        bodyEl.textContent =
-          __t('Elapsed: {s}s', { s: elapsed }) + '\\n' +
-          'work_status: ' + (work || '?') + '\\n' +
-          'battery_state: ' + (battery || '?');
-        bodyEl.style.whiteSpace = 'pre-line';
-      }
-      if (batteryNorm === 'CHARGING' && elapsed > 10) {
-        if (bodyEl) bodyEl.textContent += '\\n\\n' + __t('Docked. The drive should have re-derived the UTM origin from GPS. If the frame is still off, re-anchor in the app (Re-anchor wizard).');
-        return;
-      }
-    } catch (e) { /* keep polling */ }
-  }
-  var bodyEl2 = document.querySelector('.modal-box .modal-msg');
-  if (bodyEl2 && !cancelled) {
-    bodyEl2.textContent += '\\n\\n' + __t('Timeout - check mower state manually.');
-  }
+  await appAlert('Mower files were verified. The map frame still needs verification. Open this mower in the OpenNova app and use its re-anchor wizard. No automatic drive or origin change has been started.', { accent: 'warning', title: 'Frame verification required' });
 }
 
 async function portableStartDrive() {
@@ -5323,13 +5256,7 @@ function updateConflictHelpersVisibility() {
 /** Single restore entry point — branches on the "Also push to mower" checkbox.
  *  Checked = full restore-and-realign (DB + sync_map MQTT push + GPS update).
  *  Unchecked = DB-only restore. */
-async function restoreBackup() {
-  var realign = document.getElementById('restoreRealignChk').checked;
-  if (realign) {
-    return restoreAndRealign();
-  }
-  return restoreSelection();
-}
+async function restoreBackup() { return restoreSelection(); }
 
 async function restoreSelection() {
   var sn = document.getElementById('mapMowerSelect').value;
@@ -5385,58 +5312,6 @@ async function restoreSelection() {
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// Restore + Realign Mower (Novabot-ff8): one-click recovery that runs the full
-// flow documented in docs/runbooks/charger-anchor-restore-runbook.md. Calls
-// POST /api/admin-status/map-backups/<SN>/<filename>/restore-and-realign.
-async function restoreAndRealign() {
-  var sn = document.getElementById('mapMowerSelect').value;
-  var filename = document.getElementById('mapBackupSelect').value;
-  var status = document.getElementById('mapRecoveryStatus');
-  status.style.display = 'block';
-
-  if (!sn) { status.style.color='#f87171'; status.textContent='Please select a mower first.'; return; }
-  if (!filename) { status.style.color='#f87171'; status.textContent='Please select a backup snapshot first.'; return; }
-
-  var ok = await appConfirm(__t(
-    'Restore + Realign Mower will:\\n\\n' +
-    '  1. Restore ALL polygons + obstacles + unicom from the selected backup ZIP (overwrites existing rows)\\n' +
-    '  2. Re-anchor charger pose from the polygon mapNtocharge_unicom first point\\n' +
-    '  3. Update DB chargerGps to the mower live RTK GPS reading\\n' +
-    '  4. Regenerate <SN>_latest.zip with embedded charger pose\\n' +
-    '  5. Push everything to mower via sync_map MQTT\\n' +
-    '  6. Mower restarts novabot_mapping + auto_recharge_server\\n\\n' +
-    'Preconditions: mower must be online + on dock + RTK FIX.'),
-    { destructive: true, okText: 'Restore + Realign' }
-  );
-  if (!ok) return;
-
-  status.style.color = '#60a5fa';
-  status.textContent = 'Restore + Realign in progress (up to 30 s)…';
-
-  try {
-    var r = await fetch('/api/admin-status/map-backups/' + encodeURIComponent(sn) + '/' + encodeURIComponent(filename) + '/restore-and-realign', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': token },
-    });
-    var result = await r.json().catch(function(){ return {}; });
-    if (!r.ok || !result.ok) {
-      var errMsg = result.error || ('HTTP ' + r.status);
-      if (result.partial) errMsg += ' ' + __t('(partial: server-side state already restored, re-run after mower recovers)');
-      throw new Error(errMsg);
-    }
-
-    var anchorStr = result.anchor
-      ? '(' + result.anchor.x.toFixed(2) + ', ' + result.anchor.y.toFixed(2) + ', ' + result.anchor.orientation.toFixed(2) + ')'
-      : '?';
-    status.style.color = '#00d4aa';
-    status.textContent = __t('Restore + Realign complete: restored {n} items, anchor {anchor}', { n: (result.restoredItems || 0), anchor: anchorStr });
-    loadMaps();
-  } catch(e) {
-    status.style.color = '#f87171';
-    status.textContent = __t('Restore + Realign failed: {msg}', { msg: e.message });
-  }
 }
 
 // Attach mouse-wheel zoom + drag pan handlers to the map canvas. Idempotent:

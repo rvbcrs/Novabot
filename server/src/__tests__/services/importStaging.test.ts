@@ -53,4 +53,16 @@ describe('ImportStagingStore', () => {
     store.cancel(s.stagingId, 'user reject');
     expect(fs.existsSync(path.join(dir, 'SN1', s.stagingId))).toBe(false);
   });
+
+  it('preserves an interrupted restore for readback reconciliation', () => {
+    const s = store.create('SN1', { polygonAreaM2: 100, sourceSn: 'SN1' });
+    store.transition(s.stagingId, 'APPLYING', { applyResult: { operationId: 'op', bundleHash: 'hash' } });
+    const reloaded = new ImportStagingStore(dir);
+    expect(reloaded.get(s.stagingId)?.state).toBe('RECONCILE_REQUIRED');
+    expect(reloaded.get(s.stagingId)?.context.applyResult?.bundleHash).toBe('hash');
+    expect(() => reloaded.cancel(s.stagingId, 'cancel')).toThrow('reconciled');
+    expect(() => reloaded.transition(s.stagingId, 'APPLIED', {})).toThrow(IllegalStateTransitionError);
+    reloaded.transition(s.stagingId, 'APPLYING', {});
+    reloaded.transition(s.stagingId, 'APPLIED', { applyResult: { mowerVerified: true } });
+  });
 });

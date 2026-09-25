@@ -9,6 +9,7 @@
  */
 import { publishToTopic } from './mapSync.js';
 import { isFrameNavBlocked } from '../services/frameValidation.js';
+import { isMapOperationCommandBlocked } from '../services/mowerMapOperation.js';
 
 /**
  * Stuur een commando naar het extended_commands.py node op de maaier.
@@ -22,7 +23,7 @@ import { isFrameNavBlocked } from '../services/frameValidation.js';
  * starten. Niet weghalen zonder de guard elders op dit kanaal terug te zetten.
  */
 export function publishExtendedCommand(sn: string, command: Record<string, unknown>): void {
-  if (isFrameNavBlocked(sn, command)) {
+  if (isFrameNavBlocked(sn, command) || isMapOperationCommandBlocked(sn, command)) {
     console.warn(`[ExtendedCommands] GEBLOKKEERD ${Object.keys(command)[0]} voor ${sn}: frame niet gevalideerd (post-restore). Eerst her-ankeren via de dock-cyclus.`);
     return;
   }

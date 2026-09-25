@@ -449,7 +449,7 @@ export default {
   reanchorMsgNeedsDrive: 'Not locked yet. Drive about 1 m further straight back with the joystick; I continue automatically as soon as the localization locks.',
   reanchorNeedsDriveHint: 'Use the joystick below to back the mower up roughly 1 m more in a straight line. Keep clear of obstacles. The flow resumes by itself the moment the fix locks (RUNNING + Fixed).',
   reanchorMsgNeedsPosition: 'Re-lock succeeded. Now drive the mower yourself to about 50 cm straight in front of the dock, then press "Start docking".',
-  reanchorNeedsPositionHint: 'The visual ArUco docking only works from close range, straight in front of the dock. Use the joystick to line the mower up about 50 cm in front of the dock, facing it, then press Start docking. Without this the docking never succeeds.',
+  reanchorNeedsPositionHint: "Use the joystick to return onto the dock, then press Verify.",
   reanchorMsgDock: 'Docking (visual ArUco)...',
   reanchorMsgVerify: 'Checking: did it dock in the right spot?',
   reanchorMsgDone: 'Success. Docked at ({{x}}, {{y}}) m.',

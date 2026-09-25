@@ -1,8 +1,7 @@
 /**
  * Per-mower "frame unvalidated" state. Set when a map bundle is restored
  * (the stored map frame is not yet anchored to the real charger), cleared
- * only when the mower reports docked/charging (a successful auto_recharge
- * dock rewrites pos.json and re-anchors the frame). While set, go_to_charge
+ * only by explicit, fresh frame verification. Docking does not rewrite pos.json. While set, go_to_charge
  * is hard-blocked in publishToDevice because navigating the bad frame can
  * drive the mower anywhere. Backed by device_settings so a server restart
  * does not silently unlock go_to_charge.
@@ -14,6 +13,8 @@ const KEY = 'frame_unvalidated';
 const AUTO_RECHARGE_KEY = 'frame_auto_recharge_seen';
 const RELOCKED_KEY = 'frame_relocked';
 const unvalidated = new Set<string>();
+const revisions = new Map<string, number>();
+export const getFrameRevision = (sn: string): number => revisions.get(sn) ?? 0;
 // Re-anchor lifecycle latch: true once the mower has, since the current
 // frame_unvalidated began, left the dock AND reached RUNNING + RTK Fixed against
 // the freshly-written origin. Verify (docked map_position vs origin) is only
@@ -35,13 +36,14 @@ export function loadFrameValidationFromDb(): void {
   relocked.clear();
   for (const row of deviceSettingsRepo.listAll()) {
     if (row.key === KEY && row.value === '1') unvalidated.add(row.sn);
-    if (row.key === AUTO_RECHARGE_KEY && row.value === '1') autoRechargeSeen.add(row.sn);
-    if (row.key === RELOCKED_KEY && row.value === '1') relocked.add(row.sn);
+
+    // A restart loses the live cycle and its captured anchor. Require a new cycle.
   }
 }
 
 export function markFrameUnvalidated(sn: string): void {
   unvalidated.add(sn);
+  revisions.set(sn, getFrameRevision(sn) + 1);
   // A restored or re-anchored frame is a new origin: the dock position
   // before it says nothing about the one after.
   dockSamplesRepo.deleteBySn(sn);
@@ -119,24 +121,8 @@ export function isReanchorRelocked(sn: string): boolean {
  * mower. Only meaningful while unvalidated; arms the clear-on-dock so the next
  * docked report counts as the deliberate re-anchor.
  */
-export function noteAutoRecharge(sn: string): void {
-  if (!unvalidated.has(sn)) return;
-  autoRechargeSeen.add(sn);
-  deviceSettingsRepo.upsert(sn, AUTO_RECHARGE_KEY, '1');
-}
-
-/**
- * Feed the mower's current docked state into the re-anchor lifecycle. Clears
- * the flag only on a docked report that follows an auto_recharge command (the
- * wizard's deliberate re-anchor). The docked state present at import time, and
- * stray bounces during the backward drive, do NOT clear the flag.
- */
-export function noteDockState(sn: string, docked: boolean): void {
-  if (!unvalidated.has(sn)) return;
-  if (docked && autoRechargeSeen.has(sn)) {
-    clearFrameUnvalidated(sn);
-  }
-}
+export function noteAutoRecharge(_sn: string): void { /* Dock messages never validate a frame. */ }
+export function noteDockState(_sn: string, _docked: boolean): void { /* Explicit fresh verification only. */ }
 
 // Commands that navigate or drive the map frame, and so are dangerous while
 // the frame is unvalidated (post bundle-restore, pre re-anchor): the mower

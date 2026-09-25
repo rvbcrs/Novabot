@@ -10,13 +10,11 @@
 import { db } from '../db/database.js';
 import { mapRepo } from '../db/repositories/index.js';
 import { pointInPolygon, polygonArea, polygonContains, segIntersects, MIN_WORK_AREA_M2, type XY } from '../maps/editGeometry.js';
-import { distanceToPolygon, dockPoint, nextChannelIndex, nextFreeWorkSlot, workSlots } from './canonicalNaming.js';
+import { distanceToPolygon, dockPoint, nextFreeWorkSlot, workSlots } from './canonicalNaming.js';
 import { translator, type Translate } from './serverText.js';
 
 /** ponytail: knop. Max afstand dock→zone voor een gegenereerd dockkanaal. */
 export const DOCK_MAX_M = 3;
-/** ponytail: knop. Max opening tussen twee zones voor een voorgesteld tussenkanaal. */
-export const LINK_MAX_M = 1.5;
 /** Puntafstand in een gegenereerd kanaal. */
 export const STEP_M = 0.25;
 /** Firmware-cap: map0..map4 (memory multi-map-limit). */
@@ -84,6 +82,23 @@ export function segmentCrossesPolygon(p: XY, q: XY, poly: XY[]): boolean {
   return pointInPolygon(p, poly) && pointInPolygon(q, poly);
 }
 
+/** Match the firmware's 1.4 m corridor, including its extended ends and obstacle margin. */
+export function channelCorridorBlocked(from: XY, to: XY, obstacles: XY[][]): boolean {
+  const halfWidth = 0.7;
+  const length = Math.hypot(to.x - from.x, to.y - from.y);
+  const ux = length ? (to.x - from.x) / length : 1;
+  const uy = length ? (to.y - from.y) / length : 0;
+  const a = { x: from.x - ux * halfWidth, y: from.y - uy * halfWidth };
+  const b = { x: to.x + ux * halfWidth, y: to.y + uy * halfWidth };
+  const corridor = [
+    { x: a.x - uy * halfWidth, y: a.y + ux * halfWidth },
+    { x: b.x - uy * halfWidth, y: b.y + ux * halfWidth },
+    { x: b.x + uy * halfWidth, y: b.y - ux * halfWidth },
+    { x: a.x + uy * halfWidth, y: a.y - ux * halfWidth },
+  ];
+  return obstacles.some(o => o.length >= 3 && polygonGap(corridor, o).dist <= 0.1);
+}
+
 /** Rechte lijn from→to, verdicht per step; `from` is altijd rij 1 (firmware: dock eerst). */
 export function straightChannel(from: XY, to: XY, step: number = STEP_M): XY[] {
   const len = Math.hypot(to.x - from.x, to.y - from.y);
@@ -117,12 +132,12 @@ export interface PlanInput {
   obstacles: XY[][];
   /** B's bestaande werkgebieden met hun obstakels. */
   existing: ExistingZone[];
+  /** Every target obstacle, including obstacles whose owning work row is absent. */
+  targetObstacles?: XY[][];
   /** B's dock (anker of live pose). */
   dock: XY | null;
   /** Bestaat er al een rij `map<slot>tocharge_unicom` op B (achtergebleven)? */
   dockChannelRowExists: boolean;
-  /** Eerste vrije index voor mapAtomapB_K_unicom. */
-  linkIndex: (from: number, to: number) => number;
 }
 
 export interface CopyPlan {
@@ -140,10 +155,9 @@ export interface CopyPlan {
 }
 
 /**
- * Spec §Plaatsings- en kanaalregels. Stap 1: verbinding met bestaande zones
- * (overlap = klaar, opening ≤ LINK_MAX_M = voorstel). Stap 2: dockkanaal,
- * verplicht voor slot 0 (het is ook het anker), anders alleen als stap 1
- * niets opleverde. Nooit een lange lijn tussen zones (trap-incident).
+ * A geometric overlap/short gap does not prove a navigable route from the
+ * dock. Only propose a checked dock corridor; other connections use the
+ * existing explicit channel-drawing flow.
  */
 export function planZoneCopy(i: PlanInput): CopyPlan {
   const canonical = `map${i.slot}`;
@@ -158,38 +172,14 @@ export function planZoneCopy(i: PlanInput): CopyPlan {
   const dockDistanceM = distanceToPolygon(dock, i.work);
   const warnings: CopyWarning[] = [];
 
-  // Stap 1: bestaande zones.
-  let connectedVia: string | null = null;
-  let link: ChannelPlan | null = null;
-  let nearest: { zone: ExistingZone; gap: ReturnType<typeof polygonGap> } | null = null;
-  for (const z of i.existing) {
-    const gap = polygonGap(z.points, i.work);
-    if (gap.dist === 0) {
-      connectedVia = z.canonical;
-      if (polygonContains(i.work, z.points) || polygonContains(z.points, i.work)) warnings.push('full_overlap');
-      break;
-    }
-    if (!nearest || gap.dist < nearest.gap.dist) nearest = { zone: z, gap };
-  }
-  if (!connectedVia && nearest && nearest.gap.dist <= LINK_MAX_M) {
-    const { zone, gap } = nearest;
-    const blocked = [...zone.obstacles, ...i.obstacles].some(o => segmentCrossesPolygon(gap.onA, gap.onB, o));
-    if (!blocked) {
-      link = {
-        canonical: `map${zone.slot}tomap${i.slot}_${i.linkIndex(zone.slot, i.slot)}_unicom`,
-        kind: 'link',
-        points: straightChannel(gap.onA, gap.onB),
-        replaces: false,
-      };
-    }
-  }
+  if (i.existing.some(z => polygonContains(i.work, z.points) || polygonContains(z.points, i.work))) warnings.push('full_overlap');
+  const allObstacles = [...i.obstacles, ...i.existing.flatMap(z => z.obstacles), ...(i.targetObstacles ?? [])];
 
   // Stap 2: dockkanaal.
   let dockChannel: ChannelPlan | null = null;
-  const wantDock = i.slot === 0 || (!connectedVia && !link);
-  if (wantDock && dockDistanceM <= DOCK_MAX_M) {
+  if (dockDistanceM <= DOCK_MAX_M) {
     const to = nearestBoundaryPoint(dock, i.work).point;
-    if (i.obstacles.some(o => segmentCrossesPolygon(dock, to, o))) {
+    if (channelCorridorBlocked(dock, to, allObstacles)) {
       if (i.slot === 0) return { ...base, refusal: 'dock_channel_blocked', dockDistanceM };
     } else {
       dockChannel = {
@@ -199,15 +189,15 @@ export function planZoneCopy(i: PlanInput): CopyPlan {
         replaces: i.dockChannelRowExists,
       };
     }
-  } else if (wantDock && i.slot === 0) {
+  } else if (i.slot === 0) {
     return { ...base, refusal: 'too_far_from_dock', dockDistanceM };
   }
 
-  const channels = [...(dockChannel ? [dockChannel] : []), ...(link ? [link] : [])];
-  if (dockChannel && i.existing.length > 0 && !connectedVia && !link) warnings.push('existing_zones_unlinked');
+  const channels = dockChannel ? [dockChannel] : [];
+  if (dockChannel && i.existing.length > 0) warnings.push('existing_zones_unlinked');
   return {
-    ...base, ok: true, channels, connectedVia,
-    needsChannel: !connectedVia && channels.length === 0,
+    ...base, ok: true, channels,
+    needsChannel: channels.length === 0,
     warnings, dockDistanceM,
   };
 }
@@ -221,7 +211,7 @@ export interface PreviewOk { ok: true; plan: CopyPlan; sourceAlias: string | nul
 export interface PreviewFail {
   ok: false;
   status: 400 | 404 | 409;
-  reason: 'bad_canonical' | 'source_not_found' | 'source_no_anchor' | 'bad_dock' | 'dock_too_far' | 'target_no_dock' | 'too_small';
+  reason: 'bad_canonical' | 'source_not_found' | 'source_no_anchor' | 'bad_dock' | 'dock_too_far' | 'target_no_dock' | 'too_small' | 'polygon_offset_active';
   error: string;
 }
 export type PreviewResult = PreviewOk | PreviewFail;
@@ -255,6 +245,14 @@ export function previewZoneCopy(
   opts: { withObstacles?: boolean } = {},
   T: Translate = translator('en'),
 ): PreviewResult {
+  // Offsets are applied only when exporting CSVs. Copying raw DB geometry
+  // would lose A's offset and add B's a second time after a measured placement.
+  if ([sourceSn, targetSn].some(sn => {
+    const offset = mapRepo.getPolygonOffset(sn);
+    return offset.x !== 0 || offset.y !== 0;
+  })) {
+    return { ok: false, status: 409, reason: 'polygon_offset_active', error: T`Zet de kaartverschuiving van beide maaiers op nul voordat je een zone kopieert.` };
+  }
   const m = sourceCanonical.match(/^map(\d+)$/);
   if (!m) return { ok: false, status: 400, reason: 'bad_canonical', error: T`Kies een werkgebied (map0, map1, ...) om te kopiëren.` };
   const src = mapRepo.findBySnAndCanonical(sourceSn, sourceCanonical);
@@ -268,8 +266,8 @@ export function previewZoneCopy(
   if (!dockAInA) {
     return { ok: false, status: 409, reason: 'source_no_anchor', error: T`De bronmaaier heeft geen dock-anker (geen map0tocharge_unicom en niet gedockt online); zonder anker is de zone niet te plaatsen.` };
   }
-  const x = Number(dockAtB?.x);
-  const y = Number(dockAtB?.y);
+  const x = typeof dockAtB?.x === 'number' ? dockAtB.x : NaN;
+  const y = typeof dockAtB?.y === 'number' ? dockAtB.y : NaN;
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     return { ok: false, status: 400, reason: 'bad_dock', error: T`Geef de positie van het laadstation van de bronmaaier op deze kaart (dockAtB.x/y).` };
   }
@@ -292,8 +290,8 @@ export function previewZoneCopy(
     .map(w => ({ slot: w.slot, canonical: `map${w.slot}`, points: w.poly, obstacles: obstaclesOf(targetSn, w.slot) }));
   const plan = planZoneCopy({
     slot, work, obstacles, existing, dock: dockB,
+    targetObstacles: mapRepo.findAllByMowerSnAndType(targetSn, 'obstacle').map(o => parsePoints(o.map_area)),
     dockChannelRowExists: !!mapRepo.findBySnAndCanonical(targetSn, `map${slot}tocharge_unicom`),
-    linkIndex: (from, to) => nextChannelIndex(targetSn, from, to),
   });
   const sourceAlias = src.map_name && src.map_name !== sourceCanonical ? src.map_name : null;
   return { ok: true, plan, sourceAlias, areaM2 };

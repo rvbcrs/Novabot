@@ -1458,6 +1458,8 @@ def _robot_map_xy(timeout_s=6):
 
 
 MAPS_HOME = "/userdata/lfi/maps/home0"
+MAP_CHARGING_STATION_FILE = "/userdata/lfi/charging_station_file/charging_station.yaml"
+MAP_POS_FILE = "/userdata/pos.json"
 
 
 def _follow_unicom(from_slot, to_slot, dry_run=False):
@@ -2635,104 +2637,115 @@ def handle_recalibrate_charging_pose(params, respond):
         respond("recalibrate_charging_pose_respond", {"result": 1, "error": str(e)})
 
 
-def handle_read_map_files(params, respond):
-    """Return ALL mower-side files needed for a full state restore.
+def _map_home(home):
+    if not isinstance(home, str) or not re.fullmatch(r"home[0-9]+", home):
+        raise ValueError("invalid map home")
+    return os.path.join(os.path.dirname(MAPS_HOME), home)
 
-    Captures the canonical on-disk state so a same-mower verbatim restore is
-    deterministic. Without these, the older bundle shape (csv_file/ +
-    charging_station.yaml only) couldn't bring back the UTM anchor or the
-    Nav2 occupancy grids — and `write_map_files` had to fudge them.
 
-    Captured (response payload):
-      csv_files            {filename: text}   from /userdata/lfi/maps/<home>/csv_file/
-      charging_station_yaml string             from /userdata/lfi/charging_station_file/
-      pos_json             text or null        /userdata/pos.json — UTM origin anchor
-      map_files_text       {filename: text}    *.yaml under maps/<home>/ (map.yaml,
-                                                mapN.yaml — all per-slot YAMLs)
-      map_files_b64        {filename: b64}     *.pgm + *.png under maps/<home>/
-                                                (binary, base64 so it fits JSON)
-
-    The map.yaml/pgm/png files are the whole-area occupancy grid; the
-    mapN.yaml/pgm/png are per-slot copies (one per work map). Without the
-    pgm Nav2 has no costmap → coverage_planner Error 107/118.
-
-    Optional params:
-      home: str — home dir under /userdata/lfi/maps. Default "home0".
-
-    Response:
-      result:0, home, csv_files, charging_station_yaml, pos_json,
-      map_files_text, map_files_b64
-    """
-    import base64 as _b64
-    home = params.get("home", "home0") if isinstance(params, dict) else "home0"
-    base = f"/userdata/lfi/maps/{home}/csv_file"
+def _map_snapshot_files(home):
+    """Capture the bytes that define a map. Stock writers may run outside our lock."""
+    base = _map_home(home)
+    if not os.path.isdir(os.path.join(base, "csv_file")):
+        raise ValueError("csv_file directory missing")
     files = {}
-    try:
-        if not os.path.isdir(base):
-            respond("read_map_files_respond", {"result": 1, "error": f"csv_file dir missing: {base}"})
-            return
-        for fname in sorted(os.listdir(base)):
-            full = os.path.join(base, fname)
-            if not os.path.isfile(full):
-                continue
-            with open(full) as f:
-                files[fname] = f.read()
+    for sub in ("csv_file", "x3_csv_file"):
+        directory = os.path.join(base, sub)
+        if os.path.isdir(directory):
+            for name in sorted(os.listdir(directory)):
+                full = os.path.join(directory, name)
+                if os.path.isfile(full):
+                    with open(full, "rb") as fh:
+                        files[f"{sub}/{name}"] = fh.read()
+    for name in sorted(os.listdir(base)):
+        full = os.path.join(base, name)
+        if os.path.isfile(full) and name.endswith((".yaml", ".pgm", ".png")):
+            with open(full, "rb") as fh:
+                files[f"map_files/{name}"] = fh.read()
+    for name, full in (("charging_station.yaml", MAP_CHARGING_STATION_FILE), ("pos.json", MAP_POS_FILE)):
+        if os.path.isfile(full):
+            with open(full, "rb") as fh:
+                files[name] = fh.read()
+    return files
 
-        # charging_station.yaml
-        yaml_path = "/userdata/lfi/charging_station_file/charging_station.yaml"
-        cs_yaml = ""
-        if os.path.exists(yaml_path):
-            with open(yaml_path) as f:
-                cs_yaml = f.read()
 
-        # pos.json — UTM origin anchor. Without this the local frame's
-        # world coordinate is undefined. A bundle without pos.json can only
-        # be safely restored when the mower's current pos.json already
-        # matches the one in effect when the bundle was made.
-        pos_json = None
-        pj_path = "/userdata/pos.json"
-        if os.path.exists(pj_path):
-            try:
-                with open(pj_path) as f:
-                    pos_json = f.read()
-            except Exception as e:
-                log(f"read_map_files: pos.json read failed (continuing): {e}")
+def _snapshot_manifest(files):
+    import hashlib
+    return {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
 
-        # map.yaml / mapN.yaml — text. map.pgm / map.png / mapN.pgm /
-        # mapN.png — binary, base64. Splitting by extension keeps the
-        # response payload directly inspectable on the server side for
-        # the text files.
-        home_dir = f"/userdata/lfi/maps/{home}"
-        map_files_text = {}
-        map_files_b64 = {}
+
+_MAP_OPERATION_LOCK = threading.RLock()
+_MAP_OPERATION_COMMANDS = {
+    "read_map_files", "write_map_files", "sync_map", "regenerate_per_map_files",
+    "reanchor_pos", "set_pos_origin", "restart_mapping", "set_coverage_planner_radius",
+}
+
+
+def run_extended_command(cmd_name, handler, params, respond):
+    """Serialize our map readers/writers; correlate responses even on handler errors."""
+    operation_id = params.get("operation_id") if isinstance(params, dict) else None
+
+    def reply(name, data):
+        if isinstance(operation_id, str) and operation_id:
+            data = dict(data, operation_id=operation_id)
+        respond(name, data)
+
+    def run():
         try:
-            for fname in sorted(os.listdir(home_dir)):
-                full = os.path.join(home_dir, fname)
-                if not os.path.isfile(full):
-                    continue
-                if fname.endswith(".yaml"):
-                    with open(full) as f:
-                        map_files_text[fname] = f.read()
-                elif fname.endswith(".pgm") or fname.endswith(".png"):
-                    with open(full, "rb") as f:
-                        map_files_b64[fname] = _b64.b64encode(f.read()).decode("ascii")
-        except Exception as e:
-            log(f"read_map_files: home_dir scan failed (continuing): {e}")
+            if cmd_name in _MAP_OPERATION_COMMANDS and _coverage_is_active():
+                reply(f"{cmd_name}_respond", {"result": 2, "error": "coverage active"})
+                return
+            handler(params, reply)
+        except Exception as error:
+            reply(f"{cmd_name}_respond", {"result": 1, "error": str(error)})
 
-        log(f"read_map_files: {len(files)} csv files, charging_station.yaml={'yes' if cs_yaml else 'no'}, "
-            f"pos.json={'yes' if pos_json else 'no'}, map_text={len(map_files_text)}, map_bin={len(map_files_b64)}")
+    if cmd_name in _MAP_OPERATION_COMMANDS:
+        with _MAP_OPERATION_LOCK:
+            run()
+    else:
+        run()
+
+
+def handle_read_map_files(params, respond):
+    """Return one verified snapshot; callers must reject a changing source set."""
+    import base64
+    import datetime
+    home = params.get("home", "home0")
+    try:
+        files = _map_snapshot_files(home)
+        manifest = _snapshot_manifest(files)
+        consistent = manifest == _snapshot_manifest(_map_snapshot_files(home))
         respond("read_map_files_respond", {
             "result": 0,
             "home": home,
-            "csv_files": files,
-            "charging_station_yaml": cs_yaml,
-            "pos_json": pos_json,
-            "map_files_text": map_files_text,
-            "map_files_b64": map_files_b64,
+            "csv_files": {name[9:]: data.decode("utf-8") for name, data in files.items() if name.startswith("csv_file/")},
+            "x3_csv_files": {name[12:]: data.decode("utf-8") for name, data in files.items() if name.startswith("x3_csv_file/")},
+            "charging_station_yaml": files.get("charging_station.yaml", b"").decode("utf-8"),
+            "pos_json": files["pos.json"].decode("utf-8") if "pos.json" in files else None,
+            "map_files_text": {name[10:]: data.decode("utf-8") for name, data in files.items() if name.startswith("map_files/") and name.endswith(".yaml")},
+            "map_files_b64": {name[10:]: base64.b64encode(data).decode("ascii") for name, data in files.items() if name.startswith("map_files/") and name.endswith((".pgm", ".png"))},
+            "snapshot_consistent": consistent,
+            "snapshot_manifest": manifest,
+            "captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         })
-    except Exception as e:
-        log(f"read_map_files error: {e}")
-        respond("read_map_files_respond", {"result": 1, "error": str(e)})
+    except Exception as error:
+        respond("read_map_files_respond", {"result": 1, "error": str(error)})
+
+
+def _backup_map_home(base):
+    """A failed recovery snapshot aborts the mutation; retain the last three."""
+    import shutil
+    if not os.path.isdir(base) or not os.listdir(base):
+        return
+    snapshot = f"{base}.bak.{time.time_ns()}"
+    shutil.copytree(base, snapshot)
+    parent = os.path.dirname(base)
+    prefix = os.path.basename(base) + ".bak."
+    snapshots = sorted((name for name in os.listdir(parent)
+                        if name.startswith(prefix) and name[len(prefix):].isdigit()),
+                       key=lambda name: int(name[len(prefix):]))
+    for name in snapshots[:-3]:
+        shutil.rmtree(os.path.join(parent, name))
 
 
 def handle_write_map_files(params, respond):
@@ -2760,6 +2773,7 @@ def handle_write_map_files(params, respond):
     import base64 as _b64
     home = params.get("home", "home0") if isinstance(params, dict) else "home0"
     csv_files = (params or {}).get("csv_files", {})
+    x3_csv_files = (params or {}).get("x3_csv_files", csv_files)
     cs_yaml = (params or {}).get("charging_station_yaml")
     pos_json = (params or {}).get("pos_json")              # text content or null
     map_files_text = (params or {}).get("map_files_text", {})  # {fname: text}
@@ -2769,43 +2783,38 @@ def handle_write_map_files(params, respond):
         respond("write_map_files_respond", {"result": 1, "error": "csv_files object required"})
         return
 
-    base = f"/userdata/lfi/maps/{home}"
     written = []
     try:
-        # Whitelist filenames — must match firmware's expected pattern.
-        # Allow alphanum + underscore + dot; reject anything path-like to
-        # prevent traversal.
-        for fname in csv_files.keys():
-            if not re.fullmatch(r"[A-Za-z0-9_.-]+", fname):
-                respond("write_map_files_respond", {"result": 1, "error": f"invalid filename: {fname}"})
-                return
-            if ".." in fname or fname.startswith("/"):
-                respond("write_map_files_respond", {"result": 1, "error": f"invalid filename: {fname}"})
-                return
+        base = _map_home(home)
+        # Decode and validate the ENTIRE request before any backup or deletion.
+        decoded_maps = {}
+        for group, values, extensions in (
+            ("csv_files", csv_files, (".csv", ".json")),
+            ("x3_csv_files", x3_csv_files, (".csv", ".json")),
+            ("map_files_text", map_files_text, (".yaml",)),
+            ("map_files_b64", map_files_b64, (".pgm", ".png")),
+        ):
+            if not isinstance(values, dict):
+                raise ValueError(f"{group} object required")
+            for name, content in values.items():
+                if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name)
+                        or ".." in name or not name.endswith(extensions) or not isinstance(content, str)):
+                    raise ValueError(f"invalid {group} entry: {name}")
+                if group == "map_files_b64":
+                    decoded_maps[name] = _b64.b64decode(content, validate=True)
+        if cs_yaml is not None and (not isinstance(cs_yaml, str) or not cs_yaml.strip()):
+            raise ValueError("charging_station_yaml must be nonempty text")
+        if pos_json is not None:
+            if not isinstance(pos_json, str):
+                raise ValueError("pos_json must be text")
+            json.loads(pos_json)
 
-        # SAFETY: snapshot the whole existing map dir BEFORE we wipe/overwrite
-        # anything. The wipe below clears csv_file/ + x3_csv_file/ and the
-        # rasters get overwritten — all irreversible. If a restore ships a bad
-        # map (server-side validation is the first gate; this is the on-device
-        # net), the user's working map is recoverable from home0.bak.<ts>/.
-        # Keep the newest few snapshots; prune the rest.
-        try:
-            import shutil as _shutil_snap
-            if os.path.isdir(base) and os.listdir(base):
-                snap = f"{base}.bak.{int(time.time())}"
-                if not os.path.exists(snap):
-                    _shutil_snap.copytree(base, snap)
-                    log(f"write_map_files: pre-wipe snapshot -> {snap}")
-                parent = os.path.dirname(base)
-                prefix = os.path.basename(base) + ".bak."
-                snaps = sorted(d for d in os.listdir(parent) if d.startswith(prefix))
-                for stale in snaps[:-3]:
-                    try:
-                        _shutil_snap.rmtree(os.path.join(parent, stale))
-                    except Exception:
-                        pass
-        except Exception as e:
-            log(f"write_map_files: pre-wipe snapshot failed (continuing): {e}")
+        # Recovery data is required before any deletion, not best-effort.
+        _backup_map_home(base)
+
+        if isinstance(cs_yaml, str) and os.path.exists(MAP_CHARGING_STATION_FILE):
+            import shutil
+            shutil.copyfile(MAP_CHARGING_STATION_FILE, f"{MAP_CHARGING_STATION_FILE}.bak.{time.time_ns()}")
 
         # Inter-map / dock connectors (`mapXtomapY_..._unicom.csv`,
         # `mapXtocharge_unicom.csv`) record zone CONNECTIVITY. For touching zones
@@ -2837,7 +2846,7 @@ def handle_write_map_files(params, respond):
                 return False
             return m.group(2) is None or m.group(2) in surviving_slots
 
-        for sub in ("csv_file", "x3_csv_file"):
+        for sub, provided_files in (("csv_file", csv_files), ("x3_csv_file", x3_csv_files)):
             d = f"{base}/{sub}"
             os.makedirs(d, exist_ok=True)
             # Capture connectors to preserve BEFORE wiping.
@@ -2845,7 +2854,7 @@ def handle_write_map_files(params, respond):
             for old in os.listdir(d):
                 op = os.path.join(d, old)
                 if (os.path.isfile(op) and old.endswith("_unicom.csv")
-                        and old not in csv_files and _connector_survives(old)):
+                        and old not in provided_files and _connector_survives(old)):
                     try:
                         with open(op) as fh:
                             preserved[old] = fh.read()
@@ -2857,7 +2866,7 @@ def handle_write_map_files(params, respond):
                 old_path = os.path.join(d, old)
                 if os.path.isfile(old_path):
                     os.remove(old_path)
-            for fname, content in csv_files.items():
+            for fname, content in provided_files.items():
                 full = os.path.join(d, fname)
                 with open(full, "w") as f:
                     f.write(content)
@@ -2871,17 +2880,8 @@ def handle_write_map_files(params, respond):
                 log(f"write_map_files: preserved connector {sub}/{fname} (not in provided set)")
 
         if isinstance(cs_yaml, str) and cs_yaml.strip():
-            yaml_dir = "/userdata/lfi/charging_station_file"
-            os.makedirs(yaml_dir, exist_ok=True)
-            yaml_path = os.path.join(yaml_dir, "charging_station.yaml")
-            if os.path.exists(yaml_path):
-                ts = int(time.time())
-                bak = f"{yaml_path}.bak.{ts}"
-                try:
-                    import shutil as _shutil
-                    _shutil.copyfile(yaml_path, bak)
-                except Exception as e:
-                    log(f"write_map_files: charging_station backup failed (continuing): {e}")
+            yaml_path = MAP_CHARGING_STATION_FILE
+            os.makedirs(os.path.dirname(yaml_path), exist_ok=True)
             with open(yaml_path, "w") as f:
                 f.write(cs_yaml)
             written.append(yaml_path)
@@ -2891,7 +2891,7 @@ def handle_write_map_files(params, respond):
         # caller has determined the bundle is from the same physical mower.
         # Always back up existing pos.json before overwriting.
         if isinstance(pos_json, str) and pos_json.strip():
-            pj_path = "/userdata/pos.json"
+            pj_path = MAP_POS_FILE
             if os.path.exists(pj_path):
                 ts = int(time.time())
                 bak = f"{pj_path}.bak.{ts}"
@@ -2921,18 +2921,16 @@ def handle_write_map_files(params, respond):
                 with open(p, "w") as f:
                     f.write(content)
                 written.append(p)
-            for fname, b64 in (map_files_b64 or {}).items():
-                if not re.fullmatch(r"[A-Za-z0-9_.-]+", fname): continue
-                if not (fname.endswith(".pgm") or fname.endswith(".png")): continue
-                try:
-                    raw = _b64.b64decode(b64)
-                except Exception as e:
-                    log(f"write_map_files: skip {fname} (bad base64): {e}")
-                    continue
+            for fname, raw in decoded_maps.items():
                 p = f"{base}/{fname}"
                 with open(p, "wb") as f:
                     f.write(raw)
                 written.append(p)
+            if prune_connectors:
+                expected_rasters = set(map_files_text) | set(map_files_b64)
+                for name in os.listdir(base):
+                    if name.endswith((".yaml", ".pgm", ".png")) and name not in expected_rasters:
+                        os.remove(os.path.join(base, name))
             log(f"write_map_files: explicit map files: {len(map_files_text or {})} yaml, {len(map_files_b64 or {})} binary")
 
         # Per-map yaml/pgm/png — firmware looks for `map<N>.yaml` (etc.)
@@ -4529,8 +4527,7 @@ def handle_reanchor_pos(params, respond):
     the in-memory origin x/y directly), so we write a PRECISE UTM here, not a
     coarse seed.
 
-    The origin is shifted by the DOCK ANCHOR (first point of
-    map0tocharge_unicom.csv = the charger's position in the polygon/map frame) so
+    The origin is shifted by the explicit, server-validated DOCK ANCHOR so
     a docked mower lands on that anchor, NOT on (0,0). Writing the raw GPS as
     origin put the charger at (0,0) while the polygons expect it at the anchor,
     shifting the whole map ~2m (mis-anchor bug, LIVE-fixed 2026-07-01 on .244:
@@ -4542,13 +4539,19 @@ def handle_reanchor_pos(params, respond):
     Fixed to re-lock, then the docked position lands on the dock anchor.
     Full analysis: research/documents/reanchor-polygon-charging-pose-diagnosis.md
 
-    Payload: {"lat": float, "lng": float, "anchor_x"?: float, "anchor_y"?: float}
+    Payload: {"lat": float, "lng": float, "anchor_x": float, "anchor_y": float}
     """
     import json as _json, math as _math, os as _os
     lat = params.get("lat")
     lng = params.get("lng")
-    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
-        respond("reanchor_pos_respond", {"result": 1, "error": "lat/lng required"})
+    anchor_x = params.get("anchor_x")
+    anchor_y = params.get("anchor_y")
+    values = (lat, lng, anchor_x, anchor_y)
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not _math.isfinite(v) for v in values):
+        respond("reanchor_pos_respond", {"result": 1, "error": "finite lat/lng and explicit anchor_x/anchor_y required"})
+        return
+    if not (-80 <= lat <= 84 and -180 <= lng < 180):
+        respond("reanchor_pos_respond", {"result": 1, "error": "coordinates outside UTM range"})
         return
 
     # WGS84 -> UTM (Karney/Snyder, precise; validated to ~2mm vs stored origins)
@@ -4570,6 +4573,8 @@ def handle_reanchor_pos(params, respond):
         y = k0 * (M + N * _math.tan(latr) * (A ** 2 / 2
                   + (5 - T + 9 * C + 4 * C ** 2) * A ** 4 / 24
                   + (61 - 58 * T + T ** 2 + 600 * C - 330 * ep2) * A ** 6 / 720))
+        if lat_d < 0:
+            y += 10000000.0
         return zone, x, y
 
     # UTM -> WGS84 inverse (Snyder), so wgs84_origin stays consistent with the
@@ -4577,6 +4582,8 @@ def handle_reanchor_pos(params, respond):
     def _u2g(xx, yy, zn):
         a = 6378137.0; f = 1 / 298.257223563; k0 = 0.9996
         e2 = f * (2 - f); e1 = (1 - _math.sqrt(1 - e2)) / (1 + _math.sqrt(1 - e2))
+        if lat < 0:
+            yy -= 10000000.0
         xx -= 500000.0; M = yy / k0
         mu = M / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
         phi1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * _math.sin(2 * mu)
@@ -4594,32 +4601,13 @@ def handle_reanchor_pos(params, respond):
                 + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * ep2 + 24 * T1 ** 2) * D ** 5 / 120) / _math.cos(phi1)
         return _math.degrees(lat_o), _math.degrees(lon_o)
 
-    # Dock anchor = first point of map0tocharge_unicom.csv (charger position in the
-    # polygon/map frame). The polygons are drawn around THIS point, so the origin
-    # must be shifted so a docked mower reads this anchor, not (0,0).
-    # ponytail: read map0 unicom; falls back to (0,0) if absent (pre-2026-07 behaviour)
-    def _dock_anchor():
-        ax = params.get("anchor_x"); ay = params.get("anchor_y")
-        if isinstance(ax, (int, float)) and isinstance(ay, (int, float)):
-            return float(ax), float(ay)
-        for p in ("/userdata/lfi/maps/home0/csv_file/map0tocharge_unicom.csv",
-                  "/userdata/lfi/maps/home0/x3_csv_file/map0tocharge_unicom.csv"):
-            try:
-                with open(p) as f:
-                    parts = f.readline().strip().split(",")
-                return float(parts[0]), float(parts[1])
-            except Exception:
-                continue
-        return 0.0, 0.0
-
     zone, x, y = _g2u(float(lat), float(lng))
-    anchor_x, anchor_y = _dock_anchor()
     x -= anchor_x
     y -= anchor_y
     olat, olon = _u2g(x, y, zone)
     ts = 0
     try:
-        with open("/userdata/pos.json") as f:
+        with open(MAP_POS_FILE) as f:
             ts = float(_json.load(f).get("time_stamp", 0))
     except Exception:
         pass
@@ -4630,12 +4618,14 @@ def handle_reanchor_pos(params, respond):
     }
     try:
         try:
-            _os.chmod("/userdata/pos.json", 0o644)  # unlock if a prior set_pos_origin locked it
+            _os.chmod(MAP_POS_FILE, 0o644)  # unlock if a prior set_pos_origin locked it
         except Exception:
             pass
-        with open("/userdata/pos.json", "w") as f:
+        temporary_path = MAP_POS_FILE + ".tmp"
+        with open(temporary_path, "w") as f:
             _json.dump(payload, f, indent=3)
             f.write("\n")
+        _os.replace(temporary_path, MAP_POS_FILE)
         # deliberately leave 0644 — no lock
     except Exception as e:
         respond("reanchor_pos_respond", {"result": 1, "error": f"write failed: {e}"})
@@ -5032,13 +5022,29 @@ def handle_sync_map(params, respond):
     base = f"http://{server}/api/dashboard/maps/{sn}"
     local_md5 = _local_zip_md5("/userdata/lfi/maps/home0/LFIN1231000211.zip")
 
-    # 1. Cheap HEAD-ish probe
-    try:
-        with urllib.request.urlopen(f"{base}/sync-info", timeout=10) as r:
-            info = json.loads(r.read().decode("utf-8"))
-    except Exception as e:
-        respond("sync_map_respond", {"result": 1, "error": f"sync-info: {e}"})
+    # New servers pin one immutable ZIP to this operation. Legacy commands
+    # retain the old pull path, but cannot claim correlated completion.
+    zip_url = params.get("zip_url")
+    expected_md5 = params.get("expected_md5")
+    pinned = isinstance(zip_url, str) and isinstance(expected_md5, str) and bool(re.fullmatch(r"[a-fA-F0-9]{32}", expected_md5))
+    if params.get("operation_id") and not pinned:
+        respond("sync_map_respond", {"result": 1, "error": "correlated sync requires zip_url and expected_md5"})
         return
+    if pinned:
+        from urllib.parse import urlparse
+        if zip_url.startswith(f"/api/dashboard/maps/{sn}/sync-operation/"):
+            zip_url = f"http://{server}{zip_url}"
+        if urlparse(zip_url).scheme not in ("http", "https"):
+            respond("sync_map_respond", {"result": 1, "error": "invalid ZIP URL"})
+            return
+        info = {"md5": expected_md5.lower()}
+    else:
+        try:
+            with urllib.request.urlopen(f"{base}/sync-info", timeout=10) as r:
+                info = json.loads(r.read().decode("utf-8"))
+        except Exception as e:
+            respond("sync_map_respond", {"result": 1, "error": f"sync-info: {e}"})
+            return
 
     remote_md5 = info.get("md5")
     if remote_md5 and local_md5 and remote_md5 == local_md5 and not force:
@@ -5047,8 +5053,8 @@ def handle_sync_map(params, respond):
 
     # 2. Pull actual bytes with ETag so repeat calls are cheap server-side.
     try:
-        req = urllib.request.Request(f"{base}/sync-zip")
-        if local_md5:
+        req = urllib.request.Request(zip_url if pinned else f"{base}/sync-zip")
+        if local_md5 and not pinned:
             req.add_header("If-None-Match", f'"{local_md5}"')
         with urllib.request.urlopen(req, timeout=30) as r:
             zip_bytes = r.read()
@@ -5063,16 +5069,46 @@ def handle_sync_map(params, respond):
         respond("sync_map_respond", {"result": 1, "error": f"sync-zip: {e}"})
         return
 
-    # Note: we don't cross-check remote_md5 from sync-info against got_md5 here,
-    # because `generateMapZipFromDb` embeds fresh file timestamps in each ZIP build,
-    # so two back-to-back calls yield different binary hashes. We trust the
-    # downloaded bytes directly — the ETag on sync-zip already handles the
-    # "unchanged since local_md5" case with a 304.
+    if pinned and got_md5 != expected_md5.lower():
+        respond("sync_map_respond", {"result": 1, "error": "ZIP hash mismatch; map untouched"})
+        return
 
-    # 3. Write ZIP to /tmp then unzip into home0/, atomically replacing csv_file/x3_csv_file.
-    tmp_zip = "/tmp/novabot_sync_map.zip"
-    home0 = "/userdata/lfi/maps/home0"
+    # Check the complete ZIP before touching a working map. A matching hash
+    # identifies bytes; it does not prove those bytes form a usable archive.
     try:
+        import io
+        import zipfile
+        import pathlib
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            work_found = False
+            for member in archive.infolist():
+                name = pathlib.PurePosixPath(member.filename)
+                if (name.is_absolute() or ".." in name.parts or not name.parts
+                        or name.parts[0] not in ("csv_file", "x3_csv_file")
+                        or (member.external_attr >> 16) & 0o170000 == 0o120000):
+                    raise ValueError(f"invalid ZIP path: {member.filename}")
+                if member.is_dir():
+                    continue
+                if len(name.parts) != 2 or not name.name.endswith((".csv", ".json")):
+                    raise ValueError(f"invalid map entry: {member.filename}")
+                raw = archive.read(member).decode("utf-8")  # validates CRC too
+                if name.parts[0] == "csv_file" and re.fullmatch(r"map[0-9]+_work\.csv", name.name):
+                    points = [line.strip().split(",") for line in raw.splitlines() if line.strip()]
+                    if len(points) < 3 or any(len(point) != 2 or not all(math.isfinite(float(v)) for v in point) for point in points):
+                        raise ValueError(f"invalid work polygon: {member.filename}")
+                    work_found = True
+            if not work_found:
+                raise ValueError("ZIP has no work polygon")
+    except Exception as error:
+        respond("sync_map_respond", {"result": 1, "error": f"invalid ZIP; map untouched: {error}"})
+        return
+
+    # 3. Back up before replacing directories. Device + server changes are
+    # deliberately not described as one atomic transaction.
+    tmp_zip = "/tmp/novabot_sync_map.zip"
+    home0 = MAPS_HOME
+    try:
+        _backup_map_home(home0)
         with open(tmp_zip, "wb") as f:
             f.write(zip_bytes)
         # Clean existing dirs (firmware expects fresh extract, not merge)
@@ -6341,8 +6377,8 @@ def main():
                     params = data[cmd_name] or {}
                     # Run in thread to avoid blocking MQTT loop
                     threading.Thread(
-                        target=handler,
-                        args=(params, respond),
+                        target=run_extended_command,
+                        args=(cmd_name, handler, params, respond),
                         daemon=True,
                         name=f"cmd-{cmd_name}"
                     ).start()

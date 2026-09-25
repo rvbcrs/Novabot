@@ -8,6 +8,41 @@
 
 export type GpsPoint = { lat: number; lng: number };
 export type LocalPoint = { x: number; y: number };
+export interface MapDisplayCalibration { offsetLat: number; offsetLng: number; rotation: number; scale: number }
+
+/** Existing display transform, with a physical geometry offset applied BEFORE rotation/scale. */
+export function calibrateGps(p: GpsPoint, cal: MapDisplayCalibration, center: GpsPoint, geometryOffset: GpsPoint = { lat: 0, lng: 0 }): GpsPoint {
+  const angle = cal.rotation * Math.PI / 180;
+  const a = (p.lat + geometryOffset.lat - center.lat) * cal.scale;
+  const b = (p.lng + geometryOffset.lng - center.lng) * cal.scale;
+  return {
+    lat: center.lat + a * Math.cos(angle) - b * Math.sin(angle) + cal.offsetLat,
+    lng: center.lng + a * Math.sin(angle) + b * Math.cos(angle) + cal.offsetLng,
+  };
+}
+
+/** Exact inverse used by drawing, editing and navigation. Invalid calibration yields no usable point. */
+export function uncalibrateGps(p: GpsPoint, cal: MapDisplayCalibration, center: GpsPoint, geometryOffset: GpsPoint = { lat: 0, lng: 0 }): GpsPoint {
+  if (!Number.isFinite(cal.scale) || cal.scale <= 0) return { lat: NaN, lng: NaN };
+  const angle = cal.rotation * Math.PI / 180;
+  const a = p.lat - center.lat - cal.offsetLat;
+  const b = p.lng - center.lng - cal.offsetLng;
+  return {
+    lat: center.lat + (a * Math.cos(angle) + b * Math.sin(angle)) / cal.scale - geometryOffset.lat,
+    lng: center.lng + (b * Math.cos(angle) - a * Math.sin(angle)) / cal.scale - geometryOffset.lng,
+  };
+}
+
+/** Separate the ZIP's physical translation from the legacy display offset. Telemetry already includes the former. */
+export function splitMapCalibration(active: MapDisplayCalibration, saved: MapDisplayCalibration, physicalOffset: LocalPoint, ref: GpsPoint): { display: MapDisplayCalibration; geometryOffset: GpsPoint } {
+  const shifted = localToGps(physicalOffset, ref);
+  const display = {
+    ...active,
+    offsetLat: saved.offsetLat - (shifted.lat - ref.lat),
+    offsetLng: saved.offsetLng - (shifted.lng - ref.lng),
+  };
+  return { display, geometryOffset: { lat: active.offsetLat - display.offsetLat, lng: active.offsetLng - display.offsetLng } };
+}
 
 /**
  * The mower's map frame is UTM minus an origin (robot_combination_localization

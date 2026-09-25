@@ -56,6 +56,7 @@ import { AppActionSheet, type AppActionSheetItem } from '../components/AppAction
 import { useDemo } from '../context/DemoContext';
 import { usePattern } from '../context/PatternContext';
 import { contourToSvgPath, transformToGps } from '../utils/patternUtils';
+import { mapToGps, gpsToMap, validMapPoint, validGpsPoint, effectiveMapPoints } from '../utils/mapProjection';
 import { findMissingChannels } from '../utils/mapChannels';
 import { useI18n } from '../i18n';
 import { Linking } from 'react-native';
@@ -72,23 +73,11 @@ const ZONE_PANEL_COLLAPSED_OFFSET = ZONE_PANEL_HEIGHT - ZONE_PANEL_PEEK;
 const INNER_PADDING = 10;
 
 // ── Local meters → SVG coordinate conversion ───────────────────────
-// All map data is in local meters with charger at (0,0).
-// Mower GPS is converted to local meters using charger GPS as origin.
-
-interface GpsPoint { lat: number; lng: number }
+// Map geometry and telemetry use the same UTM-grid metre frame. The dock
+// anchor is supplied separately and is not assumed to be (0,0).
 
 interface LocalBounds {
   minX: number; maxX: number; minY: number; maxY: number;
-}
-
-/** Convert GPS point to local meters relative to charger GPS origin */
-function gpsToLocal(point: GpsPoint, origin: GpsPoint): LocalPoint {
-  const metersPerDegreeLat = 111320;
-  const metersPerDegreeLng = 111320 * Math.cos(origin.lat * Math.PI / 180);
-  return {
-    x: (point.lng - origin.lng) * metersPerDegreeLng,
-    y: (point.lat - origin.lat) * metersPerDegreeLat,
-  };
 }
 
 function computeLocalBounds(points: LocalPoint[]): LocalBounds | null {
@@ -306,6 +295,7 @@ export default function MapScreen() {
   const { colors, colorScheme } = useTheme();
   const [maps, setMaps] = useState<MapData[]>([]);
   const [chargerGpsOrigin, setChargerGpsOrigin] = useState<ChargerGps | null>(null);
+  const [chargingPose, setChargingPose] = useState<LocalPoint | null>(null);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
   const [plannedPaths, setPlannedPaths] = useState<Array<{ id: string; points: LocalPoint[] }>>([]);
   const [loading, setLoading] = useState(true);
@@ -574,6 +564,7 @@ export default function MapScreen() {
   const fetchData = useCallback(async () => {
     if (demo.enabled) {
       setMaps(DEMO_MAPS);
+      setChargingPose({ x: 0, y: 0 });
       setTrail(DEMO_TRAIL);
       setLoading(false);
       return;
@@ -585,14 +576,16 @@ export default function MapScreen() {
       const url = await getServerUrl();
       if (!url) return;
       const api = new ApiClient(url);
-      const [mapsRes, trailRes, pathsRes, previewRes] = await Promise.all([
-        api.fetchMaps(sn).catch(() => ({ maps: [], chargerGps: null })),
+      const [mapsRes, offset, trailRes, pathsRes, previewRes] = await Promise.all([
+        api.fetchMaps(sn),
+        api.fetchPolygonOffset(sn),
         api.getTrail(sn).catch(() => []),
         api.getPlannedPath(sn).catch(() => []),
         api.getPreviewPath(sn).catch(() => []),
       ]);
-      setMaps(mapsRes.maps ?? []);
-      setChargerGpsOrigin(mapsRes.chargerGps ?? null);
+      setMaps((mapsRes.maps ?? []).map(m => ({ ...m, mapArea: effectiveMapPoints(m.mapArea, offset, m.canonicalName ?? m.mapId) })));
+      setChargerGpsOrigin(validGpsPoint(mapsRes.chargerGps) ? mapsRes.chargerGps : null);
+      setChargingPose(validMapPoint(mapsRes.chargingPose) ? mapsRes.chargingPose : null);
       setTrail(Array.isArray(trailRes) ? trailRes : (trailRes as any).trail ?? []);
       // Prefer plan_path tijdens maaien (live refresh), anders preview_path
       // (statische berekening gebaseerd op de laatste maaisessie). Beide
@@ -600,7 +593,14 @@ export default function MapScreen() {
       const plan = Array.isArray(pathsRes) ? pathsRes : [];
       const preview = Array.isArray(previewRes) ? previewRes : [];
       setPlannedPaths(plan.length > 0 ? plan : preview);
-    } catch { /* ignore */ }
+    } catch {
+      // Do not keep a previous mower's geometry/anchor if this frame could not be loaded.
+      setMaps([]);
+      setChargerGpsOrigin(null);
+      setChargingPose(null);
+      setTrail([]);
+      setPlannedPaths([]);
+    }
     finally { setLoading(false); }
   }, [mower?.sn, demo.enabled]);
 
@@ -1134,15 +1134,9 @@ export default function MapScreen() {
     return trail.map(p => ({ x: (p as any).x ?? 0, y: (p as any).y ?? 0 }));
   }, [trail]);
 
-  // Charger position. Stock heading-discovery shifts the mower's
-  // localization origin away from the physical dock, so the polygon's
-  // (0,0) is NOT where the dock is. The server captures the mower's
-  // map_position whenever the mower reports being docked and exposes
-  // it as dockPose; render the icon there. Fallback (0,0) if the
-  // server has not yet seen the mower docked since startup.
-  const chargerLocal: LocalPoint = mower?.dockPose
-    ? { x: mower.dockPose.x, y: mower.dockPose.y }
-    : { x: 0, y: 0 };
+  // Use the same persisted map anchor as the GPS conversion. A transient
+  // docked telemetry sample can drift and must not silently move this origin.
+  const chargerLocal = chargingPose;
 
   const bounds = useMemo(() => {
     let b: LocalBounds | null = null;
@@ -1153,14 +1147,14 @@ export default function MapScreen() {
     if (trailLocal.length > 0) b = expandLocalBounds(b, computeLocalBounds(trailLocal));
     if (mowerLocal) b = expandLocalBounds(b, computeLocalBounds([mowerLocal]));
     // Include charger only if no maps (otherwise charger at origin can inflate bounds)
-    if (!b) b = expandLocalBounds(b, computeLocalBounds([chargerLocal]));
+    if (!b && chargerLocal) b = expandLocalBounds(b, computeLocalBounds([chargerLocal]));
     if (b) {
       const xPad = (b.maxX - b.minX) * 0.08 || 0.5;
       const yPad = (b.maxY - b.minY) * 0.08 || 0.5;
       b = { minX: b.minX - xPad, maxX: b.maxX + xPad, minY: b.minY - yPad, maxY: b.maxY + yPad };
     }
     return b;
-  }, [visibleMaps, trailLocal, mowerLocal]);
+  }, [visibleMaps, trailLocal, mowerLocal, chargerLocal]);
 
   /** The flat render as a rectangle on this canvas, or null when it cannot be
    *  placed (an iso render, or one made from a drone photo that may be rotated
@@ -1175,7 +1169,7 @@ export default function MapScreen() {
 
   // Pattern placement: convert tap position to local meters, then to GPS for pattern context
   const handleMapTap = useCallback((evt: { nativeEvent: { locationX: number; locationY: number } }) => {
-    if (!patternCtx.isPlacing || !bounds) return;
+    if (!patternCtx.isPlacing || !bounds || !chargerGpsOrigin || !chargingPose) return;
     const x = evt.nativeEvent.locationX;
     const y = evt.nativeEvent.locationY;
     const drawSize = MAP_SIZE - INNER_PADDING * 2;
@@ -1187,19 +1181,9 @@ export default function MapScreen() {
     // Inverse of localToSvg (no rotation, just Y flip).
     const localX = (x - INNER_PADDING - xOffset) / mapScale + bounds.minX;
     const localY = bounds.maxY - (y - INNER_PADDING - yOffset) / mapScale;
-    // Convert to GPS if chargerGpsOrigin available, otherwise use local coords directly
-    if (chargerGpsOrigin) {
-      const metersPerDegreeLat = 111320;
-      const metersPerDegreeLng = 111320 * Math.cos(chargerGpsOrigin.lat * Math.PI / 180);
-      patternCtx.setCenter(
-        chargerGpsOrigin.lat + localY / metersPerDegreeLat,
-        chargerGpsOrigin.lng + localX / metersPerDegreeLng,
-      );
-    } else {
-      // No GPS origin — use local meters as pseudo-GPS (pattern will render in local coords)
-      patternCtx.setCenter(localY, localX);
-    }
-  }, [patternCtx, bounds, chargerGpsOrigin]);
+    const gps = mapToGps({ x: localX, y: localY }, chargerGpsOrigin, chargingPose);
+    patternCtx.setCenter(gps.lat, gps.lng);
+  }, [patternCtx, bounds, chargerGpsOrigin, chargingPose]);
 
   const handleTapGesture = (x: number, y: number) => {
     handleMapTap({ nativeEvent: { locationX: x, locationY: y } } as any);
@@ -1510,7 +1494,7 @@ export default function MapScreen() {
                 };
                 const m = mowerLocal ? toPx(mowerLocal) : null;
                 const nose = mowerLocal ? toPx({ x: mowerLocal.x + 0.9 * Math.cos(heading), y: mowerLocal.y + 0.9 * Math.sin(heading) }) : null;
-                const dock = toPx(chargerLocal);
+                const dock = chargerLocal ? toPx(chargerLocal) : null;
                 const pts = (ps: LocalPoint[]) => ps.map(p => { const q = toPx(p); return `${q.x.toFixed(1)},${q.y.toFixed(1)}`; }).join(' ');
                 return (
                   <Svg style={StyleSheet.absoluteFill} viewBox={`0 0 ${tilt.width} ${tilt.height}`} preserveAspectRatio="xMidYMid meet" pointerEvents="none">
@@ -1525,10 +1509,10 @@ export default function MapScreen() {
                         fill="none" stroke="#38bdf8" strokeWidth={4} strokeOpacity={0.85} strokeLinejoin="round" strokeLinecap="round" />
                     )}
                     {/* Dock: orange charger pin with a bolt, standing on its spot. */}
-                    <G transform={`translate(${dock.x} ${dock.y})`}>
+                    {dock && <G transform={`translate(${dock.x} ${dock.y})`}>
                       <Path d="M0 0 L-9 -14 A14 14 0 1 1 9 -14 Z" fill="#f59e0b" stroke="#ffffff" strokeWidth={2.5} />
                       <Path d="M2 -33 L-5 -21 L0 -21 L-2 -12 L6 -25 L1 -25 Z" fill="#ffffff" />
-                    </G>
+                    </G>}
                     {/* Mower: body pointing along its heading. */}
                     {m && nose && (
                       <G transform={`translate(${m.x} ${m.y}) rotate(${(Math.atan2(nose.y - m.y, nose.x - m.x) * 180) / Math.PI})`}>
@@ -1819,8 +1803,8 @@ export default function MapScreen() {
                     />
                   )}
 
-                  {/* Charger (always at origin 0,0) */}
-                  {(() => {
+                  {/* Charger at the persisted map anchor, hidden when unknown. */}
+                  {chargerLocal && (() => {
                     const cp = localToSvg(chargerLocal, bounds, MAP_SIZE, INNER_PADDING);
                     return (
                       <G>
@@ -1852,12 +1836,12 @@ export default function MapScreen() {
                   })()}
 
                   {/* Pattern overlay (only during placement mode) */}
-                  {patternCtx.isPlacing && patternCtx.placement?.center && patternCtx.placement.contours.length > 0 && bounds && chargerGpsOrigin && (() => {
+                  {patternCtx.isPlacing && patternCtx.placement?.center && patternCtx.placement.contours.length > 0 && bounds && chargerGpsOrigin && chargingPose && (() => {
                     const p = patternCtx.placement!;
                     const gpsPolys = p.contours.map(c => transformToGps(c, p.center!, p.sizeMeter, p.rotation));
                     // Convert GPS pattern points to local meters for rendering
                     return gpsPolys.map((poly, i) => {
-                      const localPoly = poly.map(pt => gpsToLocal(pt, chargerGpsOrigin));
+                      const localPoly = poly.map(pt => gpsToMap(pt, chargerGpsOrigin, chargingPose));
                       const svgPts = localPoly.map(pt => localToSvg(pt, bounds, MAP_SIZE, INNER_PADDING));
                       const pts = svgPts.map(pt => `${pt.x},${pt.y}`).join(' ');
                       return (
@@ -2167,7 +2151,7 @@ export default function MapScreen() {
                     (navigation as any).navigate('Home');
                   }
                 }}
-                disabled={!patternCtx.placement.center}
+                disabled={!patternCtx.placement.center || !chargerGpsOrigin || !chargingPose}
               >
                 <Text style={{ color: colors.white, fontWeight: '700' }}>
                   {patternCtx.placement.center ? t('confirm') : t('tapToPlacePattern')}
