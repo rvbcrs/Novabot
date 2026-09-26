@@ -456,7 +456,7 @@
     "copyZoneWithObstacles": "Hindernisse übernehmen",
     "copyZoneHint": "Ziehen Sie die orange Markierung (oder klicken Sie auf die Karte) dorthin, wo die Ladestation von {{name}} wirklich steht. Die Zone folgt.",
     "copyZoneMeasure": "Aktuelle Position dieses Mähers verwenden",
-    "copyZoneMeasureHint": "Fahren Sie diesen Mäher genau dorthin, wo {{name}} angedockt steht, und lassen Sie ihn mit RTK Fixed stillstehen. Der Server akzeptiert nur eine aktuelle, stabile Messung in einem validierten Kartenrahmen.",
+    "copyZoneMeasureHint": "Fahren Sie diesen Mäher genau dorthin, wo {{name}} angedockt steht, und lassen Sie ihn mit RTK Fixed stillstehen. Der Server akzeptiert nur eine aktuelle, stabile Messung in einem validierten Kartenrahmen. Stellen Sie den Mäher vor dem Übertragen wieder auf seine eigene Ladestation; beide Mäher müssen für die Dockprüfung online sein.",
     "copyZoneMarker": "Ladestation {{name}}",
     "copyZoneVerdictOk": "Wird {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Überlappt {{zone}}: kein Kanal nötig",

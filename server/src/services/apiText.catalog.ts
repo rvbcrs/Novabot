@@ -1125,10 +1125,10 @@ export const CATALOG: Catalog = {
     fr: "Copier une zone",
     de: "Eine Zone kopieren",
   },
-  "Het dockkanaal zou door een obstakel lopen; verwijder dat obstakel na het kopiëren of kies een andere zone.": {
-    en: "The dock channel would run through an obstacle; remove that obstacle after copying or choose another zone.",
-    fr: "Le couloir vers la station traverserait un obstacle ; supprimez cet obstacle après la copie ou choisissez une autre zone.",
-    de: "Der Dockkanal würde durch ein Hindernis verlaufen; entfernen Sie das Hindernis nach dem Kopieren oder wählen Sie eine andere Zone.",
+  "Er is geen vrije dockaanloop naar deze zone. Controleer obstakels en de ligging van het werkgebied.": {
+    en: "There is no clear dock approach to this zone. Check the obstacles and the work area's position.",
+    fr: "Il n’y a pas d’approche dégagée depuis la station vers cette zone. Vérifiez les obstacles et la position de la zone de travail.",
+    de: "Es gibt keine freie Dockzufahrt zu dieser Zone. Prüfen Sie die Hindernisse und die Lage des Arbeitsbereichs.",
   },
   "kopie": {
     en: "copy",

@@ -110,6 +110,19 @@ export function straightChannel(from: XY, to: XY, step: number = STEP_M): XY[] {
   return out;
 }
 
+/** Inside a work area, lead away from the dock into the lawn, not back to its nearest edge. */
+export function dockChannelPoints(dock: XY & { orientation?: number }, work: XY[], obstacles: XY[][]): XY[] | null {
+  const inside = pointInPolygon(dock, work);
+  const to = inside && Number.isFinite(dock.orientation)
+    ? { x: dock.x - 1.2 * Math.cos(dock.orientation!), y: dock.y - 1.2 * Math.sin(dock.orientation!) }
+    : nearestBoundaryPoint(dock, work).point;
+  const points = straightChannel(dock, to);
+  if ((inside && Number.isFinite(dock.orientation) &&
+    (points.some(p => !pointInPolygon(p, work)) || work.some((p, i) => segIntersects(dock, to, p, work[(i + 1) % work.length])))) ||
+    channelCorridorBlocked(dock, to, obstacles)) return null;
+  return points;
+}
+
 
 // ── Regels ────────────────────────────────────────────────────────────────
 
@@ -135,7 +148,7 @@ export interface PlanInput {
   /** Every target obstacle, including obstacles whose owning work row is absent. */
   targetObstacles?: XY[][];
   /** B's dock (anker of live pose). */
-  dock: XY | null;
+  dock: (XY & { orientation?: number }) | null;
   /** Bestaat er al een rij `map<slot>tocharge_unicom` op B (achtergebleven)? */
   dockChannelRowExists: boolean;
 }
@@ -178,14 +191,14 @@ export function planZoneCopy(i: PlanInput): CopyPlan {
   // Stap 2: dockkanaal.
   let dockChannel: ChannelPlan | null = null;
   if (dockDistanceM <= DOCK_MAX_M) {
-    const to = nearestBoundaryPoint(dock, i.work).point;
-    if (channelCorridorBlocked(dock, to, allObstacles)) {
+    const points = dockChannelPoints(dock, i.work, allObstacles);
+    if (!points) {
       if (i.slot === 0) return { ...base, refusal: 'dock_channel_blocked', dockDistanceM };
     } else {
       dockChannel = {
         canonical: `map${i.slot}tocharge_unicom`,
         kind: 'dock',
-        points: straightChannel(dock, to),
+        points,
         replaces: i.dockChannelRowExists,
       };
     }
@@ -242,7 +255,7 @@ export function previewZoneCopy(
   sourceSn: string,
   sourceCanonical: string,
   dockAtB: { x?: unknown; y?: unknown } | undefined,
-  opts: { withObstacles?: boolean } = {},
+  opts: { withObstacles?: boolean; docks?: { source: XY; target: XY & { orientation: number } } } = {},
   T: Translate = translator('en'),
 ): PreviewResult {
   // Offsets are applied only when exporting CSVs. Copying raw DB geometry
@@ -262,7 +275,7 @@ export function previewZoneCopy(
   }
   const areaM2 = polygonArea(srcPts);
   if (areaM2 < MIN_WORK_AREA_M2) return { ok: false, status: 409, reason: 'too_small', error: T`Het werkgebied is kleiner dan ${MIN_WORK_AREA_M2} m².` };
-  const dockAInA = dockPoint(sourceSn);
+  const dockAInA = opts.docks?.source ?? dockPoint(sourceSn);
   if (!dockAInA) {
     return { ok: false, status: 409, reason: 'source_no_anchor', error: T`De bronmaaier heeft geen dock-anker (geen map0tocharge_unicom en niet gedockt online); zonder anker is de zone niet te plaatsen.` };
   }
@@ -271,7 +284,7 @@ export function previewZoneCopy(
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     return { ok: false, status: 400, reason: 'bad_dock', error: T`Geef de positie van het laadstation van de bronmaaier op deze kaart (dockAtB.x/y).` };
   }
-  const dockB = dockPoint(targetSn);
+  const dockB = opts.docks?.target ?? dockPoint(targetSn);
   if (!dockB) {
     return { ok: false, status: 409, reason: 'target_no_dock', error: T`Het dock van deze maaier is onbekend: zet de maaier op het dock of teken eerst een dockkanaal.` };
   }
@@ -320,7 +333,7 @@ function bounds(pts: XY[]): PersistResult['mapMaxMin'] {
 export function persistZoneCopy(
   targetSn: string,
   plan: CopyPlan,
-  opts: { alias: string | null; acceptChannel: boolean },
+  opts: { alias: string | null; acceptChannel: boolean; dockOrientation?: number },
 ): PersistResult {
   if (!plan.ok) throw new Error(`persistZoneCopy: plan is refused (${plan.refusal})`);
   const ts = Date.now();
@@ -344,6 +357,7 @@ export function persistZoneCopy(
   };
   const channels = opts.acceptChannel ? plan.channels : [];
   db.transaction(() => {
+    if (opts.dockOrientation !== undefined) mapRepo.setPolygonChargingOrientation(targetSn, opts.dockOrientation);
     create(plan.canonical, 'work', plan.work, opts.alias);
     for (const o of plan.obstacles) create(o.canonical, 'obstacle', o.points, null);
     for (const c of channels) create(c.canonical, 'unicom', c.points, null);

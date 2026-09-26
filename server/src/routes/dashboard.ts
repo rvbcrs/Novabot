@@ -65,6 +65,7 @@ import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
 import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from '../services/anchor.js';
 import { alignDockPhoto, getPhotoDockPose } from '../services/dockPhotoReference.js';
+import { repairDockChannels, withConfirmedCopyDocks } from '../services/dockChannelRepair.js';
 import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
 import { positionTelemetry, freshPositionState, stablePosition, POSITION_MAX_AGE_MS } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
@@ -1912,6 +1913,22 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   autoPushMapsInBackground(sn);
 });
 
+// Preview is read-only; applying must name that exact, still-current plan.
+dashboardRouter.get('/maps/:sn/repair-dock-channel', async (req: Request, res: Response) => {
+  try { res.json(await repairDockChannels(req.params.sn)); }
+  catch (error) { res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+});
+dashboardRouter.post('/maps/:sn/repair-dock-channel', async (req: Request, res: Response) => {
+  if (typeof req.body?.planHash !== 'string' || !/^[a-f0-9]{64}$/.test(req.body.planHash)) {
+    res.status(400).json({ ok: false, error: 'Vraag eerst een reparatievoorbeeld op.' }); return;
+  }
+  try {
+    const result = await repairDockChannels(req.params.sn, req.body.planHash);
+    emitMapsChanged(req.params.sn);
+    res.json(result);
+  } catch (error) { res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+});
+
 // ── Zone kopiëren van een andere maaier ───────────────────────────────────
 // Spec: docs/superpowers/specs/2026-09-24-copy-zone-between-mowers-design.md
 // De kopie is een getekende zone met voorgevulde geometrie: zelfde rijen,
@@ -1934,7 +1951,7 @@ function zoneCopyRefusalText(refusal: NonNullable<CopyPlan['refusal']>, T: Trans
     case 'too_far_from_dock':
       return T`De zone ligt meer dan ${DOCK_MAX_M} m van het dock; als eerste zone moet ze bij het dock liggen, anders kan er geen dockkanaal gemaakt worden.`;
     case 'dock_channel_blocked':
-      return T`Het dockkanaal zou door een obstakel lopen; verwijder dat obstakel na het kopiëren of kies een andere zone.`;
+      return T`Er is geen vrije dockaanloop naar deze zone. Controleer obstakels en de ligging van het werkgebied.`;
   }
 }
 
@@ -1943,7 +1960,9 @@ const mapSignature = (sn: string) => crypto.createHash('sha256').update(JSON.str
 dashboardRouter.get('/maps/:sn/measurement', (req: Request, res: Response) => {
   const { sn } = req.params;
   const sample = stablePosition(sn);
-  if (!isDeviceOnline(sn) || isFrameUnvalidated(sn) || isMowerMapOperationBusy(sn) || !getPolygonAnchor(sn) || !sample) {
+  // A local position measurement does not need an existing dock channel.
+  // Copy preflight independently verifies the saved dock before using it.
+  if (!isDeviceOnline(sn) || isFrameUnvalidated(sn) || isMowerMapOperationBusy(sn) || !sample) {
     res.status(409).json({ ok: false, reason: 'measurement_unavailable', error: 'Meten vereist een gevalideerd frame en acht verse, stabiele RUNNING + RTK Fixed-posities.' }); return;
   }
   for (const [id, m] of mapMeasurements) if (Date.now() - m.at > 300_000) mapMeasurements.delete(id);
@@ -1958,7 +1977,7 @@ function measurementMatches(sn: string, body: ZoneCopyBody): boolean {
   return !!sample && sample.sn === sn && Date.now() - sample.at <= 300_000 && !isFrameUnvalidated(sn) && sample.revision === getFrameRevision(sn) && sample.signature === mapSignature(sn) && body.dockAtB?.x === sample.x && body.dockAtB?.y === sample.y;
 }
 
-dashboardRouter.post('/maps/:sn/copy-from/:source/preview', (req: Request, res: Response) => {
+dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request, res: Response) => {
   const T = reqT(req);
   const { sn, source } = req.params;
   if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
@@ -1966,17 +1985,24 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/preview', (req: Request, res: 
   if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source) || !measurementMatches(sn, body)) {
     res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
   }
-  const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false }, T);
-  if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
-  res.json({
-    ...r.plan,
-    sourceAlias: r.sourceAlias,
-    areaM2: r.areaM2,
-    error: r.plan.refusal ? zoneCopyRefusalText(r.plan.refusal, T) : undefined,
-  });
+  try {
+    await withConfirmedCopyDocks(sn, source, docks => {
+      if (!measurementMatches(sn, body)) { res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Meting verlopen of kaart gewijzigd; meet opnieuw.' }); return; }
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
+      if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
+      res.json({
+        ...r.plan,
+        sourceAlias: r.sourceAlias,
+        areaM2: r.areaM2,
+        error: r.plan.refusal ? zoneCopyRefusalText(r.plan.refusal, T) : undefined,
+      });
+    }, false); // Read-only preview remains usable while measuring away from the dock.
+  } catch (error) {
+    if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
-dashboardRouter.post('/maps/:sn/copy-from/:source', (req: Request, res: Response) => {
+dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Response) => {
   const T = reqT(req);
   const { sn, source } = req.params;
   if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
@@ -1989,33 +2015,41 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', (req: Request, res: Response
     res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
   }
   // Altijd server-side herberekenen: de client stuurt alleen de correspondentie, nooit geometrie.
-  const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false }, T);
-  if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
-  if (!r.plan.ok) {
-    res.status(409).json({ ok: false, reason: r.plan.refusal, error: zoneCopyRefusalText(r.plan.refusal!, T) });
-    return;
+  try {
+    const copied = await withConfirmedCopyDocks(sn, source, docks => {
+      if (!measurementMatches(sn, body)) { res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Meting verlopen of kaart gewijzigd; meet opnieuw.' }); return; }
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
+      if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
+      if (!r.plan.ok) {
+        res.status(409).json({ ok: false, reason: r.plan.refusal, error: zoneCopyRefusalText(r.plan.refusal!, T) });
+        return;
+      }
+      const typedName = (body.name ?? '').trim();
+      const alias = typedName || (r.sourceAlias ? `${r.sourceAlias} (${T`kopie`})` : null);
+      const acceptChannel = body.acceptChannel !== false;
+      const saved = persistZoneCopy(sn, r.plan, { alias, acceptChannel, dockOrientation: docks.target.orientation });
+      res.json({
+        ok: true,
+        map: {
+          mapId: saved.mapId,
+          mapName: alias,
+          canonicalName: r.plan.canonical,
+          mapType: 'work',
+          mapArea: r.plan.work,
+          mapMaxMin: saved.mapMaxMin,
+          createdAt: saved.createdAt,
+        },
+        obstacles: saved.obstacles,
+        channels: saved.channels,
+        needsChannel: acceptChannel ? r.plan.needsChannel : !r.plan.connectedVia,
+        warnings: r.plan.warnings,
+      });
+      return true;
+    });
+    if (copied) void autoPushMapsInBackground(sn);
+  } catch (error) {
+    if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: error instanceof Error ? error.message : String(error) });
   }
-  const typedName = (body.name ?? '').trim();
-  const alias = typedName || (r.sourceAlias ? `${r.sourceAlias} (${T`kopie`})` : null);
-  const acceptChannel = body.acceptChannel !== false;
-  const saved = persistZoneCopy(sn, r.plan, { alias, acceptChannel });
-  res.json({
-    ok: true,
-    map: {
-      mapId: saved.mapId,
-      mapName: alias,
-      canonicalName: r.plan.canonical,
-      mapType: 'work',
-      mapArea: r.plan.work,
-      mapMaxMin: saved.mapMaxMin,
-      createdAt: saved.createdAt,
-    },
-    obstacles: saved.obstacles,
-    channels: saved.channels,
-    needsChannel: acceptChannel ? r.plan.needsChannel : !r.plan.connectedVia,
-    warnings: r.plan.warnings,
-  });
-  autoPushMapsInBackground(sn);
 });
 
 // POST /api/dashboard/maps/:sn/apply — de kaart opnieuw op de maaier zetten,

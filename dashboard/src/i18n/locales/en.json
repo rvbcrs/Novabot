@@ -488,7 +488,7 @@
     "copyZoneWithObstacles": "Include obstacles",
     "copyZoneHint": "Drag the orange marker (or click the map) to where {{name}}'s charging station really stands. The zone follows.",
     "copyZoneMeasure": "Use this mower's current position",
-    "copyZoneMeasureHint": "Drive this mower exactly to where {{name}} sits when docked and leave it still with RTK Fixed. The server only accepts a fresh, stable measurement in a validated map frame.",
+    "copyZoneMeasureHint": "Drive this mower exactly to where {{name}} sits when docked and leave it still with RTK Fixed. The server only accepts a fresh, stable measurement in a validated map frame. Return the mower to its own dock before applying the copy; both mowers must be online for the dock check.",
     "copyZoneMarker": "Charging station {{name}}",
     "copyZoneVerdictOk": "Becomes {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Overlaps {{zone}}: no channel needed",

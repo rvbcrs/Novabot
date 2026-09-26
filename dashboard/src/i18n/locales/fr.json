@@ -456,7 +456,7 @@
     "copyZoneWithObstacles": "Inclure les obstacles",
     "copyZoneHint": "Faites glisser le repère orange (ou cliquez sur la carte) à l'endroit réel de la station de charge de {{name}}. La zone suit.",
     "copyZoneMeasure": "Utiliser la position actuelle de cette tondeuse",
-    "copyZoneMeasureHint": "Conduisez cette tondeuse exactement à l’endroit où {{name}} est amarrée et immobilisez-la avec RTK Fixed. Le serveur accepte uniquement une mesure récente et stable dans un repère de carte validé.",
+    "copyZoneMeasureHint": "Conduisez cette tondeuse exactement à l’endroit où {{name}} est amarrée et immobilisez-la avec RTK Fixed. Le serveur accepte uniquement une mesure récente et stable dans un repère de carte validé. Replacez ensuite la tondeuse sur sa propre station avant de copier ; les deux tondeuses doivent être en ligne pour vérifier les stations.",
     "copyZoneMarker": "Station de charge {{name}}",
     "copyZoneVerdictOk": "Deviendra {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Chevauche {{zone}} : pas de couloir nécessaire",
