@@ -37,6 +37,7 @@ export interface MowerDerived {
   mowingProgress: number;
   errorStatus: string | undefined;
   errorCode: string | undefined;
+  errorAck: string | undefined;
   errorMsg: string | undefined;
   hasError: boolean;
   nickname: string | null;
@@ -66,7 +67,8 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
 
   const workStatus = s.work_status ?? '0';
   const isOffline = !mower?.online;
-  const hasError = Boolean(
+  const acked = !!s.error_ack && s.error_status?.match(/\d+/)?.[0] === s.error_ack;
+  const hasError = !acked && Boolean(
     (s.error_status && s.error_status !== 'OK' && s.error_status !== '0') ||
     (s.error_code && s.error_code !== 'None' && s.error_code !== '0')
   );
@@ -107,6 +109,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
     mowingProgress: parseInt(s.mowing_progress ?? '0', 10) || 0,
     errorStatus: s.error_status,
     errorCode: s.error_code,
+    errorAck: s.error_ack,
     errorMsg: s.error_msg,
     hasError,
     nickname: mower?.nickname ?? null,
@@ -148,6 +151,8 @@ export function MobilePage({ devices, loading, liveOutlines, coveredLanes }: Pro
           errorMsg={mower.errorMsg}
           errorStatus={mower.errorStatus}
           workStatus={mower.activity === 'idle' ? '0' : '1'}
+          sn={mower.sn || undefined}
+          errorAck={mower.errorAck}
         />
 
         {/* Tab content */}

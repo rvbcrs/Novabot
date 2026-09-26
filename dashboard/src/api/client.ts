@@ -1456,3 +1456,15 @@ export interface FirmwareAdvisoryDto {
 export async function fetchFirmwareAdvisory(sn: string): Promise<FirmwareAdvisoryDto> {
   return (await get(`${BASE}/firmware-advisory/${encodeURIComponent(sn)}`)).json() as Promise<FirmwareAdvisoryDto>;
 }
+
+/** Clear the mower's current error the way the firmware allows it: a task
+ *  error is marked cleared, one above 150 without a PIN restarts the mower
+ *  software, a PIN error is refused (reason 'pin_required'). */
+export async function clearMowerError(sn: string): Promise<{
+  ok: boolean; action?: 'none' | 'cleared' | 'restarting'; reason?: string; error?: string; code?: number;
+}> {
+  const res = await apiFetch(`${BASE}/error/${encodeURIComponent(sn)}/clear`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+  return res.json().catch(() => ({ ok: false, error: `${res.status}` }));
+}

@@ -2,6 +2,7 @@
  * Dashboard REST endpoints — initial state load voor de React app.
  * Geen auth — alleen bedoeld voor lokaal netwerk.
  */
+import { errorKind, errorCodeOf, ERROR_ACK_KEY } from '../mqtt/errorKind.js';
 import { Router, Request, Response } from 'express';
 import {
   userRepo,
@@ -6596,39 +6597,52 @@ dashboardRouter.post('/pin/:sn/raw', (req: Request, res: Response) => {
   res.json({ ok: true, action: 'raw', cfg_value });
 });
 
-// POST /api/dashboard/error/:sn/clear — clear latched error_status (e.g. 126 recharge failed)
-// Stock firmware latches error_status until state machine resets. cancel_recharge
-// (ROS service /robot_decision/cancel_recharge, mapped to MQTT `stop_to_charge`) clears
-// the recharge-failed latch. We also send `clear_error: {}` for custom-firmware paths
-// and optimistically wipe error fields in sensor cache so UI updates immediately.
+// POST /api/dashboard/error/:sn/clear — clear the mower's current error, the
+// way the firmware allows it (see mqtt/errorKind.ts for the evidence):
+// - task errors (<= 150): the firmware resets them itself at the next start,
+//   resume or return to the dock, and has no command that only clears. So the
+//   error is marked cleared here, both clients hide it and stop blocking, and
+//   the next action resets it on the mower.
+// - errors above 150 without a PIN: only a restart of the mower software
+//   resets them (initData). On OpenNova firmware that is the soft restart.
+// - PIN errors: the PIN flow, not this route.
+// Nothing is faked: the mower's own error_status is never overwritten here.
 dashboardRouter.post('/error/:sn/clear', (req: Request, res: Response) => {
   const T = reqT(req);
   const { sn } = req.params;
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: T`Apparaat is offline` });
+    res.status(404).json({ ok: false, error: T`Apparaat is offline` });
+    return;
+  }
+  const cache = deviceCache.get(sn);
+  const code = errorCodeOf(cache?.get('error_status'));
+  const kind = errorKind(code);
+
+  if (kind === 'none') { res.json({ ok: true, action: 'none', code }); return; }
+  if (kind === 'pin') {
+    res.status(409).json({ ok: false, reason: 'pin_required', code, error: T`Deze fout vraagt de pincode van de maaier` });
+    return;
+  }
+  if (kind === 'restart') {
+    if (!isOpenNovaMower(sn, cache)) {
+      res.status(409).json({ ok: false, reason: 'needs_restart', code,
+        error: T`Deze fout verdwijnt pas na een herstart van de maaier; op stock firmware kan dat niet op afstand` });
+      return;
+    }
+    const blocked = softRestartBlockedReason(sn, T);
+    if (blocked) { res.status(409).json({ ok: false, reason: 'busy', code, error: blocked }); return; }
+    sendSoftRestart(sn);
+    console.log(`[ErrorClear] ${sn}: error ${code} needs a restart, soft_restart dispatched`);
+    res.json({ ok: true, action: 'restarting', code });
     return;
   }
 
-  publishToDevice(sn, { stop_to_charge: {} });
-  publishToDevice(sn, { clear_error: {} });
-
-  const snCache = deviceCache.get(sn);
-  if (snCache) {
-    const errorFields = ['error_status', 'error_msg', 'error_code'];
-    const cleared = new Map<string, string>();
-    for (const f of errorFields) {
-      if (snCache.has(f)) {
-        snCache.set(f, '0');
-        cleared.set(f, translateValue(f, '0'));
-      }
-    }
-    if (cleared.size > 0) {
-      forwardToDashboard(sn, cleared);
-      console.log(`[ErrorClear] Cleared error fields in cache for ${sn}`);
-    }
-  }
-
-  res.json({ ok: true });
+  // task error
+  if (!cache) { res.json({ ok: true, action: 'none', code }); return; }
+  cache.set(ERROR_ACK_KEY, String(code));
+  forwardToDashboard(sn, new Map([[ERROR_ACK_KEY, String(code)]]));
+  console.log(`[ErrorClear] ${sn}: error ${code} cleared by the user (the mower resets it at its next action)`);
+  res.json({ ok: true, action: 'cleared', code });
 });
 
 // ── Camera proxy ──────────────────────────────────────────────────────────────

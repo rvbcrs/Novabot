@@ -27,6 +27,8 @@ export function MowerStatus({ device, overlay }: Props) {
           errorMsg={s.error_msg}
           errorStatus={s.error_status}
           workStatus={s.work_status}
+          sn={device.sn}
+          errorAck={s.error_ack}
         />
         {isMowing && <MowingStatsCard sensors={s} compact />}
       </>
@@ -40,6 +42,8 @@ export function MowerStatus({ device, overlay }: Props) {
         errorMsg={s.error_msg}
         errorStatus={s.error_status}
         workStatus={s.work_status}
+        sn={device.sn}
+        errorAck={s.error_ack}
       />
       {isMowing && <MowingStatsCard sensors={s} />}
       <SensorGrid device={device} />

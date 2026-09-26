@@ -400,6 +400,16 @@ export const CATALOG: Catalog = {
     fr: "L'autre extrémité n'est pas dans une zone de travail. Faites finir le canal à l'intérieur d'une zone.",
     de: "Das andere Ende liegt nicht in einem Arbeitsbereich. Lassen Sie den Kanal innerhalb eines Bereichs enden.",
   },
+  "Deze fout vraagt de pincode van de maaier": {
+    en: "This error needs the mower's PIN code",
+    fr: "Cette erreur nécessite le code PIN de la tondeuse",
+    de: "Dieser Fehler erfordert die PIN des Mähers",
+  },
+  "Deze fout verdwijnt pas na een herstart van de maaier; op stock firmware kan dat niet op afstand": {
+    en: "This error only clears after a restart of the mower; on stock firmware that cannot be done remotely",
+    fr: "Cette erreur ne disparaît qu'après un redémarrage de la tondeuse ; avec le firmware d'origine, cela ne peut pas se faire à distance",
+    de: "Dieser Fehler verschwindet erst nach einem Neustart des Mähers; mit der Original-Firmware geht das nicht aus der Ferne",
+  },
   "Naar een punt rijden": {
     en: "Driving to a point",
     fr: "Rouler jusqu'à un point",

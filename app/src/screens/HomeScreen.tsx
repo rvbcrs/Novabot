@@ -58,6 +58,7 @@ import { useI18n } from '../i18n';
 import { getSocket } from '../services/socket';
 import type { DeviceState, MowerActivity } from '../types';
 import type { MainTabParams } from '../navigation/types';
+import { errorKind } from '../utils/errorKind';
 
 // ── Derive mower status ──────────────────────────────────────────────
 
@@ -87,6 +88,9 @@ interface MowerDerived {
   errorCode: string | undefined;
   errorMsg: string | undefined;
   hasError: boolean;
+  /** Only errors the firmware refuses to start with (PIN, or above 150 until a
+   *  restart). A task error is reset by the start itself. */
+  errorBlocksStart: boolean;
   hasSoftWarning: boolean;
   dockFailed: boolean;
   mapNum: number;
@@ -177,9 +181,13 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // SUPPRESSED_ERROR_CODES in eventDetector.ts that gates ntfy.
   const HIDDEN_TRANSIENT_ERRORS = [2, 8, 113, 132];
   const errorStatusRaw = parseInt(s.error_status?.match(/\d+/)?.[0] ?? '0', 10);
+  // Cleared by the user (server error_ack): hidden until the mower reports
+  // another code. The mower itself resets it at its next start or return.
+  const errorAcked = errorStatusRaw > 0 && s.error_ack === String(errorStatusRaw);
   const hasError = Boolean(
-    errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
+    !errorAcked && errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
   );
+  const errorBlocksStart = errorKind(errorStatusRaw) === 'pin' || errorKind(errorStatusRaw) === 'restart';
   const batteryState = s.battery_state?.toUpperCase() ?? '';
   const isChargingNow = batteryState === 'CHARGING' || batteryState === 'FINISHED';
   const STALE_WHEN_CHARGING = [124, 126];
@@ -357,6 +365,7 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
     errorCode: s.error_code,
     errorMsg: s.error_msg,
     hasError,
+    errorBlocksStart,
     hasSoftWarning,
     dockFailed: isDockFailed,
     mapNum: parseInt(s.map_num ?? '0', 10) || 0,
@@ -1091,8 +1100,6 @@ export default function HomeScreen() {
           const api = new ApiClient(url);
           console.warn('[LONG-PAUSE-SAFETY] ROBOT_OUT_OF_MAP_HANDLE after long-pause resume — auto-stopping');
           await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
-          await new Promise(r => setTimeout(r, 300));
-          await api.sendCommand(mower.sn, { clear_error: {} });
           appAlertCompat.alert(
             t('safetyStopTitle'),
             t('safetyStopBody'),
@@ -2314,35 +2321,29 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={{ backgroundColor: 'rgba(239,68,68,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
               onPress={async () => {
-                // Hide locally first — the mower keeps re-emitting the same
-                // error_status, so without this dismissal the banner pops
-                // back instantly and the user gets stuck in a clear-loop
-                // (issue #13).
-                setDismissedError({
-                  status: String(mower.errorStatus ?? ''),
-                  msg: String(mower.errorMsg ?? ''),
-                });
                 try {
                   const url = await getServerUrl();
                   if (!url || !mower.sn) return;
-                  const api = new ApiClient(url);
-                  // Earlier revisions only sent clear_error + quit_mapping_mode,
-                  // which never recovered Error 2 / "Already in running task":
-                  // the underlying coverage task was still flagged active so
-                  // the firmware re-emitted the same error_status the next
-                  // tick. Verified live 2026-05-06 — the only sequence that
-                  // actually recovers a stuck error is stop_navigation FIRST,
-                  // then clear_error, then quit_mapping_mode. Each step is
-                  // independently idempotent.
-                  await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
-                  await new Promise((r) => setTimeout(r, 600));
-                  await api.clearError(mower.sn);
-                  await new Promise((r) => setTimeout(r, 300));
-                  await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
-                } catch {}
+                  // The server knows what the firmware allows: a task error is
+                  // marked cleared (the mower resets it at its next start or
+                  // return), one above 150 without a PIN restarts the mower
+                  // software, a PIN error is refused.
+                  const r = await new ApiClient(url).clearError(mower.sn);
+                  if (r.ok && r.action === 'restarting') {
+                    appAlertCompat.alert(t('hmClearRestartTitle'), t('hmClearRestartBody'));
+                  } else if (r.ok) {
+                    setDismissedError({ status: String(mower.errorStatus ?? ''), msg: String(mower.errorMsg ?? '') });
+                  }
+                } catch (e) {
+                  const reason = (e as { reason?: string })?.reason;
+                  appAlertCompat.alert(t('hmClearFailedTitle'),
+                    reason === 'pin_required' ? t('hmClearNeedsPin') : (e instanceof Error ? e.message : String(e)));
+                }
               }}
             >
-              <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>{t('hmClear')}</Text>
+              <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>
+                {errorKind(parseInt(String(mower.errorStatus ?? '0').match(/\d+/)?.[0] ?? '0', 10)) === 'restart' ? t('hmClearRestart') : t('hmClear')}
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -2351,8 +2352,9 @@ export default function HomeScreen() {
             the charger but could not dock (physical miss, sensor glitch, or
             path blocked). Mirrors Novabot's "Return to charge failed, please
             retry or manually move NOVABOT back" popup but inline so it stays
-            actionable. Provides Retry (go_to_charge) and Cancel (stop_navigation
-            + clear_error) so the user is not stuck in a phantom "Returning" UI. */}
+            actionable. Provides Retry (go_to_charge, which resets the error on
+            the mower itself) and Cancel (stop_navigation + server clear) so the
+            user is not stuck in a phantom "Returning" UI. */}
         {mower.dockFailed && (
           <View style={[styles.errorCard, { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: '#f59e0b' }]}>
             <Ionicons name="home-outline" size={22} color="#f59e0b" />
@@ -2371,10 +2373,7 @@ export default function HomeScreen() {
                   try {
                     const url = await getServerUrl();
                     if (!url || !mower.sn) return;
-                    const api = new ApiClient(url);
-                    await api.sendCommand(mower.sn, { clear_error: {} });
-                    await new Promise((r) => setTimeout(r, 400));
-                    sendGoHome(mower.sn);
+                    sendGoHome(mower.sn);   // the return resets the error on the mower itself
                     setOptimisticActivity('returning');
                   } catch {}
                 }}
@@ -2390,7 +2389,7 @@ export default function HomeScreen() {
                     const api = new ApiClient(url);
                     await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
                     await new Promise((r) => setTimeout(r, 300));
-                    await api.sendCommand(mower.sn, { clear_error: {} });
+                    await api.clearError(mower.sn).catch(() => { /* nothing to clear is fine */ });
                     await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
                     setOptimisticActivity('idle');
                   } catch {}
@@ -2513,12 +2512,12 @@ export default function HomeScreen() {
                 const lowPowerPause = wsRaw === '12' || wsRaw === 'Low power';
                 const isInterruptedCoverage =
                   onDock && taskMode === 1 && (pausedForRecharge || pausedByUser || lowPowerPause);
-                const startDisabled = !mower.online || mower.hasError || noMap || mowerBusy || frameUnvalidated;
+                const startDisabled = !mower.online || mower.errorBlocksStart || noMap || mowerBusy || frameUnvalidated;
                 // Keep the chevron (start-modes) reachable even when "Continue"
                 // is shown, so the user can always start a fresh session instead
                 // of resuming — never a dead-end.
                 const canShowChevron = (displayActivity === 'idle' || displayActivity === 'charging')
-                  && mower.online && !mower.hasError && !noMap && !mowerBusy;
+                  && mower.online && !mower.errorBlocksStart && !noMap && !mowerBusy;
                 return (
                   <>
                   <View style={[styles.splitButtonWrap, startDisabled && { opacity: 1 }]}>
@@ -2564,7 +2563,7 @@ export default function HomeScreen() {
                                 coverage session is waiting on the dock. */}
                             {noMap
                               ? t('noMapCreateFirst')
-                              : mower.hasError
+                              : mower.errorBlocksStart
                               ? t('clearErrorFirst')
                               : isInterruptedCoverage
                               ? t('resume')
@@ -2871,7 +2870,7 @@ export default function HomeScreen() {
                           const api = new ApiClient(url);
                           await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
                           await new Promise(r => setTimeout(r, 300));
-                          await api.sendCommand(mower.sn, { clear_error: {} });
+                          await api.clearError(mower.sn).catch(() => { /* nothing to clear is fine */ });
                           await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
                           setOptimisticActivity('idle');
                         } catch {}

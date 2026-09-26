@@ -6,6 +6,7 @@
  * aanroepen per inkomend MQTT bericht vanuit broker.ts.
  */
 
+import { ERROR_ACK_KEY } from './errorKind.js';
 import { spawn } from 'node:child_process';
 import { db } from '../db/database.js';
 import { equipmentRepo } from '../db/repositories/equipment.js';
@@ -1046,6 +1047,14 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
 
     snValues.set(field, strValue);
     changes.set(field, translateValue(field, strValue));
+
+    // A cleared error stays hidden only while the mower keeps reporting that
+    // same code. Anything else (0, or a new error) ends it, so a later
+    // occurrence of the same code shows again.
+    if (field === 'error_status' && snValues.has(ERROR_ACK_KEY) && snValues.get(ERROR_ACK_KEY) !== strValue) {
+      snValues.delete(ERROR_ACK_KEY);
+      changes.set(ERROR_ACK_KEY, '');
+    }
 
     // Issue #17: refresh the in-memory mowing-session timer whenever
     // work_status passes through an active task value (100..150).

@@ -64,6 +64,8 @@ export function parseRechargeStatus(value: string | undefined): number {
  */
 export function deriveHasError(sensors: Sensors): boolean {
   const errorStatusRaw = parseInt(sensors?.error_status?.match(/\d+/)?.[0] ?? '0', 10);
+  // Cleared by the user: hidden until the mower reports another code.
+  if (errorStatusRaw > 0 && sensors?.error_ack === String(errorStatusRaw)) return false;
   return Boolean(errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw));
 }
 

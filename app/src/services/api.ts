@@ -544,8 +544,11 @@ export class ApiClient {
     return r.status;
   }
 
-  async clearError(sn: string): Promise<{ ok: boolean }> {
-    return this.request<{ ok: boolean }>(
+  /** Clear the current error the way the firmware allows (server errorKind):
+   *  'cleared' for a task error, 'restarting' for one above 150 without a
+   *  PIN; a PIN error is refused with reason 'pin_required'. */
+  async clearError(sn: string): Promise<{ ok: boolean; action?: 'none' | 'cleared' | 'restarting'; code?: number }> {
+    return this.request<{ ok: boolean; action?: 'none' | 'cleared' | 'restarting'; code?: number }>(
       'POST',
       `/api/dashboard/error/${encodeURIComponent(sn)}/clear`,
       { body: {} },

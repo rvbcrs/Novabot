@@ -11,7 +11,7 @@ vi.mock('../../mqtt/broker.js', () => ({
   lookupMac: vi.fn(),
 }));
 
-import { SENSORS, translateValue, updateDeviceData } from '../../mqtt/sensorData.js';
+import { SENSORS, translateValue, updateDeviceData, deviceCache } from '../../mqtt/sensorData.js';
 import {
   markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, noteAutoRecharge,
 } from '../../services/frameValidation.js';
@@ -138,5 +138,19 @@ describe('ingestSensorStream (novabot/sensor/<SN> from extended_commands.py)', (
     expect(deviceCache.get(sn)?.get('rtk_fix_quality')).toBe('4');
     // unchanged values are not forwarded again
     expect(ingestSensorStream(sn, { rtk_fix_quality: 4 }).size).toBe(0);
+  });
+});
+
+describe('a cleared error', () => {
+  const frame = (o: object) => Buffer.from(JSON.stringify({ report_state_robot: o }));
+  it('stays cleared while the mower repeats it, and ends when it reports anything else', () => {
+    const sn = 'LFIN9999000077';
+    updateDeviceData(sn, frame({ error_status: 130 }));
+    deviceCache.get(sn)!.set('error_ack', '130');
+    updateDeviceData(sn, frame({ error_status: 130, battery_power: 50 }));
+    expect(deviceCache.get(sn)!.get('error_ack')).toBe('130');
+    const changes = updateDeviceData(sn, frame({ error_status: 0 }));
+    expect(deviceCache.get(sn)!.has('error_ack')).toBe(false);
+    expect(changes?.get('error_ack')).toBe('');
   });
 });

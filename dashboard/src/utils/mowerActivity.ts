@@ -75,7 +75,29 @@ export function deriveHasError(sensors: Sensors): boolean {
   // Error 140 while our own map push restarts the planner is expected and
   // clears by itself; the push status says why Start waits instead.
   if (errorStatusRaw === PROCESS_RESTART_ERROR && mapApplyView(sensors).state === 'busy') return false;
+  // Cleared by the user: hidden until the mower reports another code.
+  if (errorStatusRaw > 0 && sensors?.error_ack === String(errorStatusRaw)) return false;
   return Boolean(errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw));
+}
+
+/** Same classification as the server's mqtt/errorKind.ts. The firmware resets
+ *  errors up to 150 itself at the next start, resume or return; above 150 it
+ *  only resets them after the PIN or a software restart. */
+const PIN_ERRORS = new Set([151, 152, 154, 155, 156, 157, 158, 159, 160]);
+export type ErrorKind = 'none' | 'task' | 'restart' | 'pin';
+export function errorKind(code: number): ErrorKind {
+  if (!Number.isFinite(code) || code <= 0) return 'none';
+  if (PIN_ERRORS.has(code)) return 'pin';
+  return code > 150 ? 'restart' : 'task';
+}
+
+/** Whether the current error stops a new start. Only errors the firmware
+ *  itself refuses to start with ("please unlock to retry"); a task error is
+ *  reset by the start, so blocking the start would lock the user out. */
+export function errorBlocksStart(sensors: Sensors): boolean {
+  const code = parseInt(sensors?.error_status?.match(/\d+/)?.[0] ?? '0', 10);
+  const kind = errorKind(code);
+  return kind === 'pin' || kind === 'restart';
 }
 
 /**

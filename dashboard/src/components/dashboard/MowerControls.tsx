@@ -23,6 +23,7 @@ import { readMowDefaults, configuredHeightMm } from '../../utils/mowDefaults';
 import {
   deriveMowerActivity,
   deriveHasError,
+  errorBlocksStart,
   isInterruptedCoverage as isInterruptedCoverageFn,
   isMowerBusy,
   type MowerActivity,
@@ -713,8 +714,6 @@ export function MowerControls({
     void (async () => {
       try {
         await sendCommand(sn, { stop_navigation: { cmd_num: nextCmdNum() } });
-        await new Promise(r => setTimeout(r, 300));
-        await sendCommand(sn, { clear_error: {} });
       } catch { /* the notice matters more than the command result */ }
       setSafetyNotice(true);
     })();
@@ -779,7 +778,10 @@ export function MowerControls({
   // A just drawn or copied zone is on the map before the mower has it: sync,
   // per-zone grids and the planner restart take about a minute.
   const mapApplying = mapApplyView(sensors).state === 'busy';
-  const startDisabled = disabled || mowerBusy || hasError || noMap || frameUnvalidated || mapApplying || (!online && !demoActive);
+  // Only what the firmware itself refuses to start with; a task error is reset
+  // by the start, so blocking on it locked remote users out.
+  const blocksStart = errorBlocksStart(sensors);
+  const startDisabled = disabled || mowerBusy || blocksStart || noMap || frameUnvalidated || mapApplying || (!online && !demoActive);
   const btnBase = 'inline-flex items-center justify-center p-1 sm:p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
 
   // ── Activity-driven action handlers (mirror app HomeScreen) ─────────────
@@ -1003,7 +1005,7 @@ export function MowerControls({
             } disabled:opacity-30 disabled:cursor-not-allowed`}
             title={
               mapApplying ? t('controls.mapApplying')
-              : hasError ? (t('controls.clearErrorFirst') ?? 'Clear error first')
+              : blocksStart ? (t('controls.clearErrorFirst') ?? 'Clear error first')
               : noMap ? (t('controls.noMapCreateFirst') ?? 'Create a map first')
               // Stond hier niet, terwijl frameUnvalidated de knop wél uitzet:
               // de startknop was grijs zonder dat iets vertelde waarom.

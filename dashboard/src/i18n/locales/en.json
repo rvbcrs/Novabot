@@ -111,7 +111,15 @@
     "area": "Area",
     "error": "Error",
     "errorCode": "Code: {{code}}",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "clear": "Clear",
+    "clearRestart": "Restart mower software",
+    "later": "Later",
+    "clearTaskHint": "Clearing removes this message. The mower resets it itself at its next start or return to the dock.",
+    "clearRestartHint": "This error only goes away after a restart of the mower software (about a minute). Fix the cause first.",
+    "clearPinHint": "This error needs the PIN code on the mower.",
+    "clearRestarting": "Restarting the mower software. It is back online in about a minute.",
+    "clearFailed": "Could not clear the error."
   },
   "log": {
     "title": "MQTT Log",

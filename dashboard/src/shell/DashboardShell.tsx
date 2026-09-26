@@ -255,6 +255,8 @@ function ShellInner() {
           errorMsg={activeMower.sensors.error_msg}
           errorStatus={activeMower.sensors.error_status}
           workStatus={activeMower.sensors.work_status}
+          sn={activeMower.sn}
+          errorAck={activeMower.sensors.error_ack}
         />
       )}
 

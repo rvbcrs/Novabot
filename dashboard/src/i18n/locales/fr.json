@@ -79,7 +79,15 @@
     "area": "Surface",
     "error": "Erreur",
     "errorCode": "Code : {{code}}",
-    "unknownError": "Erreur inconnue"
+    "unknownError": "Erreur inconnue",
+    "clear": "Effacer",
+    "clearRestart": "Redémarrer le logiciel",
+    "later": "Plus tard",
+    "clearTaskHint": "Effacer retire ce message. La tondeuse réinitialise l’erreur elle-même au prochain démarrage ou retour à la base.",
+    "clearRestartHint": "Cette erreur ne disparaît qu’après un redémarrage du logiciel de la tondeuse (environ une minute). Réglez d’abord la cause.",
+    "clearPinHint": "Cette erreur nécessite le code PIN sur la tondeuse.",
+    "clearRestarting": "Le logiciel de la tondeuse redémarre. Elle revient en ligne dans environ une minute.",
+    "clearFailed": "Impossible d’effacer l’erreur."
   },
   "log": {
     "title": "Journal MQTT",

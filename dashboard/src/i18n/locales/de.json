@@ -79,7 +79,15 @@
     "area": "Fläche",
     "error": "Fehler",
     "errorCode": "Code: {{code}}",
-    "unknownError": "Unbekannter Fehler"
+    "unknownError": "Unbekannter Fehler",
+    "clear": "Löschen",
+    "clearRestart": "Mähersoftware neu starten",
+    "later": "Später",
+    "clearTaskHint": "Löschen entfernt diese Meldung. Der Mäher setzt den Fehler beim nächsten Start oder bei der Rückkehr zur Station selbst zurück.",
+    "clearRestartHint": "Dieser Fehler verschwindet erst nach einem Neustart der Mähersoftware (etwa eine Minute). Behebe zuerst die Ursache.",
+    "clearPinHint": "Dieser Fehler erfordert die PIN am Mäher.",
+    "clearRestarting": "Die Mähersoftware wird neu gestartet. In etwa einer Minute ist er wieder online.",
+    "clearFailed": "Der Fehler konnte nicht gelöscht werden."
   },
   "log": {
     "title": "MQTT-Protokoll",

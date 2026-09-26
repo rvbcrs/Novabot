@@ -182,7 +182,15 @@
     "area": "Oppervlak",
     "error": "Fout",
     "errorCode": "Code: {{code}}",
-    "unknownError": "Onbekende fout"
+    "unknownError": "Onbekende fout",
+    "clear": "Wissen",
+    "clearRestart": "Maaiersoftware herstarten",
+    "later": "Later",
+    "clearTaskHint": "Wissen haalt deze melding weg. De maaier zet de fout zelf terug bij de volgende start of terugrit naar het dok.",
+    "clearRestartHint": "Deze fout verdwijnt pas na een herstart van de maaiersoftware (ongeveer een minuut). Los eerst de oorzaak op.",
+    "clearPinHint": "Deze fout vraagt de pincode op de maaier.",
+    "clearRestarting": "De maaiersoftware wordt herstart. Over ongeveer een minuut is hij weer online.",
+    "clearFailed": "De fout kon niet gewist worden."
   },
   "log": {
     "title": "MQTT Log",
