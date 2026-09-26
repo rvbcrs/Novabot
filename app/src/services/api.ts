@@ -586,11 +586,22 @@ export class ApiClient {
   /**
    * Fetch map data for a given serial number.
    */
-  async fetchMaps(sn: string): Promise<{ maps: MapData[]; chargerGps: ChargerGps | null; chargerOrientation: number }> {
-    return this.request<{ maps: MapData[]; chargerGps: ChargerGps | null; chargerOrientation: number }>(
+  async fetchMaps(sn: string): Promise<{ maps: MapData[]; chargerGps: ChargerGps | null; chargerOrientation: number; chargingPose: (LocalPoint & { orientation: number }) | null }> {
+    return this.request<{ maps: MapData[]; chargerGps: ChargerGps | null; chargerOrientation: number; chargingPose: (LocalPoint & { orientation: number }) | null }>(
       'GET',
       `/api/dashboard/maps/${encodeURIComponent(sn)}`,
     );
+  }
+
+  /** Physical geometry translation applied when the server writes the mower ZIP. */
+  async fetchPolygonOffset(sn: string): Promise<LocalPoint> {
+    const { calibration } = await this.request<{ calibration?: { polygon_offset_x_m?: number; polygon_offset_y_m?: number } }>(
+      'GET', `/api/dashboard/calibration/${encodeURIComponent(sn)}`,
+    );
+    const x = Number(calibration?.polygon_offset_x_m ?? 0);
+    const y = Number(calibration?.polygon_offset_y_m ?? 0);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('Invalid map offset');
+    return { x, y };
   }
 
   /**

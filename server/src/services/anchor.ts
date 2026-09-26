@@ -18,8 +18,7 @@
  *     in the ZIP's map_info.json so dashboard renders + mower realign work.
  *   - /api/dashboard/maps/:sn/sync-info (Novabot-aev) — return canonical
  *     `charging_pose` for mower's extended sync_map handler to write into yaml.
- *   - /api/admin-status/map-backups/:sn/:filename/restore-and-realign
- *     (Novabot-uvf) — full one-click restore endpoint.
+ *   - Verified map apply and reanchor preflight compare all stored dock references.
  *
  * Spec: docs/superpowers/specs/2026-05-03-restore-and-realign-mower-from-zip.md
  */
@@ -125,27 +124,39 @@ export function getPolygonAnchor(
   // map0tocharge_unicom (#119): the charging pose landed on a channel point,
   // the zip/pos.json/yaml followed, and the map moved metres. No anchor is
   // better than a wrong one; callers fall back to the live docked pose or skip.
-  const chosen = unicomMaps.find((m) =>
-    /^map\d+tocharge_unicom$/.test(m.canonical_name ?? m.map_name ?? ''),
-  );
-  if (!chosen?.map_area) return null;
-
-  let pts: Array<{ x: number; y: number }>;
-  try {
-    pts = JSON.parse(chosen.map_area) as Array<{ x: number; y: number }>;
-  } catch {
-    return null;
+  const channels = unicomMaps.filter(m => /^map\d+tocharge_unicom$/.test(m.canonical_name ?? m.map_name ?? ''));
+  if (!channels.length) return null;
+  const anchors: Array<{ x: number; y: number }> = [];
+  for (const channel of channels) {
+    try {
+      const point = JSON.parse(channel.map_area ?? 'null')?.[0];
+      if (typeof point?.x !== 'number' || typeof point?.y !== 'number' || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+      anchors.push(point);
+    } catch { return null; }
   }
-  if (!Array.isArray(pts) || pts.length === 0) return null;
-
-  const first = pts[0];
-  // JSON.stringify converts NaN/Infinity to null, so an explicit null/undefined
-  // check is needed before Number() (which would coerce null to 0).
-  if (first == null || first.x == null || first.y == null) return null;
-  const x = Number(first.x);
-  const y = Number(first.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const { x, y } = anchors[0];
+  if (anchors.some(p => Math.hypot(p.x - x, p.y - y) > 0.02)) return null;
 
   const { orientation, source } = resolveSavedOrientation(sn, sensors);
   return { x, y, orientation, orientationSource: source };
+}
+
+/** Every persisted representation must identify the same dock before a writer runs. */
+export function snapshotAnchorMatches(snapshot: Record<string, unknown>, anchor: { x: number; y: number }): boolean {
+  const matches = (x: unknown, y: unknown) => typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y) && Math.hypot(x - anchor.x, y - anchor.y) <= 0.02;
+  const csv = snapshot.csv_files as Record<string, string> | undefined;
+  if (!csv || snapshot.result !== 0 || snapshot.snapshot_consistent !== true) return false;
+  const channels = Object.entries(csv).filter(([name]) => /^map\d+tocharge_unicom\.csv$/.test(name));
+  if (!channels.length || channels.some(([, text]) => {
+    const row = text.trim().split(/\r?\n/)[0]?.split(',').map(Number);
+    return !row || !matches(row[0], row[1]);
+  })) return false;
+  try {
+    const info = JSON.parse(csv['map_info.json']);
+    const pose = info.charging_pose;
+    if (!pose || pose.x == null || pose.y == null || pose.orientation == null || !matches(Number(pose.x), Number(pose.y)) || !Number.isFinite(Number(pose.orientation))) return false;
+    const yaml = String(snapshot.charging_station_yaml ?? '').match(/charging_pose:\s*\[([^\]]+)\]/);
+    const values = yaml?.[1].split(',').map(Number);
+    return !!values && matches(values[0], values[1]) && Number.isFinite(values[2]) && Math.abs(Math.atan2(Math.sin(values[2] - Number(pose.orientation)), Math.cos(values[2] - Number(pose.orientation)))) <= 0.02;
+  } catch { return false; }
 }

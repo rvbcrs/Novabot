@@ -22,7 +22,7 @@ import {
   type DroneOverlayMeta, type DroneOverlayPlacement, type DroneCorners, type GardenRenderState, type GardenRenderFraming, type GardenRenderMeta,
 } from '../../api/client';
 import {
-  fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
+  fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, alignDockPhoto,
   deleteMap, renameMap, updateMapArea, createMap,
   navigateToPosition, stopNavigation,
   fetchVirtualWalls, createVirtualWall, deleteVirtualWall,
@@ -30,10 +30,10 @@ import {
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
   applyPolygonOffset, fetchPolygonOffset, isUnsupportedFirmwareError,
-  previewZoneCopy, copyZone, fetchDevices, type ZoneCopyPlan, applyMapsToMower,
+  previewZoneCopy, copyZone, captureZoneCopyAlignment, fetchDevices, type ZoneCopyPlan, type ZoneCopyAlignment, applyMapsToMower,
   type VirtualWall, type EditGeometryDto, type CoveragePathEntry,
 } from '../../api/client';
-import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
+import { localToGps, gpsToLocal, isUsableChargerGps, calibrateGps, uncalibrateGps, splitMapCalibration } from '../../utils/coords';
 import { applyBrush, densifyPolygon, hitTestEdge, offsetPolygon, pointInPolygon as pointInPolygonXY, polygonArea, simplifyPolygon, type XY } from '../../utils/editGeometry';
 import { paintCircle, eraseCircle, makeValidPolygon } from '../../utils/brushPaint';
 import { getSocket } from '../../api/socket';
@@ -97,25 +97,25 @@ const AREA_STYLES = {
   default:  { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.25, weight: 2 },   // purple
 } as const;
 
-/** Zone-kopie-voorvertoning: amber zoals de kopieermarker, half dekkend. */
+/** Zone-kopie-voorvertoning: amber, half dekkend. */
 const COPY_PREVIEW_STYLES = {
   work:     { color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.4, weight: 3 },
   obstacle: { color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.45, weight: 2 },
   channel:  { color: '#f59e0b', dashArray: '6 4', weight: 4 },
 } as const;
 
-/** Paneelstate voor "zone kopiëren van andere maaier" (spec 2026-09-24). */
+/** Each copy requires fresh observations of the same physical source dock. */
 interface CopyPanelState {
   sources: DeviceState[];
   sourceSn: string | null;
   sourceMaps: MapData[];
   canonical: string | null;
-  /** Waar het laadstation van de bronmaaier op DEZE kaart staat (lat, lng). */
-  marker: [number, number] | null;
   withObstacles: boolean;
   plan: ZoneCopyPlan | null;
-  busy: boolean;
+  pending: 'source' | 'capture' | 'preview' | 'apply' | null;
   error: string | null;
+  alignment: ZoneCopyAlignment | null;
+  atSourceDock: boolean;
 }
 
 /** Bepaal kaarttype — primair uit mapType veld, fallback op mapId/mapName patronen */
@@ -773,37 +773,11 @@ function calibratePoints(
   cal: MapCalibration,
   center: { lat: number; lng: number },
   excludeAnchor0 = false,
+  geometryOffset: GpsPoint = { lat: 0, lng: 0 },
 ): [number, number][] {
-  const totalOffLat = cal.offsetLat;
-  const totalOffLng = cal.offsetLng;
-
-  if (totalOffLat === 0 && totalOffLng === 0 && cal.rotation === 0 && cal.scale === 1) {
-    return points.map(p => [p.lat, p.lng]);
-  }
-
-  const rad = (cal.rotation * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-
   return points.map((p, i) => {
-    // Translate to center
-    let dLat = p.lat - center.lat;
-    let dLng = p.lng - center.lng;
-
-    // Scale
-    dLat *= cal.scale;
-    dLng *= cal.scale;
-
-    // Rotate
-    const rLat = dLat * cos - dLng * sin;
-    const rLng = dLat * sin + dLng * cos;
-
-    // Dok-anker (unicom punt 0) krijgt geen handmatige offset (zie shiftPoints).
-    const offLat = excludeAnchor0 && i === 0 ? 0 : totalOffLat;
-    const offLng = excludeAnchor0 && i === 0 ? 0 : totalOffLng;
-
-    // Translate back + manual offset
-    return [center.lat + rLat + offLat, center.lng + rLng + offLng] as [number, number];
+    const g = calibrateGps(p, cal, center, excludeAnchor0 && i === 0 ? undefined : geometryOffset);
+    return [g.lat, g.lng];
   });
 }
 
@@ -1466,13 +1440,26 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   // Re-fetch the canonical map list from the server (used after draft save /
   // apply / revert, where optimistic local edits no longer match the server).
+  const mapLoadGeneration = useRef(0);
   const reloadMaps = useCallback(async () => {
     if (!sn) return;
+    const generation = ++mapLoadGeneration.current;
     try {
       const resp = await fetchMaps(sn);
+      // New servers return the entire display frame in one response. Keep
+      // compatibility when this dashboard is connected to an older server.
+      const cal = resp.calibration ?? await fetchCalibration(sn);
+      let offset = resp.polygonOffset;
+      if (!offset) {
+        const legacyOffset = await fetchPolygonOffset(sn);
+        offset = { x: legacyOffset.dxM, y: legacyOffset.dyM };
+      }
+      if (generation !== mapLoadGeneration.current) return;
       setMaps(resp.maps);
       setChargerGps(resp.chargerGps);
       setChargingPose(resp.chargingPose ?? null);
+      setSavedCal(cal);
+      setPolygonOffset(offset);
     } catch { /* keep current maps */ }
   }, [sn]);
 
@@ -1553,6 +1540,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   // Place charger mode
   const [placingCharger, setPlacingCharger] = useState(false);
+  const [aligningDockPhoto, setAligningDockPhoto] = useState(false);
+  const dockPhotoBusy = useRef(false);
 
   // Navigate-to mode
   const [navigateMode, setNavigateMode] = useState(false);
@@ -1816,6 +1805,37 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [editCal, setEditCal] = useState<MapCalibration | null>(null);
   const calibrating = editCal !== null;
   const activeCal = editCal ?? savedCal;
+  const [polygonOffset, setPolygonOffset] = useState<LocalPoint>({ x: 0, y: 0 });
+  const { display: displayCal, geometryOffset } = useMemo(() =>
+    isUsableChargerGps(chargerGps)
+      ? splitMapCalibration(activeCal, savedCal, polygonOffset, chargerGps)
+      : { display: activeCal, geometryOffset: { lat: 0, lng: 0 } },
+  [activeCal, savedCal, polygonOffset, chargerGps]);
+
+  // Keep the established rotation pivot, computed before all click handlers.
+  const polyCenter = useMemo(() => {
+    if (!isUsableChargerGps(chargerGps)) return { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
+    const points = maps.filter(m => m.mapArea.length >= (m.mapType === 'unicom' ? 2 : 3))
+      .flatMap(m => m.mapArea).filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (!points.length) return chargerGps;
+    return localToGps({
+      x: points.reduce((sum, p) => sum + p.x, 0) / points.length - (chargingPose?.x ?? 0),
+      y: points.reduce((sum, p) => sum + p.y, 0) / points.length - (chargingPose?.y ?? 0),
+    }, chargerGps);
+  }, [maps, chargerGps, chargingPose]);
+
+  // DB geometry receives polygonOffset when exported. Telemetry/navigation
+  // already use effective mower metres and must never receive it a second time.
+  const localFromDisplay = useCallback((p: GpsPoint, storedGeometry = false): LocalPoint => {
+    if (!isUsableChargerGps(chargerGps)) return { x: NaN, y: NaN };
+    const raw = uncalibrateGps(p, displayCal, polyCenter, storedGeometry ? geometryOffset : undefined);
+    const local = gpsToLocal(raw, chargerGps);
+    return { x: local.x + (chargingPose?.x ?? 0), y: local.y + (chargingPose?.y ?? 0) };
+  }, [chargerGps, chargingPose, displayCal, polyCenter, geometryOffset]);
+  const displayFromMower = useCallback((p: LocalPoint): GpsPoint => {
+    if (!isUsableChargerGps(chargerGps)) return { lat: NaN, lng: NaN };
+    return calibrateGps(localToGps({ x: p.x - (chargingPose?.x ?? 0), y: p.y - (chargingPose?.y ?? 0) }, chargerGps), displayCal, polyCenter);
+  }, [chargerGps, chargingPose, displayCal, polyCenter]);
 
   // Area type labels (translated)
   const AREA_TYPE_META: Record<AreaType, { color: string; label: string }> = useMemo(() => ({
@@ -1825,16 +1845,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }), [t]);
 
   useEffect(() => {
+    setCopyPanel(null);
     if (sn) {
-      fetchMaps(sn).then(resp => {
-        setMaps(resp.maps);
-        setChargerGps(resp.chargerGps);
-        setChargingPose(resp.chargingPose ?? null);
-      }).catch(() => setMaps([]));
+      setMaps([]);
+      setChargerGps(null);
+      setChargingPose(null);
+      setSavedCal(DEFAULT_CAL);
+      void reloadMaps();
       // Server /trail geeft default lokale punten {x,y,ts} (ondanks de TrailPoint-
       // type-naam) — gebruik ze rechtstreeks als lokale trail.
       fetchTrail(sn).then(pts => setTrail(pts as unknown as Array<{ x: number; y: number; ts: number }>)).catch(() => setTrail([]));
-      fetchCalibration(sn).then(setSavedCal).catch(() => {});
       // Initialize undo/redo history to a single fresh snapshot once the editor's
       // geometry has loaded for this mower (usually an empty snapshot = no drafts).
       refreshEditGeometry().then(resetHistory);
@@ -1851,6 +1871,19 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       setTrail([]);
     }
   }, [sn]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const changed = (event: { sn: string }) => { if (event.sn === sn) void reloadMaps(); };
+    const refreshed = () => { void reloadMaps(); };
+    socket.on('maps:changed', changed);
+    socket.on('connect', refreshed);
+    return () => {
+      ++mapLoadGeneration.current;
+      socket.off('maps:changed', changed);
+      socket.off('connect', refreshed);
+    };
+  }, [sn, reloadMaps]);
 
   // Fetch virtual walls
   useEffect(() => {
@@ -1951,7 +1984,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // while every un-touched point is preserved on save.
     // Stock firmware: bewerken kan de maaier nooit bereiken; niet eens de modus in.
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
-    const verts = mapArea.map(p => [p.lat, p.lng] as [number, number]);
+    const dockChannel = isToChargeUnicomName(maps.find(m => m.mapId === mapId)?.canonicalName);
+    const verts = calibratePoints(mapArea, displayCal, polyCenter, dockChannel, geometryOffset);
     setEditingMapId(mapId);
     setEditVertices(verts);
     setEditMode('edit');
@@ -1961,7 +1995,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setMoveTargetCanonical(null);
     setMoveWorking(null);
     setUserInteracted(true);
-  }, [chargerGps, mapWriteSupported, t]);
+  }, [maps, displayCal, polyCenter, geometryOffset, mapWriteSupported, t]);
 
   // Start drawing a new polygon
   // Maten tijdens het tekenen: de lengte van de lijn die je nu trekt, en het
@@ -2017,132 +2051,89 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [mapWriteSupported, t]);
 
   // ── Zone kopiëren van een andere maaier ────────────────────────────────
-  // Eén fysieke correspondentie: waar het laadstation van de bronmaaier op
-  // DEZE kaart staat. De zone volgt met rotatie 0. GPS/pos.json van de andere
-  // maaier is onbruikbaar: twee maaiers delen geen absoluut GPS-frame (elke
-  // charger zendt zijn eigen ingemeten RTK-basispositie uit).
-  const copyPreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Volgnummer: een verouderd preview-antwoord mag een nieuwer plan niet overschrijven.
-  const copyPreviewSeq = useRef(0);
-  const copyMarkerIcon = useMemo(() => L.divIcon({
-    className: '',
-    html: '<div style="width:22px;height:22px;border-radius:50%;background:#f59e0b;border:3px solid #fff;box-shadow:0 0 0 2px #f59e0b"></div>',
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
-  }), []);
-
-  /** Klik/sleep op de kaart → lokale meters van deze maaier, dezelfde formule als tekenen. */
-  const copyLocalFromLatLng = useCallback((lat: number, lng: number): LocalPoint | null => {
-    if (!isUsableChargerGps(chargerGps)) return null;
-    // De kaart tekent lokale punten met de weergave-offset erbij (calibratePoints);
-    // hier dus dezelfde inverse als navigate-to, anders landt de zone naast de marker.
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
-    const l = gpsToLocal({ lat: lat - offLat, lng: lng - offLng }, chargerGps);
-    return { x: l.x + (chargingPose?.x ?? 0), y: l.y + (chargingPose?.y ?? 0) };
-  }, [chargerGps, chargingPose, activeCal]);
-
-  const runCopyPreview = useCallback((state: CopyPanelState) => {
-    if (!sn || !state.sourceSn || !state.canonical || !state.marker) return;
-    const local = copyLocalFromLatLng(state.marker[0], state.marker[1]);
-    if (!local) return;
-    if (copyPreviewTimer.current) clearTimeout(copyPreviewTimer.current);
-    const seq = ++copyPreviewSeq.current;
-    const sourceSn = state.sourceSn;
-    const canonical = state.canonical;
-    const withObstacles = state.withObstacles;
-    copyPreviewTimer.current = setTimeout(async () => {
-      try {
-        const plan = await previewZoneCopy(sn, sourceSn, canonical, local, withObstacles);
-        if (seq !== copyPreviewSeq.current) return;
-        setCopyPanel(prev => (prev ? { ...prev, plan, error: null } : prev));
-      } catch (err) {
-        if (seq !== copyPreviewSeq.current) return;
-        setCopyPanel(prev => (prev ? { ...prev, plan: null, error: err instanceof Error ? err.message : String(err) } : prev));
-      }
-    }, 250);
-  }, [sn, copyLocalFromLatLng]);
-
+  // The server derives alignment from fresh camera observations at the same
+  // source dock. A photo click or client-supplied position cannot bypass this.
   const openCopyPanel = useCallback(async () => {
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
-    const sources = (await fetchDevices()).filter(d => d.deviceType === 'mower' && d.sn !== sn);
-    // Eén kaartklik-modus tegelijk, zoals de andere rail-ingangen.
     setNavigateMode(false);
     setWallDrawMode(false);
     setPlacingCharger(false);
+    setEditCal(null);
     setSelectedMapId(null);
-    setCopyPanel({ sources, sourceSn: null, sourceMaps: [], canonical: null, marker: null, withObstacles: true, plan: null, busy: false, error: null });
+    const pending: CopyPanelState = { sources: [], sourceSn: null, sourceMaps: [], canonical: null, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false };
+    setCopyPanel(pending);
+    try {
+      const sources = (await fetchDevices()).filter(d => d.deviceType === 'mower' && d.sn !== sn);
+      setCopyPanel(prev => prev === pending ? { ...prev, sources, pending: null } : prev);
+    } catch (err) {
+      setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
+    }
   }, [mapWriteSupported, sn, t]);
 
   const chooseCopySource = useCallback(async (sourceSn: string) => {
-    const [{ maps: srcMaps }, cal] = await Promise.all([fetchMaps(sourceSn), fetchCalibration(sourceSn)]);
-    const work = srcMaps.filter(m => m.mapType === 'work' && m.canonicalName);
-    // Voorgevuld op de kaartpositie van het laadstation van de bron; de
-    // gebruiker sleept hem naar de echte plek op de foto.
-    const marker: [number, number] | null = cal.chargerLat && cal.chargerLng
-      ? [cal.chargerLat, cal.chargerLng]
-      : (isUsableChargerGps(chargerGps) ? [chargerGps.lat, chargerGps.lng] : null);
-    setCopyPanel(prev => {
-      if (!prev) return prev;
-      const next: CopyPanelState = { ...prev, sourceSn, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, marker, plan: null, error: null };
-      runCopyPreview(next);
-      return next;
-    });
-  }, [chargerGps, runCopyPreview]);
-
-  const setCopyMarker = useCallback((lat: number, lng: number) => {
-    setCopyPanel(prev => {
-      if (!prev) return prev;
-      const next: CopyPanelState = { ...prev, marker: [lat, lng], plan: null };
-      runCopyPreview(next);
-      return next;
-    });
-  }, [runCopyPreview]);
-
-  // Meetstand: de maaier staat fysiek op de plek waar de bronmaaier dockt, dus
-  // zijn eigen map_position IS het laadstation van de bron in dit frame. Op
-  // centimeters nauwkeurig, waar een klik op de foto decimeters tot een meter
-  // ernaast zit (live gezien: 1,5 m te ver het terras op, 2026-09-24).
-  const copyMarkerFromMower = useCallback(() => {
-    const mx = parseFloat(mapX ?? ''), my = parseFloat(mapY ?? '');
-    if (!Number.isFinite(mx) || !Number.isFinite(my) || !isUsableChargerGps(chargerGps)) return;
-    // Inverse van copyLocalFromLatLng: lokale meters → marker-lat/lng inclusief de weergave-offset.
-    const g = localToGps({ x: mx - (chargingPose?.x ?? 0), y: my - (chargingPose?.y ?? 0) }, chargerGps);
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
-    setCopyMarker(g.lat + offLat, g.lng + offLng);
-  }, [mapX, mapY, chargerGps, chargingPose, activeCal, setCopyMarker]);
-  const copyMarkerFromMowerReady = Number.isFinite(parseFloat(mapX ?? '')) && Number.isFinite(parseFloat(mapY ?? ''));
+    if (!copyPanel || copyPanel.pending) return;
+    const pending: CopyPanelState = { ...copyPanel, sourceSn, sourceMaps: [], canonical: null, alignment: null, atSourceDock: false, pending: 'source', plan: null, error: null };
+    setCopyPanel(pending);
+    try {
+      const { maps: srcMaps } = await fetchMaps(sourceSn);
+      const work = srcMaps.filter(m => m.mapType === 'work' && m.canonicalName);
+      setCopyPanel(prev => prev === pending ? { ...prev, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, pending: null } : prev);
+    } catch (err) {
+      setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
+    }
+  }, [copyPanel]);
 
   const updateCopyPanel = useCallback((patch: Partial<CopyPanelState>) => {
     setCopyPanel(prev => {
-      if (!prev) return prev;
-      const next: CopyPanelState = { ...prev, ...patch, plan: null };
-      runCopyPreview(next);
-      return next;
+      if (!prev || prev.pending) return prev;
+      const changedSource = patch.canonical !== undefined && patch.canonical !== prev.canonical;
+      return { ...prev, ...patch, plan: null, error: null, ...(changedSource ? { alignment: null, atSourceDock: false } : {}) };
     });
-  }, [runCopyPreview]);
+  }, []);
+
+  const captureCopyAlignment = useCallback(async () => {
+    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || copyPanel.pending || !copyPanel.atSourceDock || copyPanel.alignment?.phase === 'ready') return;
+    const pending: CopyPanelState = { ...copyPanel, pending: 'capture', error: null, plan: null };
+    setCopyPanel(pending);
+    try {
+      const alignment = await captureZoneCopyAlignment(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment?.alignmentId);
+      setCopyPanel(prev => prev === pending ? { ...prev, alignment, pending: null, atSourceDock: false } : prev);
+    } catch (err) {
+      setCopyPanel(prev => prev === pending ? { ...prev, pending: null, atSourceDock: false, error: err instanceof Error ? err.message : String(err) } : prev);
+    }
+  }, [sn, copyPanel]);
+
+  const runCopyPreview = useCallback(async () => {
+    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || copyPanel.pending || copyPanel.alignment?.phase !== 'ready') return;
+    const pending: CopyPanelState = { ...copyPanel, pending: 'preview', error: null, plan: null };
+    setCopyPanel(pending);
+    try {
+      const plan = await previewZoneCopy(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, copyPanel.withObstacles);
+      setCopyPanel(prev => prev === pending ? { ...prev, plan, pending: null } : prev);
+    } catch (err) {
+      setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
+    }
+  }, [sn, copyPanel]);
 
   const placeCopiedZone = useCallback(async () => {
-    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || !copyPanel.marker || !copyPanel.plan?.ok) return;
-    const local = copyLocalFromLatLng(copyPanel.marker[0], copyPanel.marker[1]);
-    if (!local) return;
-    setCopyPanel(prev => (prev ? { ...prev, busy: true, error: null } : prev));
+    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || copyPanel.pending || copyPanel.alignment?.phase !== 'ready' || !copyPanel.plan?.ok) return;
+    const pending: CopyPanelState = { ...copyPanel, pending: 'apply', error: null };
+    setCopyPanel(pending);
     try {
-      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, local, { withObstacles: copyPanel.withObstacles, acceptChannel: true });
+      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, { withObstacles: copyPanel.withObstacles, acceptChannel: true });
       if (!r.ok || !r.map) throw new Error(t('map.copyZoneFailed'));
       await reloadMaps();
       setSelectedMapId(r.map.mapId);
-      setCopyPanel(null);
+      setCopyPanel(prev => prev === pending ? null : prev);
       const slot = r.map.canonicalName ?? '';
       toast(t('map.copyZoneDone', { name: r.map.mapName ?? slot, slot }), 'success');
       if (r.needsChannel && r.map.canonicalName) {
         setChannelPrompt({ canonical: r.map.canonicalName, name: r.map.mapName ?? r.map.canonicalName });
       }
     } catch (err) {
-      setCopyPanel(prev => (prev ? { ...prev, busy: false, error: err instanceof Error ? err.message : String(err) } : prev));
+      setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
     }
-  }, [sn, copyPanel, copyLocalFromLatLng, reloadMaps, t, toast]);
+  }, [sn, copyPanel, reloadMaps, t, toast]);
 
   // Toepassen op de maaier (sync → grids → planner terug). De zone staat al
   // op de kaart; deze regel zegt dat de maaier nog niet klaar is.
@@ -2157,6 +2148,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const copySourceName = copyPanel
     ? (copyPanel.sources.find(d => d.sn === copyPanel.sourceSn)?.nickname || copyPanel.sourceSn || '')
     : '';
+  const copyPhase = copyPanel?.alignment?.phase ?? 'source_first';
+  const copyStep = ['source_first', 'source_second', 'target_first', 'target_second', 'ready'].indexOf(copyPhase) + 1;
 
   // Determine editor polygon color based on context
   const editorColor = useMemo(() => {
@@ -2576,17 +2569,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (editVertices.length < minDrawPoints || !chargerGps) return;
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     const gpsArea = editVertices.map(([lat, lng]) => ({ lat, lng }));
-    // Add the chargingPose offset back. The display projects stored local points
-    // as localToGps(p - chargingPose, charger), so the inverse for saving is
-    // gpsToLocal(gps, charger) + chargingPose. Without this, every saved vertex was
-    // shifted by -chargingPose, moving the WHOLE map on save (this matches the
-    // paste/paint/brush save paths, which already add the offset back).
-    const offX = chargingPose?.x ?? 0;
-    const offY = chargingPose?.y ?? 0;
-    const localArea = gpsArea.map(p => {
-      const l = gpsToLocal(p, chargerGps!);
-      return { x: l.x + offX, y: l.y + offY };
-    });
+    const dockChannel = editMode === 'edit' && isToChargeUnicomName(maps.find(m => m.mapId === editingMapId)?.canonicalName);
+    const localArea = gpsArea.map((p, i) => localFromDisplay(p, !(dockChannel && i === 0)));
+    if (localArea.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) return;
     const points = localArea.map(p => ({ x: p.x, y: p.y }));
 
     const finishEdit = () => {
@@ -2658,7 +2643,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         setEditStatusKind('error');
       });
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, chargingPose, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints]);
+  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, localFromDisplay, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints]);
 
   // Afronden na een dubbelklik: pas ná de render met de opgeschoonde punten,
   // zodat handleSavePolygon precies opslaat wat er op de kaart staat.
@@ -2910,10 +2895,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (lmap && isUsableChargerGps(chargerGps)) {
       try {
         const center = lmap.getCenter();
-        const offX = chargingPose?.x ?? 0;
-        const offY = chargingPose?.y ?? 0;
-        const l = gpsToLocal({ lat: center.lat, lng: center.lng }, chargerGps);
-        const vc = { x: l.x + offX, y: l.y + offY };
+        const vc = localFromDisplay({ lat: center.lat, lng: center.lng }, true);
         if (Number.isFinite(vc.x) && Number.isFinite(vc.y)) {
           targetCx = vc.x;
           targetCy = vc.y;
@@ -2969,7 +2951,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }
     setEditStatus(t('map.edit.pasted'));
     setEditStatusKind('info');
-  }, [sn, applying, obstacleClipboard, maps, selectedMapId, chargerGps, chargingPose, refreshEditGeometry, recordHistory, reloadMaps, t]);
+  }, [sn, applying, obstacleClipboard, maps, selectedMapId, chargerGps, localFromDisplay, refreshEditGeometry, recordHistory, reloadMaps, t]);
 
   // ── Push/pull brush (R3, Part B) ────────────────────────────────
   // Working state for a brush stroke: the densified base ring + the anchor that
@@ -3077,12 +3059,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // GPS → mapArea-local frame for the brush. gpsToLocal yields {p.x-offX, p.y-offY}
   // (the frame gpsMaps renders into); add the pose offset back to match mapArea.
   const brushToLocal = useCallback((latlng: L.LatLng): XY => {
-    if (!isUsableChargerGps(chargerGps)) return { x: NaN, y: NaN };
-    const offX = chargingPose?.x ?? 0;
-    const offY = chargingPose?.y ?? 0;
-    const l = gpsToLocal({ lat: latlng.lat, lng: latlng.lng }, chargerGps);
-    return { x: l.x + offX, y: l.y + offY };
-  }, [chargerGps, chargingPose]);
+    return localFromDisplay({ lat: latlng.lat, lng: latlng.lng }, true);
+  }, [localFromDisplay]);
 
   // ── Paint/erase brush (primary tool) ────────────────────────────
   // Working ring mirrored in a ref so mouseup reads the exact last value
@@ -3381,8 +3359,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // kaart verdween zodra zijn GPS niets meldde.
   const hasGps = lat && lng && lat !== '0' && lng !== '0';
   const resolvedPosition: [number, number] | null = (() => {
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
     // Prefer the live, cm-accurate local map_position projected through the
     // charger origin — exactly the same frame as the polygons. The mower's
     // reported GPS only updates sporadically (~every 50s) and carries the
@@ -3391,14 +3367,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     const mx = mapX != null ? parseFloat(mapX) : NaN;
     const my = mapY != null ? parseFloat(mapY) : NaN;
     if (Number.isFinite(mx) && Number.isFinite(my) && isUsableChargerGps(chargerGps)) {
-      const g = localToGps({ x: mx - (chargingPose?.x ?? 0), y: my - (chargingPose?.y ?? 0) }, chargerGps);
-      const pLat = g.lat + offLat;
-      const pLng = g.lng + offLng;
+      const g = displayFromMower({ x: mx, y: my });
+      const pLat = g.lat;
+      const pLng = g.lng;
       if (Number.isFinite(pLat) && Number.isFinite(pLng)) return [pLat, pLng];
     }
     if (!hasGps) return null;
-    const numLat = parseFloat(lat) + offLat;
-    const numLng = parseFloat(lng) + offLng;
+    const numLat = parseFloat(lat);
+    const numLng = parseFloat(lng);
     if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
     return [numLat, numLng];
   })();
@@ -3453,8 +3429,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const TRAIL_GAP_M = 5;
   const trailSegments: [number, number][][] = (() => {
     if (!isUsableChargerGps(chargerGps)) return [];
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
     const segs: [number, number][][] = [];
     let cur: [number, number][] = [];
     let prev: { x: number; y: number } | null = null;
@@ -3464,9 +3438,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         cur = [];
       }
       prev = p;
-      const g = localToGps({ x: p.x - (chargingPose?.x ?? 0), y: p.y - (chargingPose?.y ?? 0) }, chargerGps);
-      const lat = g.lat + offLat;
-      const lng = g.lng + offLng;
+      const g = displayFromMower(p);
+      const lat = g.lat;
+      const lng = g.lng;
       if (Number.isFinite(lat) && Number.isFinite(lng)) cur.push([lat, lng]);
     }
     if (cur.length >= 2) segs.push(cur);
@@ -3485,21 +3459,19 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const missedPointsGps: [number, number][] = useMemo(() => {
     const raw = mowingSensors.missed_points;
     if (!raw || !isUsableChargerGps(chargerGps)) return [];
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
     const result: [number, number][] = [];
     for (const part of raw.split(';')) {
       const [xs, ys] = part.trim().split(/\s+/);
       const x = parseFloat(xs);
       const y = parseFloat(ys);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      const g = localToGps({ x: x - (chargingPose?.x ?? 0), y: y - (chargingPose?.y ?? 0) }, chargerGps);
-      const lat = g.lat + offLat;
-      const lng = g.lng + offLng;
+      const g = displayFromMower({ x, y });
+      const lat = g.lat;
+      const lng = g.lng;
       if (Number.isFinite(lat) && Number.isFinite(lng)) result.push([lat, lng]);
     }
     return result;
-  }, [mowingSensors.missed_points, chargerGps, chargingPose, activeCal.offsetLat, activeCal.offsetLng]);
+  }, [mowingSensors.missed_points, chargerGps, displayFromMower]);
 
   // Mower heading icon — `heading` carries the firmware `theta` field in
   // radians using the ENU convention (0 = East, π/2 = North). The icon
@@ -3536,30 +3508,47 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const chargerIcon = useMemo(() => makeChargerIcon(false), []);
   const chargerHasGps = !!(resolvedChargerLat && resolvedChargerLng);
 
-  // Set the charger's DISPLAYED position (menu "Laadstation" click OR marker drag
-  // — both routes call this, so they behave identically). The mower-reported
-  // GPS (charger base) stays the source of truth and is NEVER overwritten; we
-  // only store a VISUAL offset = target − base. Nothing is pushed to the mower.
-  // When there is no base yet (mower never auto-detected) we adopt the clicked
-  // point as the base so a charger can still be placed manually.
-  const handlePlaceCharger = useCallback((lat: number, lng: number) => {
+  // Change the photo reference, preserving the applied physical polygon shift.
+  // Existing local geometry and the mower's frame remain unchanged.
+  const handlePlaceCharger = useCallback(async (lat: number, lng: number) => {
+    if (dockPhotoBusy.current) return;
+    if (aligningDockPhoto) {
+      dockPhotoBusy.current = true;
+      setPlacingCharger(false);
+      try {
+        await alignDockPhoto(sn, lat, lng);
+        await reloadMaps();
+        toast(t('map.dockPhotoSaved', 'Dock gekoppeld aan de foto. Controleer nu andere herkenbare grondpunten.'), 'success');
+      } catch (error) {
+        toast(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        dockPhotoBusy.current = false;
+        setAligningDockPhoto(false);
+      }
+      return;
+    }
     // Always set the real charger anchor (base) — never a visual offset. The
     // drop point IS where the charger physically sits, so the anchor moves there
     // and the charger + polygons shift together. No relocateCharger: the local
     // polygon coords are unchanged and nothing is pushed to the mower. Setting
     // the base (not an offset) keeps the app consistent with the dashboard — the
     // app reads chargerGps directly and ignores offset.
-    const updated: MapCalibration = { ...savedCal, chargerLat: lat, chargerLng: lng, offsetLat: 0, offsetLng: 0 };
-    setSavedCal(updated);
+    const shift = gridMetresToOffsetDeg(polygonOffset.x, polygonOffset.y, { lat, lng });
+    const updated: MapCalibration = { ...savedCal, chargerLat: lat, chargerLng: lng, offsetLat: shift.offsetLat, offsetLng: shift.offsetLng };
     // The zones, drawing, copying and navigate-to all project from chargerGps;
     // without this only the icon moved and everything else kept the old pin
     // until the maps were fetched again.
-    setChargerGps({ lat, lng });
     setPlacingCharger(false);
-    saveCalibration(sn, updated).then(() => {
+    try {
+      const result = await saveCalibration(sn, updated);
+      if (!result.ok) throw new Error(t('map.saveError', 'Opslaan mislukt'));
+      await reloadMaps();
       toast(t('map.chargerSaved'), 'success');
-    });
-  }, [sn, savedCal, t]);
+    } catch (error) {
+      await reloadMaps();
+      toast(error instanceof Error ? error.message : String(error), 'error');
+    }
+  }, [sn, savedCal, polygonOffset, t, aligningDockPhoto, reloadMaps, toast]);
 
   // Push maps to mower via SSH
   // Navigate-to: the click is a map point, the mower wants map metres. Undo
@@ -3569,11 +3558,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const handleNavigateClick = useCallback(async (lat: number, lng: number) => {
     setNavigateMode(false);
     if (!isUsableChargerGps(chargerGps)) return;
-    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
-    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
-    const l = gpsToLocal({ lat: lat - offLat, lng: lng - offLng }, chargerGps);
-    const x = l.x + (chargingPose?.x ?? 0);
-    const y = l.y + (chargingPose?.y ?? 0);
+    const { x, y } = localFromDisplay({ lat, lng });
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     setNavigateTarget({ lat, lng });
     if (!(await dialog.confirm({
       title: t('map.nav.confirmTitle'), message: t('map.nav.confirmMsg'),
@@ -3584,7 +3570,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       setNavigateTarget(null);
       toast(`✗ ${(r as { error?: string } | null)?.error ?? t('controls.navigateTo')}`, 'error');
     }
-  }, [sn, chargerGps, activeCal, chargingPose, dialog, t, toast]);
+  }, [sn, chargerGps, localFromDisplay, dialog, t, toast]);
 
   // The drive reports its phase through the sensors; say it, and drop the
   // target marker once it is over.
@@ -3637,29 +3623,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }).catch(() => toast(`✗ ${t('map.noGo.deleteFailed')}`, 'error'));
   }, [sn, toast, t]);
 
-  // Center of all polygon points (used as rotation/scale pivot). Skip
-  // any non-finite vertex so a single NaN doesn't propagate into the
-  // pathDirection preview polylines and crash Leaflet (issue #15).
-  const polyCenter = useMemo(() => {
-    let totalLat = 0, totalLng = 0, count = 0;
-    for (const m of polygonMaps) {
-      for (const p of m.mapArea) {
-        if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
-        totalLat += p.lat;
-        totalLng += p.lng;
-        count++;
-      }
-    }
-    if (count === 0) {
-      const [pLat, pLng] = position;
-      if (Number.isFinite(pLat) && Number.isFinite(pLng)) {
-        return { lat: pLat, lng: pLng };
-      }
-      return { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
-    }
-    return { lat: totalLat / count, lng: totalLng / count };
-  }, [polygonMaps, position]);
-
   /** Lokale meters van deze maaier → Leaflet-posities, dezelfde projectie als gpsMaps/draftOverlays. */
   const copyPositions = useCallback((pts: LocalPoint[]): [number, number][] => {
     if (!isUsableChargerGps(chargerGps)) return [];
@@ -3669,8 +3632,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       const g = localToGps({ x: p.x - offX, y: p.y - offY }, chargerGps);
       return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? [g] : [];
     });
-    return calibratePoints(gps, activeCal, polyCenter);
-  }, [chargerGps, chargingPose, activeCal, polyCenter]);
+    return calibratePoints(gps, displayCal, polyCenter, false, geometryOffset);
+  }, [chargerGps, chargingPose, displayCal, polyCenter, geometryOffset]);
 
   // Calibration handlers
   // De edit-offset houden we in GRADEN aan zodat de bestaande preview
@@ -3723,6 +3686,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // toegepaste maai-offset zodat de kaart ook na sluiten van het paneel klopt.
     saveCalibration(sn, calForDisplay).catch(() => {});
     setSavedCal(calForDisplay);
+    setPolygonOffset({ x: dxM, y: dyM });
     setEditCal(null);
     toast(offline ? t('map.shiftOffline') : t('map.shiftApplied'), offline ? 'info' : 'success');
     return true;
@@ -3938,7 +3902,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {polygonMaps.map(m => {
             // Dok-route-unicom: punt 0 (het dok-anker) niet meeschuiven — zelfde
             // uitsluiting als server-side shiftPoints, dus preview == maaier.
-            const positions = calibratePoints(m.mapArea, activeCal, polyCenter, isToChargeUnicomName(m.canonicalName));
+            const positions = calibratePoints(m.mapArea, displayCal, polyCenter, isToChargeUnicomName(m.canonicalName), geometryOffset);
             const outline = m.mapType === 'work' ? sourceColor(m.source) : undefined;
             const baseStyle = { ...getAreaStyle(m.mapType, m.mapId, m.mapName), ...(outline ? { color: outline } : {}) };
             const isBeingEdited = editMode === 'edit' && editingMapId === m.mapId;
@@ -3991,7 +3955,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Pending draft overlays (R2) — dashed, drawn on top of saved maps.
               Hidden while actively editing so the in-progress editor is clear. */}
           {editMode === 'none' && draftOverlays.map(d => {
-            const positions = calibratePoints(d.gps, activeCal, polyCenter);
+            const positions = calibratePoints(d.gps, displayCal, polyCenter, false, geometryOffset);
             const base = getAreaStyle(d.mapType);
             return (
               <Polygon
@@ -4011,7 +3975,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               {laneStrokes(cp.id).map((st, i) => {
                 const pts = st.upTo === null ? cp.gps : cp.gps.slice(0, st.upTo);
                 return pts.length >= 2 ? (
-                  <Polyline key={i} positions={calibratePoints(pts, activeCal, polyCenter)}
+                  <Polyline key={i} positions={calibratePoints(pts, displayCal, polyCenter)}
                     pathOptions={{ color: st.color, weight: st.weight, opacity: st.opacity, lineCap: 'round', lineJoin: 'round' }} />
                 ) : null;
               })}
@@ -4020,7 +3984,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Push/pull brush (R3): live in-progress stroke + pointer handler. */}
           {brushMode && brushOverlayGps && brushOverlayGps.length >= 3 && (
             <Polygon
-              positions={calibratePoints(brushOverlayGps, activeCal, polyCenter)}
+              positions={calibratePoints(brushOverlayGps, displayCal, polyCenter, false, geometryOffset)}
               pathOptions={{ color: '#a78bfa', weight: 2, dashArray: '6 4', fillOpacity: 0.12, fillColor: '#a78bfa' }}
             />
           )}
@@ -4035,7 +3999,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Paint/erase brush (primary tool): live in-progress stroke. */}
           {paintMode && paintOverlayGps && paintOverlayGps.length >= 3 && (
             <Polygon
-              positions={calibratePoints(paintOverlayGps, activeCal, polyCenter)}
+              positions={calibratePoints(paintOverlayGps, displayCal, polyCenter, false, geometryOffset)}
               pathOptions={{
                 color: paintTool === 'paint' ? '#34d399' : '#f59e0b',
                 weight: 2, dashArray: '6 4', fillOpacity: 0.14,
@@ -4057,7 +4021,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               its dragged position, plus the pointer handler. */}
           {moveMode && moveOverlayGps && moveOverlayGps.length >= 3 && (
             <Polygon
-              positions={calibratePoints(moveOverlayGps, activeCal, polyCenter)}
+              positions={calibratePoints(moveOverlayGps, displayCal, polyCenter, false, geometryOffset)}
               pathOptions={{ color: '#22d3ee', weight: 2, dashArray: '6 4', fillOpacity: 0.14, fillColor: '#22d3ee' }}
             />
           )}
@@ -4124,7 +4088,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             const offX = chargingPose?.x ?? 0, offY = chargingPose?.y ?? 0;
             const fromG = localToGps({ x: offsetAnnotation.from.x - offX, y: offsetAnnotation.from.y - offY }, chargerGps);
             const toG = localToGps({ x: offsetAnnotation.to.x - offX, y: offsetAnnotation.to.y - offY }, chargerGps);
-            const pts = calibratePoints([fromG, toG], activeCal, polyCenter);
+            const pts = calibratePoints([fromG, toG], displayCal, polyCenter, false, geometryOffset);
             if (pts.length < 2) return null;
             const cm = offsetAnnotation.cm;
             const color = cm >= 0 ? '#38bdf8' : '#f59e0b';
@@ -4149,7 +4113,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             const wPolys = polygonMaps
               .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
               .map(m => {
-                const calPts = calibratePoints(m.mapArea, activeCal, polyCenter);
+                const calPts = calibratePoints(m.mapArea, displayCal, polyCenter, false, geometryOffset);
                 return calPts.map(([lat, lng]) => ({ lat, lng }));
               });
             return <CoverageStripes lanes={coveredLanes} workPolys={wPolys} />;
@@ -4244,24 +4208,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
           {/* Click-to-place charger handler */}
           {placingCharger && <ChargerPlacer onPlace={handlePlaceCharger} />}
-          {/* Zone kopiëren: klik verplaatst de marker, marker is sleepbaar, preview gestippeld */}
-          {copyPanel && editMode === 'none' && <ChargerPlacer onPlace={setCopyMarker} />}
-          {copyPanel?.marker && editMode === 'none' && (
-            <Marker
-              position={copyPanel.marker}
-              icon={copyMarkerIcon}
-              draggable
-              zIndexOffset={1000}
-              eventHandlers={{
-                dragend: (e) => { const { lat, lng } = e.target.getLatLng(); setCopyMarker(lat, lng); },
-              }}
-            >
-              <Tooltip direction="top" offset={[0, -12]} permanent>{t('map.copyZoneMarker', { name: copySourceName })}</Tooltip>
-            </Marker>
-          )}
-          {/* Kopie-voorvertoning in de kleur van de marker, half dekkend: in het
-              groen van de gewone zones viel hij weg tegen de foto en tegen een
-              bestaande zone op dezelfde plek. */}
+          {/* Measured copy preview; no editable placement marker. */}
           {editMode === 'none' && copyPanel?.plan && copyPanel.plan.work.length >= 3 && (
             <Polygon positions={copyPositions(copyPanel.plan.work)} pathOptions={COPY_PREVIEW_STYLES.work} />
           )}
@@ -4274,7 +4221,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {/* Charger marker (draggable to reposition) — apply same calibration offset as polygons */}
           {chargerHasGps && (
             <Marker
-              position={[resolvedChargerLat! + activeCal.offsetLat, resolvedChargerLng! + activeCal.offsetLng]}
+              position={[resolvedChargerLat!, resolvedChargerLng!]}
               icon={chargerIcon}
               draggable
               eventHandlers={{
@@ -4290,7 +4237,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <Popup>
                 <div className="text-xs">
                   <div className="font-semibold">{t('map.chargingStation')}</div>
-                  <div>{(resolvedChargerLat! + activeCal.offsetLat).toFixed(6)}, {(resolvedChargerLng! + activeCal.offsetLng).toFixed(6)}</div>
+                  <div>{resolvedChargerLat!.toFixed(6)}, {resolvedChargerLng!.toFixed(6)}</div>
                   {/* Slepen verplaatst alleen de weergegeven marker-anker (map_calibration.
                       charger_lat/lng) — nooit de fysieke laadstation-positie op de maaier. */}
                   <div className="mt-1 font-medium text-gray-500">{t('map.displayCalTitle')}</div>
@@ -4312,7 +4259,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             const workPolys = polygonMaps
               .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
               .map(m => {
-                const calPts = calibratePoints(m.mapArea, activeCal, polyCenter);
+                const calPts = calibratePoints(m.mapArea, displayCal, polyCenter, false, geometryOffset);
                 return calPts.map(([lat, lng]) => ({ lat, lng }));
               });
             if (workPolys.length === 0) return null;
@@ -4792,11 +4739,21 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   </button>
                   {railFlyout === 'dock' && (
                     <div className={railPanel}>
-                      <button onClick={() => { setPlacingCharger(!placingCharger); setRailFlyout(null); }} className={railRow(placingCharger)}>
+                      <button onClick={() => { setAligningDockPhoto(false); setPlacingCharger(!placingCharger); setRailFlyout(null); }} className={railRow(placingCharger && !aligningDockPhoto)}>
                         <MapPin className="w-4 h-4 opacity-70 shrink-0" />
                         <span className="text-left">
                           {t('map.alignToSatellite')}
                           <span className="block text-[11px] leading-snug text-gray-500">{t('map.alignToSatelliteHint')}</span>
+                        </span>
+                      </button>
+                      <button onClick={() => {
+                        setAligningDockPhoto(true); setPlacingCharger(true); setRailFlyout(null);
+                        toast(t('map.dockPhotoPick', 'Laat de maaier op het dock staan en klik op zijn echte positie op de foto.'), 'info');
+                      }} className={railRow(placingCharger && aligningDockPhoto)}>
+                        <Target className="w-4 h-4 opacity-70 shrink-0" />
+                        <span className="text-left">
+                          {t('map.dockPhotoAlign', 'Gedockte maaier koppelen aan foto')}
+                          <span className="block text-[11px] leading-snug text-gray-500">{t('map.dockPhotoHint', 'Gebruikt de gecontroleerde dockpositie. Verandert geen maaigrenzen of rijroutes.')}</span>
                         </span>
                       </button>
                     </div>
@@ -5206,15 +5163,15 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         )}
         {/* Zone kopiëren van een andere maaier */}
         {copyPanel && editMode === 'none' && (
-          <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-72 space-y-2">
+          <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-80 max-h-[calc(100%-1.5rem)] overflow-y-auto space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">{t('map.copyZone')}</span>
-              <button onClick={() => setCopyPanel(null)} className="text-gray-500 hover:text-gray-300" title={t('common.cancel')}>
+              <button onClick={() => setCopyPanel(null)} disabled={copyPanel.pending === 'apply'} className="text-gray-500 hover:text-gray-300 disabled:opacity-40" title={t('common.cancel')}>
                 <X className="w-4 h-4" />
               </button>
             </div>
             {copyPanel.sources.length === 0 ? (
-              <p className="text-[11px] text-gray-400">{t('map.copyZoneNoSources')}</p>
+              <p className="text-[11px] text-gray-400" role="status">{copyPanel.error ?? t(copyPanel.pending ? 'common.loading' : 'map.copyZoneNoSources')}</p>
             ) : (
               <>
                 <label className="block text-[11px] text-gray-400">
@@ -5222,6 +5179,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   <select
                     value={copyPanel.sourceSn ?? ''}
                     onChange={e => void chooseCopySource(e.target.value)}
+                    disabled={!!copyPanel.pending}
                     className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
                   >
                     <option value="" disabled>{t('map.copyZoneChoose')}</option>
@@ -5234,6 +5192,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                     <select
                       value={copyPanel.canonical ?? ''}
                       onChange={e => updateCopyPanel({ canonical: e.target.value })}
+                      disabled={!!copyPanel.pending}
                       className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
                     >
                       {copyPanel.sourceMaps.map(m => (
@@ -5245,25 +5204,37 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   </label>
                 )}
                 <label className="flex items-center gap-2 text-[11px] text-gray-400">
-                  <input type="checkbox" checked={copyPanel.withObstacles} onChange={e => updateCopyPanel({ withObstacles: e.target.checked })} />
+                  <input type="checkbox" checked={copyPanel.withObstacles} disabled={!!copyPanel.pending} onChange={e => updateCopyPanel({ withObstacles: e.target.checked })} />
                   {t('map.copyZoneWithObstacles')}
                 </label>
-                {copyPanel.sourceSn && (
-                  <p className="text-[11px] leading-snug text-gray-400">{t('map.copyZoneHint', { name: copySourceName })}</p>
-                )}
-                {copyPanel.sourceSn && (
+                {copyPanel.canonical && (
                   <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
-                    <p className="text-[11px] leading-snug text-gray-400">{t('map.copyZoneMeasureHint', { name: copySourceName })}</p>
+                    <p className="text-xs font-medium text-amber-300">{t('map.copyAlignmentStep', { step: copyStep })}</p>
+                    <p className="text-[11px] leading-snug text-gray-200">{t(`map.copyAlignment.${copyPhase}`, { source: copySourceName, target: sn })}</p>
+                    <p className="text-[11px] leading-snug text-gray-400">{t('map.copyAlignmentManual')}</p>
+                    {copyPhase !== 'ready' && (
+                      <label className="flex items-start gap-2 text-[11px] text-gray-300">
+                        <input className="mt-0.5" type="checkbox" checked={copyPanel.atSourceDock} disabled={!!copyPanel.pending} onChange={e => updateCopyPanel({ atSourceDock: e.target.checked })} />
+                        {t('map.copyAlignmentConfirm', { source: copySourceName })}
+                      </label>
+                    )}
                     <button
-                      onClick={copyMarkerFromMower}
-                      disabled={!copyMarkerFromMowerReady}
+                      onClick={() => void (copyPhase === 'ready' ? runCopyPreview() : captureCopyAlignment())}
+                      disabled={!!copyPanel.pending || (copyPhase !== 'ready' && !copyPanel.atSourceDock)}
                       className="w-full text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-200 hover:bg-gray-600 disabled:opacity-40 transition-colors"
                     >
-                      {t('map.copyZoneMeasure')}
+                      {copyPanel.pending === 'capture' || copyPanel.pending === 'preview' ? t('common.loading') : t(copyPhase === 'ready' ? 'map.copyAlignmentPreview' : 'map.copyAlignmentCapture')}
                     </button>
+                    {copyPanel.alignment && (
+                      <button onClick={() => updateCopyPanel({ alignment: null, atSourceDock: false })} disabled={!!copyPanel.pending} className="w-full text-[11px] text-gray-400 hover:text-gray-200 disabled:opacity-40">
+                        {t('map.copyAlignmentRestart')}
+                      </button>
+                    )}
+                    <p className="text-[11px] leading-snug text-amber-300">{t('map.copyAlignmentTestNotice')}</p>
                   </div>
                 )}
-                {copyPanel.error && <p className="text-[11px] text-red-400">{copyPanel.error}</p>}
+                {copyPanel.pending === 'source' && <p className="text-[11px] text-gray-400" role="status">{t('common.loading')}</p>}
+                {copyPanel.error && <p className="text-[11px] text-red-400" role="alert">{copyPanel.error}</p>}
                 {copyPanel.plan && (
                   <div className="text-[11px] leading-snug space-y-0.5">
                     {copyPanel.plan.ok ? (
@@ -5286,15 +5257,15 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   </div>
                 )}
                 <div className="flex items-center gap-2 pt-1">
-                  <button onClick={() => setCopyPanel(null)} className="flex-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors">
+                  <button onClick={() => setCopyPanel(null)} disabled={copyPanel.pending === 'apply'} className="flex-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 disabled:opacity-40 transition-colors">
                     {t('common.cancel')}
                   </button>
                   <button
                     onClick={() => void placeCopiedZone()}
-                    disabled={!copyPanel.plan?.ok || copyPanel.busy}
+                    disabled={copyPhase !== 'ready' || !copyPanel.plan?.ok || !!copyPanel.pending}
                     className="flex-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 transition-colors"
                   >
-                    {copyPanel.busy ? t('map.copyZonePlacing') : t('map.copyZonePlace')}
+                    {copyPanel.pending === 'apply' ? t('map.copyZonePlacing') : t('map.copyZonePlace')}
                   </button>
                 </div>
               </>
@@ -5805,7 +5776,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       />
 
       {/* Charger placement is now a single unified action (menu click OR marker
-          drag → handlePlaceCharger), which stores a VISUAL offset only and never
+          drag → handlePlaceCharger), which updates only the photo reference and never
           pushes to the mower. The old relocate-vs-correct dialog (which could
           recalc + push maps to the mower) has been removed. */}
     </div>

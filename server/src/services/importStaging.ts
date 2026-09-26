@@ -10,6 +10,8 @@ export type ImportState =
   | 'ANCHOR_SET'      // mower back on dock, RTK + map_position snapshot taken
   | 'PREVIEW_SHOWN'
   | 'USER_CONFIRMED'
+  | 'APPLYING'
+  | 'RECONCILE_REQUIRED'
   | 'APPLIED'
   | 'CANCELLED';
 
@@ -18,12 +20,14 @@ const LEGAL: Record<ImportState, ImportState[]> = {
   // straight to AUTO_DOCK only when the drive + RTK lock both succeed.
   // The DRIVE_AND_LOCK state is kept for compatibility but unused on the
   // happy path.
-  UPLOADED:        ['DRIVE_AND_LOCK', 'AUTO_DOCK', 'ANCHOR_SET', 'APPLIED', 'CANCELLED'],
+  UPLOADED:        ['DRIVE_AND_LOCK', 'AUTO_DOCK', 'ANCHOR_SET', 'APPLYING', 'APPLIED', 'CANCELLED'],
   DRIVE_AND_LOCK:  ['AUTO_DOCK', 'UPLOADED', 'CANCELLED'],
   AUTO_DOCK:       ['ANCHOR_SET', 'CANCELLED'],
   ANCHOR_SET:      ['PREVIEW_SHOWN', 'CANCELLED'],
   PREVIEW_SHOWN:   ['USER_CONFIRMED', 'CANCELLED'],
   USER_CONFIRMED:  ['APPLIED', 'CANCELLED'],
+  APPLYING:       ['UPLOADED', 'RECONCILE_REQUIRED', 'APPLIED'],
+  RECONCILE_REQUIRED: ['APPLYING'],
   APPLIED:         [],
   CANCELLED:       [],
 };
@@ -42,7 +46,7 @@ export interface StagingContext {
   driveStart?: { lat: number; lng: number };
   driveEnd?: { lat: number; lng: number };
   derivedHeadingRad?: number;
-  applyResult?: { driftM?: number; warning?: string };
+  applyResult?: { driftM?: number; warning?: string; error?: string; operationId?: string; bundleHash?: string; mowerVerified?: boolean };
 }
 
 export interface StagingSession {
@@ -78,6 +82,11 @@ export class ImportStagingStore {
         if (fs.existsSync(f)) {
           try {
             const s = JSON.parse(fs.readFileSync(f, 'utf8')) as StagingSession;
+            if (s.state === 'APPLYING') {
+              s.state = 'RECONCILE_REQUIRED';
+              s.context.applyResult = { ...s.context.applyResult, warning: 'Interrupted restore: compare mower files before retrying.' };
+              this.persist(s);
+            }
             this.cache.set(s.stagingId, s);
           } catch { /* skip corrupt */ }
         }
@@ -88,7 +97,9 @@ export class ImportStagingStore {
   private persist(s: StagingSession): void {
     const dir = path.join(this.rootDir, s.sn, s.stagingId);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(s, null, 2));
+    const target = path.join(dir, 'state.json');
+    fs.writeFileSync(`${target}.tmp`, JSON.stringify(s, null, 2));
+    fs.renameSync(`${target}.tmp`, target);
   }
 
   create(sn: string, context: StagingContext): StagingSession {
@@ -118,16 +129,18 @@ export class ImportStagingStore {
     const s = this.cache.get(stagingId);
     if (!s) throw new Error(`unknown stagingId ${stagingId}`);
     if (!LEGAL[s.state].includes(to)) throw new IllegalStateTransitionError(s.state, to);
-    s.state = to;
-    s.updatedAt = Date.now();
-    s.context = { ...s.context, ...contextPatch };
-    this.persist(s);
-    return s;
+    const next = { ...s, state: to, updatedAt: Date.now(), context: { ...s.context, ...contextPatch } };
+    this.persist(next);
+    this.cache.set(stagingId, next);
+    return next;
   }
 
   cancel(stagingId: string, _reason: string): void {
     const s = this.cache.get(stagingId);
     if (!s) return;
+    if (s.state === 'APPLYING' || s.state === 'RECONCILE_REQUIRED') {
+      throw new Error('Restore outcome must be reconciled before removing its recovery files');
+    }
     const dir = path.join(this.rootDir, s.sn, s.stagingId);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     this.cache.delete(stagingId);

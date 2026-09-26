@@ -1,3 +1,4 @@
+import { ingestPositionTelemetry, clearPositionTelemetry } from '../services/positionTelemetry.js';
 /**
  * Gedeelde sensor definities, waarde-vertalingen en data cache.
  *
@@ -607,6 +608,7 @@ export function clearValidationTrail(sn: string): void {
  * Hierdoor toont het dashboard geen stale waarden voor offline apparaten.
  */
 export function clearDeviceData(sn: string): void {
+  clearPositionTelemetry(sn);
   deviceCache.delete(sn);
   pinVerifiedSns.delete(sn);
   signalSampleMetaBySn.delete(sn);
@@ -873,6 +875,7 @@ function sshCatPosJson(ip: string): Promise<string | null> {
  * chip shows "RTK Fixed" and not the bare GGA code 4.
  */
 export function ingestSensorStream(sn: string, data: Record<string, unknown>): Map<string, string> {
+  ingestPositionTelemetry(sn, data);
   if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
   const cache = deviceCache.get(sn)!;
   const changes = new Map<string, string>();
@@ -1019,6 +1022,7 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   const changes = new Map<string, string>();
   const pinSuppressed = pinVerifiedSns.has(sn);
   const frameReceivedAt = Date.now();
+  ingestPositionTelemetry(sn, data as Record<string, unknown>, frameReceivedAt);
   const signalMeta = signalSampleMetaBySn.get(sn) ?? {};
   signalSampleMetaBySn.set(sn, signalMeta);
 

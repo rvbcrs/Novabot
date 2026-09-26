@@ -13,6 +13,8 @@
  * heavy dependency graph of adminStatus.ts is fully stubbed out.
  */
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+vi.mock('../../services/mowerMapApply.js', () => ({ applyMapsToMower: vi.fn(), getMapApplySnapshot: vi.fn() }));
+import { applyMapsToMower } from '../../services/mowerMapApply.js';
 import request from 'supertest';
 import express from 'express';
 
@@ -158,29 +160,18 @@ describe('GET /api/admin-status/maps/:sn/polygon-offset', () => {
 });
 
 describe('POST /api/admin-status/maps/:sn/reset-polygon-offset', () => {
-  beforeEach(() => {
-    vi.mocked(broker.isDeviceOnline).mockReturnValue(true);
-    vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue('/fake/_latest.zip');
-    vi.mocked(mapSync.onExtendedResponse).mockImplementation((_sn, handler) => {
-      queueMicrotask(() => handler({ sync_map_respond: { result: 0 } } as any));
-    });
-    vi.mocked(mapSync.offExtendedResponse).mockImplementation(() => {});
-  });
-
-  it('writes (0,0), regenerates, and pushes sync_map', async () => {
-    mapRepo.setPolygonOffset(SN, 0.05, 0.05);
+  it('uses the same confirmed apply pipeline for zero offsets', async () => {
+    vi.mocked(applyMapsToMower).mockResolvedValue(true);
     const r = await request(server).post(`/api/admin-status/maps/${SN}/reset-polygon-offset`).send({});
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
-    expect(r.body.dx_m).toBe(0);
-    expect(r.body.dy_m).toBe(0);
-    expect(mapRepo.getPolygonOffset(SN)).toEqual({ x: 0, y: 0 });
+    expect(applyMapsToMower).toHaveBeenCalledWith(SN, { x: 0, y: 0 });
+    expect(mapSync.publishToExtended).not.toHaveBeenCalled();
   });
-
-  it('reset on a never-calibrated SN still works (no row → row with zeros)', async () => {
-    const FRESH = 'LFIN_NEVER_CALIBRATED';
-    const r = await request(server).post(`/api/admin-status/maps/${FRESH}/reset-polygon-offset`).send({});
-    expect(r.status).toBe(200);
-    expect(mapRepo.getPolygonOffset(FRESH)).toEqual({ x: 0, y: 0 });
+  it('keeps a refused reset from being reported as successful', async () => {
+    vi.mocked(applyMapsToMower).mockResolvedValue(false);
+    const r = await request(server).post(`/api/admin-status/maps/${SN}/reset-polygon-offset`).send({});
+    expect(r.status).toBe(409);
+    expect(r.body.ok).toBe(false);
   });
 });

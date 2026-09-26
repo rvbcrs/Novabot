@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { localToGps, gpsToLocal } from './coords.ts';
+import { localToGps, gpsToLocal, calibrateGps, uncalibrateGps, splitMapCalibration } from './coords.ts';
 
 const ref = { lat: 52.140845931081316, lng: 6.2311545451881649 };
 // Rasterverschuiving (m) vanaf ref, en waar PROJ die neerlegt.
@@ -33,4 +33,34 @@ test('terug naar kaartmeters geeft hetzelfde punt (binnen 1 cm)', () => {
     const d = Math.hypot(l.x - x, l.y - y);
     assert.ok(d < 0.01, `(${x}, ${y}) komt terug op (${l.x.toFixed(3)}, ${l.y.toFixed(3)})`);
   }
+});
+
+test('draw/brush/paste inverse blijft exact met anker, rotatie, schaal en fysieke verschuiving', () => {
+  const anchor = { x: -1.21, y: 0.48 };
+  const physical = { x: 0.6, y: -0.35 };
+  const shifted = localToGps(physical, ref);
+  const cal = { rotation: 37, scale: 1.12, offsetLat: shifted.lat - ref.lat + 0.000004, offsetLng: shifted.lng - ref.lng - 0.000005 };
+  const { display, geometryOffset } = splitMapCalibration(cal, cal, physical, ref);
+  const point = { x: 20, y: -12 };
+  const rawGps = localToGps({ x: point.x - anchor.x, y: point.y - anchor.y }, ref);
+  const shown = calibrateGps(rawGps, display, ref, geometryOffset);
+  const restored = gpsToLocal(uncalibrateGps(shown, display, ref, geometryOffset), ref);
+  assert.ok(Math.hypot(restored.x + anchor.x - point.x, restored.y + anchor.y - point.y) < 1e-6);
+  const effectiveGps = localToGps({ x: point.x + physical.x - anchor.x, y: point.y + physical.y - anchor.y }, ref);
+  assert.ok(metres(calibrateGps(effectiveGps, display, ref), shown) < 1e-6);
+});
+
+test('polygonshift of shift-preview verplaatst een stilstaande maaier niet', () => {
+  const zero = { offsetLat: 0, offsetLng: 0, rotation: 21, scale: 0.98 };
+  const actual = localToGps({ x: 10, y: 20 }, ref);
+  const offset = { x: 0.7, y: -0.4 };
+  const shifted = localToGps(offset, ref);
+  const saved = { ...zero, offsetLat: shifted.lat - ref.lat, offsetLng: shifted.lng - ref.lng };
+  const preview = { ...saved, offsetLat: saved.offsetLat + 0.000003 };
+  const before = calibrateGps(actual, zero, ref);
+  for (const active of [saved, preview]) {
+    const { display } = splitMapCalibration(active, saved, offset, ref);
+    assert.ok(metres(calibrateGps(actual, display, ref), before) < 1e-6);
+  }
+  assert.ok(Number.isNaN(uncalibrateGps(actual, { ...zero, scale: 0 }, ref).lat));
 });

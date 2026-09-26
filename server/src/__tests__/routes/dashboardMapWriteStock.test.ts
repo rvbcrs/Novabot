@@ -165,22 +165,12 @@ describe('map create/update on stock firmware', () => {
     expect(mapRepo.findBySnAndCanonical(SN, 'map1')?.map_name).toBeNull();
   });
 
-  it('vraagt na een kaart-push om nieuwe per-slot grids, pas nadat sync_map klaar is (#118)', async () => {
+  it('slaat de tekening op maar schrijft niets naar een maaier zonder verse dockmeting', async () => {
     fw.supported = true;
-    // Elke extended command draait op de maaier in een eigen thread: een
-    // regenerate die meteen achter de sync_map-kick aankomt, ziet de oude
-    // csv_file/ en de nieuwe zone krijgt geen mapN.yaml (error 118).
-    const handlers: Array<(d: Record<string, unknown>) => void> = [];
-    vi.mocked(onExtendedResponse).mockImplementation((_sn, h) => { handlers.push(h as (d: Record<string, unknown>) => void); });
     const res = await request(server).post(`/api/dashboard/maps/${SN}`).send({ mapArea: tri, mapType: 'work' });
     expect(res.status).toBe(200);
-    // De push loopt in de achtergrond; even de microtaken laten lopen.
     await new Promise(r => setTimeout(r, 0));
-    const sent = () => vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0]);
-    expect(sent()).toEqual(['sync_map']);
-    for (const h of handlers) h({ sync_map_respond: { result: 0 } });
-    await new Promise(r => setTimeout(r, 0));
-    expect(sent()).toEqual(['sync_map', 'regenerate_per_map_files']);
+    expect(publishToExtended).not.toHaveBeenCalled();
   });
 
   it('weigert een kanaal waarvan de eindpunten geen gebieden raken', async () => {

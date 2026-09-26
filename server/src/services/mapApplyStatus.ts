@@ -1,3 +1,4 @@
+import { positionTelemetry, POSITION_MAX_AGE_MS } from './positionTelemetry.js';
 /**
  * Hoe ver het toepassen van een kaart op de maaier is, als virtuele sensor
  * (`map_apply_phase`, `map_apply_error`) die live naar het dashboard gaat.
@@ -14,7 +15,7 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import { forwardToDashboard } from '../dashboard/socketHandler.js';
 
 export type MapApplyPhase = 'syncing' | 'regenerating' | 'settling';
-export type MapApplyError = 'sync_timeout' | 'sync_failed' | 'regenerate_timeout' | 'regenerate_failed';
+export type MapApplyError = 'sync_timeout' | 'sync_failed' | 'regenerate_timeout' | 'regenerate_failed' | 'planner_timeout' | 'map_operation_busy';
 export const PHASE_KEY = 'map_apply_phase';
 export const ERROR_KEY = 'map_apply_error';
 
@@ -69,8 +70,9 @@ export async function waitForPlannerBack(sn: string, t = mapApplyTiming): Promis
   const start = Date.now();
   for (;;) {
     const elapsed = Date.now() - start;
-    const code = errorCodeOf(deviceCache.get(sn)?.get('error_status'));
-    if (elapsed >= t.settleMinMs && code !== PROCESS_RESTART_ERROR) return 'settled';
+    const reading = positionTelemetry(sn)?.error;
+    const code = reading?.value;
+    if (elapsed >= t.settleMinMs && reading && reading.at >= start && Date.now() - reading.at <= POSITION_MAX_AGE_MS && Number.isFinite(code) && code !== PROCESS_RESTART_ERROR) return 'settled';
     if (elapsed >= t.settleMaxMs) return 'timeout';
     await new Promise(r => setTimeout(r, t.pollMs));
   }

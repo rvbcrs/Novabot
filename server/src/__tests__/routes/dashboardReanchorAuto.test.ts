@@ -22,7 +22,7 @@
 
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 
 // Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
 // custom-firmware maaier, anders weigert de server extended-commando's met 409.
@@ -110,6 +110,9 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, setReanchorRelocked } from '../../services/frameValidation.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
+import { mapRepo } from '../../db/repositories/index.js';
+import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
+import { publishToDevice, publishToExtended, onExtendedResponse, offExtendedResponse } from '../../mqtt/mapSync.js';
 
 const app = express();
 app.use(express.json());
@@ -123,244 +126,89 @@ app.use('/api/dashboard', dashboardRouter);
 const server = app.listen(0);
 afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
 
-const SN = 'LFIN2230700238';
-
-function setCache(fields: Record<string, string>): void {
-  deviceCache.set(SN, new Map(Object.entries(fields)));
+const SN = 'LFIN_REANCHOR_TEST';
+const data = { battery_state: 'CHARGING', recharge_status: 9, rtk_fix_quality: 4, rtk_latitude: 52.1234567, rtk_longitude: 4.7654321, map_position_x: 0.13, map_position_y: -0.52, localization_state: 'RUNNING' };
+const anchor = { x: 0.13, y: -0.52 };
+const handlers = new Set<(data: Record<string, unknown>) => void>();
+let loadedOrigin: unknown;
+let snapshotConflict = false;
+let requestCount = 0;
+function snapshot() {
+  return { result: 0, snapshot_consistent: true, csv_files: {
+    'map0tocharge_unicom.csv': '0.13,-0.52\n0.2,-0.4\n',
+    'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: 1.5 } }),
+  }, charging_station_yaml: `charging_pose: [${snapshotConflict ? 2 : anchor.x}, ${anchor.y}, 1.5]`, pos_json: JSON.stringify({ utm_origin: loadedOrigin }) };
 }
-
-const DOCKED_FIXED = {
-  battery_state: 'CHARGING',
-  // deviceCache holds the RAW relay value: GGA quality code 4 = RTK Fixed (NOT
-  // the display label). The gate must translate before comparing — regression
-  // for the always-409 bug where it compared '4' === 'RTK Fixed'.
-  rtk_fix_quality: '4',
-  latitude: '52.1234567', // live RTK position is cached under 'latitude'/'longitude'
-  longitude: '4.7654321',
-  map_position_x: '0.05',
-  map_position_y: '0.10',
-  localization_state: 'RUNNING',
-};
-
+function feed(fields = {}) { ingestPositionTelemetry(SN, { ...data, rtk_sample_id: String(Date.now()), ...fields }); }
+async function tick(ms = 1000) { await vi.advanceTimersByTimeAsync(ms); }
+async function status() { return (await request(server).get(`/api/dashboard/reanchor/${SN}/status`)).body.status; }
+const action = (value: string) => request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: value });
 beforeEach(() => {
-  vi.clearAllMocks();
-  clearFrameUnvalidated(SN);
-  deviceCache.clear();
-});
-
-describe('POST /reanchor/:sn action:auto — precondition gates', () => {
-  it('409 when the frame is already validated (nothing to re-anchor)', async () => {
-    setCache(DOCKED_FIXED);
-    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/already validated/i);
-  });
-
-  it('409 when the mower is not on the dock', async () => {
-    markFrameUnvalidated(SN);
-    setCache({ ...DOCKED_FIXED, battery_state: 'NORMAL', recharge_status: '0' });
-    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/on the dock/i);
-  });
-
-  it('409 when only the battery reads FULL (lingers after undocking — not on the dock)', async () => {
-    // Regression: a full battery keeps reporting FULL for a while after the mower
-    // drives off the dock. It must NOT count as docked, or auto would rewrite
-    // pos.json off the dock (and verify would check the wrong place).
-    markFrameUnvalidated(SN);
-    setCache({ ...DOCKED_FIXED, battery_state: 'FULL', recharge_status: '0' });
-    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/on the dock/i);
-  });
-
-  it('409 when on the dock but not RTK Fixed (raw code 5 = Float)', async () => {
-    markFrameUnvalidated(SN);
-    setCache({ ...DOCKED_FIXED, rtk_fix_quality: '5' }); // 5 = RTK Float
-    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/Fixed/i);
-  });
-
-  it('accepts the translated label too (RTK Fixed string passthrough)', async () => {
-    vi.useFakeTimers();
-    try {
-      markFrameUnvalidated(SN);
-      setCache({ ...DOCKED_FIXED, rtk_fix_quality: 'RTK Fixed' });
-      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
-      expect(r.status).toBe(200);
-      await vi.advanceTimersByTimeAsync(50);
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
+  vi.clearAllMocks(); clearPositionTelemetry(SN); clearFrameUnvalidated(SN); handlers.clear();
+  snapshotConflict = false; requestCount = 0; loadedOrigin = undefined;
+  for (const row of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(row.map_id);
+  mapRepo.create({ map_id: SN, mower_sn: SN, map_type: 'unicom', canonical_name: 'map0tocharge_unicom', map_area: JSON.stringify([anchor, { x: 0.2, y: -0.4 }]) });
+  vi.mocked(onExtendedResponse).mockImplementation((_sn, h) => { handlers.add(h); });
+  vi.mocked(offExtendedResponse).mockImplementation((_sn, h) => { handlers.delete(h); });
+  vi.mocked(publishToExtended).mockImplementation((_sn, message) => {
+    const [command, raw] = Object.entries(message)[0];
+    const params = raw as Record<string, number | string>;
+    let result: Record<string, unknown> = snapshot();
+    if (command === 'reanchor_pos') {
+      requestCount++;
+      expect(params.anchor_x).toBe(anchor.x); expect(params.anchor_y).toBe(anchor.y);
+      // Independent PROJ reference for the fixture's latitude/longitude (UTM 31N), minus anchor.
+      loadedOrigin = { x: 620859.4976856122 - anchor.x, y: 5776239.508624249 - anchor.y, utm_zone: 31 };
+      result = { result: 0, anchor, utm_origin: loadedOrigin };
     }
-  });
-
-  it('200 + starts when on the dock and RTK Fixed; status goes to check', async () => {
-    // Fake timers so the fire-and-forget runAutoReanchor (which schedules a 15s
-    // extended-response timeout) cannot leave a real timer dangling into later
-    // test files — clearAllTimers() in finally guarantees a clean exit.
-    vi.useFakeTimers();
-    try {
-      markFrameUnvalidated(SN);
-      setCache(DOCKED_FIXED);
-      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
-      expect(r.status).toBe(200);
-      expect(r.body.ok).toBe(true);
-      expect(r.body.action).toBe('auto');
-
-      await vi.advanceTimersByTimeAsync(50); // let the async flow start
-      const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
-      expect(s.status).toBe(200);
-      expect(['check', 'anchor', 'error']).toContain(s.body.status.phase);
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it('falls back to the rtk bool when no quality string is published', async () => {
-    vi.useFakeTimers();
-    try {
-      markFrameUnvalidated(SN);
-      setCache({ battery_state: 'CHARGING', rtk: 'true', latitude: '52.1', longitude: '4.7', map_position_x: '0', map_position_y: '0' });
-      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
-      expect(r.status).toBe(200);
-      await vi.advanceTimersByTimeAsync(50);
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
+    for (const h of [...handlers]) h({ [`${command}_respond`]: { ...result, operation_id: params.operation_id } });
   });
 });
-
-describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)', () => {
-  it('clears frame_unvalidated when relocked and docked on the origin (within tolerance)', async () => {
-    vi.useFakeTimers();
-    try {
-      markFrameUnvalidated(SN);
-      setReanchorRelocked(SN, true); // mower left the dock, re-locked, now re-docked
-      setCache({ ...DOCKED_FIXED, map_position_x: '0.08', map_position_y: '-0.12' });
-      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
-      expect(r.status).toBe(200);
-      await vi.advanceTimersByTimeAsync(3500); // past the settle delay
-      expect(isFrameUnvalidated(SN)).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
-
-    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
-    expect(s.body.status.phase).toBe('done');
-    expect(s.body.status.ok).toBe(true);
-  });
-
-  it('keeps frame_unvalidated when relocked + docked but the position is outside tolerance', async () => {
-    vi.useFakeTimers();
-    try {
-      markFrameUnvalidated(SN);
-      setReanchorRelocked(SN, true);
-      setCache({ ...DOCKED_FIXED, map_position_x: '2.12', map_position_y: '0.63' });
-      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
-      expect(r.status).toBe(200);
-      await vi.advanceTimersByTimeAsync(3500);
-      expect(isFrameUnvalidated(SN)).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-
-    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
-    expect(s.body.status.phase).toBe('error');
-    expect(s.body.status.error).toBe('verify_failed');
-    // The stored message is rendered per reader: English by default, Dutch on request.
-    expect(s.body.status.message).toMatch(/^Out of tolerance/);
-    const nl = await request(server).get(`/api/dashboard/reanchor/${SN}/status?lang=nl`);
-    expect(nl.body.status.message).toMatch(/^Buiten tolerantie/);
-    expect(nl.body.status.msgKey).toBe('reanchorMsgErrVerifyFailed');
-  });
-
-  it('verifies against the DOCK ANCHOR, not (0,0) — known-good LFIN1231000211 frame', async () => {
-    // reanchor_pos subtracts the anchor from the origin, so a correctly anchored
-    // mower docks ON the anchor. The old verify measured hypot(pose) against
-    // (0,0) and rejected every frame whose anchor is >0.4m out — including the
-    // known-good .100 (anchor (0.13,-0.52), docked (0.09,-0.51) = 4cm off the
-    // anchor but 0.52m from origin).
-    const ASN = 'LFINANCHORVERIFY';
-    const { mapRepo } = await import('../../db/repositories/maps.js');
-    mapRepo.create({
-      map_id: 'test_anchor_unicom',
-      mower_sn: ASN,
-      map_name: 'map0tocharge_unicom',
-      canonical_name: 'map0tocharge_unicom',
-      map_type: 'unicom',
-      map_area: JSON.stringify([{ x: 0.13, y: -0.52 }, { x: 0.1, y: -0.3 }]),
-    });
-    vi.useFakeTimers();
-    try {
-      markFrameUnvalidated(ASN);
-      setReanchorRelocked(ASN, true);
-      deviceCache.set(ASN, new Map(Object.entries({
-        ...DOCKED_FIXED, map_position_x: '0.09', map_position_y: '-0.51',
-      })));
-      const r = await request(server).post(`/api/dashboard/reanchor/${ASN}`).send({ action: 'verify' });
-      expect(r.status).toBe(200);
-      await vi.advanceTimersByTimeAsync(3500);
-      expect(isFrameUnvalidated(ASN)).toBe(false); // 4cm from anchor → valid
-    } finally {
-      vi.useRealTimers();
-      mapRepo.deleteById('test_anchor_unicom');
-    }
-  });
-
-  it('409 when verify is requested but the mower never re-locked (cycle incomplete)', async () => {
-    markFrameUnvalidated(SN); // resets the relock latch to false
-    setCache(DOCKED_FIXED); // on the dock + Fixed, but no off-dock relock happened
-    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/re-anchor cycle|left the dock|RUNNING/i);
-    expect(isFrameUnvalidated(SN)).toBe(true); // not cleared
-  });
-
-  it('409 when verify is requested off the dock, even after a relock', async () => {
-    markFrameUnvalidated(SN);
-    setReanchorRelocked(SN, true);
-    setCache({ ...DOCKED_FIXED, battery_state: 'NORMAL', recharge_status: '0' });
-    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/on the dock/i);
-    expect(isFrameUnvalidated(SN)).toBe(true);
-  });
-
-  it('409 verify off the dock even when only the battery reads FULL', async () => {
-    markFrameUnvalidated(SN);
-    setReanchorRelocked(SN, true);
-    setCache({ ...DOCKED_FIXED, battery_state: 'FULL', recharge_status: '0' });
-    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/on the dock/i);
-  });
+afterEach(async () => {
+  if (vi.isFakeTimers()) { await tick(400_000); vi.useRealTimers(); }
 });
-
-describe('GET /reanchor/:sn/status', () => {
-  it('returns an idle status for an unknown SN', async () => {
-    const s = await request(server).get('/api/dashboard/reanchor/UNKNOWNSN/status');
-    expect(s.status).toBe(200);
-    expect(s.body.status.phase).toBe('idle');
-  });
-
-  it('augments the status with live onDock / rtkFixed / relocked gating booleans', async () => {
-    markFrameUnvalidated(SN);
-    setReanchorRelocked(SN, true);
-    setCache(DOCKED_FIXED);
-    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
-    expect(s.body.status.onDock).toBe(true);
-    expect(s.body.status.rtkFixed).toBe(true);
-    expect(s.body.status.relocked).toBe(true);
-  });
-
-  it('reports onDock=false when only the battery is FULL (off the dock)', async () => {
-    setCache({ ...DOCKED_FIXED, battery_state: 'FULL', recharge_status: '0' });
-    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
-    expect(s.body.status.onDock).toBe(false);
-  });
+it('rejects cached values, bare RTK boolean, stale measurements and battery FULL without docking', async () => {
+  markFrameUnvalidated(SN);
+  deviceCache.set(SN, new Map(Object.entries(data).map(([k, v]) => [k, String(v)])));
+  expect((await action('auto')).status).toBe(409);
+  feed({ rtk_fix_quality: undefined, rtk: true });
+  expect((await action('auto')).status).toBe(409);
+  feed({ battery_state: 'FULL', recharge_status: 0 });
+  expect((await action('auto')).status).toBe(409);
+  expect(publishToExtended).not.toHaveBeenCalled();
+});
+it('retired drive/spin/dock actions and isolated verify cannot move or unlock a mower', async () => {
+  markFrameUnvalidated(SN); feed(); setReanchorRelocked(SN, true);
+  for (const name of ['drive', 'spin', 'dock']) expect((await action(name)).status).toBe(410);
+  expect((await action('verify')).status).toBe(409);
+  expect((await action('continue_dock')).status).toBe(409);
+  expect(isFrameUnvalidated(SN)).toBe(true); expect(publishToDevice).not.toHaveBeenCalled();
+});
+it('a conflicting mower anchor refuses before writing an origin', async () => {
+  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); snapshotConflict = true;
+  expect((await action('auto')).status).toBe(200); await tick(1);
+  expect((await status()).phase).toBe('error'); expect(requestCount).toBe(0);
+  expect(isFrameUnvalidated(SN)).toBe(true);
+});
+it('requires eight new GPS packets, a new off-dock relock and eight post-return samples under one lease', async () => {
+  vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
+  expect((await action('auto')).status).toBe(200); await tick(1);
+  expect((await action('auto')).status).toBe(409);
+  expect((await action('continue_dock')).status).toBe(409);
+  // Polling cannot manufacture readings.
+  await tick(2000); expect(requestCount).toBe(0);
+  for (let i = 0; i < 8; i++) { feed(); await tick(); }
+  expect(requestCount).toBe(1);
+  expect((await status()).phase).toBe('needs_drive');
+  expect(publishToDevice).not.toHaveBeenCalled();
+  // A post-load report still on the dock cannot count as a relock.
+  feed(); await tick(); expect((await status()).relocked).toBe(false);
+  feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: -1.52 }); await tick();
+  expect((await status()).phase).toBe('needs_position');
+  expect((await action('verify')).status).toBe(409);
+  feed(); expect((await action('verify')).status).toBe(200); await tick();
+  expect(isFrameUnvalidated(SN)).toBe(true);
+  for (let i = 0; i < 8; i++) { feed(); await tick(); }
+  expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
+  expect(requestCount).toBe(1); expect(publishToDevice).not.toHaveBeenCalled();
 });

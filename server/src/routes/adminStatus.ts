@@ -1,3 +1,4 @@
+import { applyMapsToMower } from '../services/mowerMapApply.js';
 /**
  * Admin Status API — server health, users, devices, errors
  * Protected by authMiddleware + adminMiddleware
@@ -13,25 +14,24 @@ import fs from 'fs';
 import { execSync } from 'child_process';
 import { db } from '../db/database.js';
 import { isDeviceOnline, banishSn, unbanSn, listBannedSns } from '../mqtt/broker.js';
-import { awaitCommand, publishToDevice, publishToExtended, onExtendedResponse, offExtendedResponse, applyVerbatimToMower } from '../mqtt/mapSync.js';
+import { awaitCommand, publishToDevice, applyVerbatimToMower, verifyMowerMapFiles } from '../mqtt/mapSync.js';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo, otaVersionRepo, walkerBundleRepo, signalHistoryRepo } from '../db/repositories/index.js';
 import type { WalkerBundleRow } from '../db/repositories/index.js';
 import { AuthRequest } from '../types/index.js';
 import { invalidateSetupCache } from '../middleware/setupGuard.js';
 import { parseMapZip, MapArea } from '../mqtt/mapConverter.js';
 import { startMdnsAdvertiser, stopMdnsAdvertiser, getActiveAdvertisement } from '../services/mdnsAdvertiser.js';
-import { listBackups, backupPath, regenerateLatestZipFromBackup } from '../services/mapBackup.js';
+import { listBackups, backupPath } from '../services/mapBackup.js';
 import { getPolygonAnchor } from '../services/anchor.js';
-import { markFrameUnvalidated } from '../services/frameValidation.js';
+import { markFrameUnvalidated, isFrameUnvalidated } from '../services/frameValidation.js';
 import { settleRestoredFrame } from '../services/restoreFrameCheck.js';
-import { exportBundle, parseBundle, BundleValidationError, computeAnchorRebase, type ParsedBundle } from '../services/portableMap.js';
+import { parseBundle, BundleValidationError, type ParsedBundle } from '../services/portableMap.js';
 import { synthesizePortableFromWalker } from '../maps/walkerBundleImporter.js';
 import { buildMaskOverlay, parsePgm } from '../maps/maskOverlay.js';
 import { ImportStagingStore } from '../services/importStaging.js';
 import { getDeviceHealth } from '../services/deviceHealth.js';
 import { classifyBundle, type ClassifyResult } from '../services/bundleClassifier.js';
 import { importAuditRepo } from '../db/repositories/importAudit.js';
-import { deriveHeading } from '../services/driveCalibration.js';
 import {
   getMowerFileCapability,
   MOWER_FILE_WRITE_UNSUPPORTED_CODE,
@@ -131,7 +131,9 @@ try { fs.mkdirSync(walkerBundlesDir, { recursive: true }); } catch { /* ignore �
 
 
 import { SERVER_VERSION } from '../services/serverVersion.js';
-import { requestPosJsonWrite } from '../services/posJsonGate.js';
+import { normalizeBundleGeometry } from '../services/portableSnapshot.js';
+import { preparePortableImport } from '../services/portableImport.js';
+import { withMowerMapOperation, isMapOperationCommandBlocked, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
 
 // GET /api/admin-status/overview
 adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
@@ -280,6 +282,10 @@ adminStatusRouter.post('/send-command', async (req: AuthRequest, res: Response) 
 
   if (!sn || !command) {
     res.status(400).json({ error: 'sn and command required' });
+    return;
+  }
+  if (isMapOperationCommandBlocked(sn, { [command]: payload ?? null })) {
+    res.status(409).json({ ok: false, error: 'map_operation_busy', sn });
     return;
   }
   if (!isDeviceOnline(sn)) {
@@ -1211,37 +1217,22 @@ adminStatusRouter.get('/maps/:sn/mask-overlay', async (req: AuthRequest, res: Re
   const pgmName = layer === 'whole' ? 'map.pgm' : `${layer}.pgm`;
   const yamlName = layer === 'whole' ? 'map.yaml' : `${layer}.yaml`;
 
-  const mowerData = await new Promise<{
-    chargingPose?: { x: number; y: number; orientation: number };
-    mapFilesText?: Record<string, string>;
-    mapFilesB64?: Record<string, string>;
-  }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const r = data.read_map_files_respond as {
-        result?: number;
-        csv_files?: Record<string, string>;
-        map_files_text?: Record<string, string>;
-        map_files_b64?: Record<string, string>;
-      } | undefined;
-      if (!r || settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      if (r.result !== 0) { resolve({}); return; }
-      let chargingPose: { x: number; y: number; orientation: number } | undefined;
-      const mi = r.csv_files?.['map_info.json'];
-      if (mi) {
-        try {
-          const cp = (JSON.parse(mi) as { charging_pose?: { x: number; y: number; orientation: number } }).charging_pose;
-          if (cp && Number.isFinite(cp.x) && Number.isFinite(cp.y)) chargingPose = cp;
-        } catch { /* malformed map_info.json — skip */ }
-      }
-      resolve({ chargingPose, mapFilesText: r.map_files_text, mapFilesB64: r.map_files_b64 });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { read_map_files: {} });
-    setTimeout(() => { if (!settled) { settled = true; offExtendedResponse(sn, handler); resolve({}); } }, 20000);
-  });
+  let snapshot: Record<string, unknown> | null;
+  try { snapshot = await readMowerMapSnapshot(sn); }
+  catch (error) { res.status(409).json({ ok: false, error: (error as { code?: string }).code ?? String(error) }); return; }
+  if (!snapshot || snapshot.result !== 0 || snapshot.snapshot_consistent !== true) {
+    res.status(409).json({ ok: false, error: 'consistent_mower_snapshot_unavailable' }); return;
+  }
+  const mowerData = {
+    mapFilesText: snapshot.map_files_text as Record<string, string> | undefined,
+    mapFilesB64: snapshot.map_files_b64 as Record<string, string> | undefined,
+    chargingPose: undefined as { x: number; y: number; orientation: number } | undefined,
+  };
+  try {
+    const info = (snapshot.csv_files as Record<string, string>)?.['map_info.json'];
+    const cp = info ? JSON.parse(info).charging_pose : null;
+    if (cp && Number.isFinite(cp.x) && Number.isFinite(cp.y)) mowerData.chargingPose = cp;
+  } catch { /* The overlay can still show occupancy without a dock seed. */ }
 
   // Layers the mower actually has (whole + each per-zone mapN.pgm) so the UI
   // can populate the selector from the live file set.
@@ -1387,200 +1378,13 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore', (req: AuthRequest, 
   }
 });
 
-// POST /api/admin-status/map-backups/:sn/:filename/restore-and-realign
-//
-// One-click recovery (Novabot-uvf): orchestrates everything documented in
-// docs/runbooks/charger-anchor-restore-runbook.md and the manual flow from
-// 2026-05-02:
-//   1. Full DB restore from selected backup ZIP (overwrites all rows).
-//   2. Look up polygon anchor (first point of mapNtocharge_unicom).
-//   3. Update map_calibration.charger_lat/lng with mower's live RTK GPS.
-//   4. regenerateLatestZipFromBackup → enriched <SN>_latest.zip.
-//   5. publishToExtended(sn, { sync_map: {} }) → mower pulls + applies.
-//   6. Wait sync_map_respond ≤ 8 s.
-//
-// Spec: docs/superpowers/specs/2026-05-03-restore-and-realign-mower-from-zip.md
-adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (req: AuthRequest, res: Response) => {
-  const T = reqT(req);
-  const { sn, filename } = req.params;
-
-  // ── 1. Validate backup + parse ──────────────────────────────────────────
-  let backupAbsPath: string;
-  try {
-    backupAbsPath = backupPath(sn, filename);
-  } catch (err) {
-    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'bad filename' });
-    return;
-  }
-  if (!fs.existsSync(backupAbsPath)) {
-    res.status(404).json({ ok: false, error: T`backup niet gevonden` });
-    return;
-  }
-  const parsed = parseMapZip(backupAbsPath);
-  if (!parsed) {
-    res.status(400).json({ ok: false, error: T`backup-ZIP kon niet worden gelezen` });
-    return;
-  }
-
-  // ── 2. Full DB restore — overwrite all rows ─────────────────────────────
-  let restored = 0;
-  for (const area of parsed.areas) {
-    if (area.points.length < 2) continue;
-    const canonical = areaCanonicalName(area);
-    if (!canonical) continue;
-
-    const existing = mapRepo.findBySnAndCanonical(sn, canonical);
-    if (existing) mapRepo.deleteByIdAndMower(existing.map_id, sn);
-
-    const xs = area.points.map(pt => pt.x);
-    const ys = area.points.map(pt => pt.y);
-    mapRepo.create({
-      source: 'import',
-      map_id: uuidv4(),
-      mower_sn: sn,
-      map_name: canonical,
-      file_name: areaCsvFile(area),
-      map_area: JSON.stringify(area.points),
-      map_max_min: JSON.stringify({
-        minX: Math.min(...xs), maxX: Math.max(...xs),
-        minY: Math.min(...ys), maxY: Math.max(...ys),
-      }),
-      map_type: area.type,
-      canonical_name: canonical,
-    });
-    restored++;
-  }
-
-  // Map files are now restored; the frame is not yet validated against the
-  // real charger. Lock go_to_charge until a successful re-dock, regardless of
-  // whether the realign steps below succeed.
-  markFrameUnvalidated(sn);
-  console.log(`[Admin] frame_unvalidated set for ${sn} after restore-and-realign`);
-
-  // ── 3. Resolve polygon anchor (must succeed for realign to be coherent) ─
-  const sensors = deviceCache.get(sn);
-  const anchor = getPolygonAnchor(sn, sensors);
-  if (!anchor) {
-    res.status(400).json({
-      ok: false,
-      error: T`Backup heeft geen mapNtocharge_unicom, dus de laadpositie kan niet verankerd worden`,
-      restoredItems: restored,
-    });
-    return;
-  }
-
-  // ── 4. Read mower live GPS (mandatory) ──────────────────────────────────
-  const lat = parseFloat(sensors?.get('gps_latitude') ?? '');
-  const lng = parseFloat(sensors?.get('gps_longitude') ?? '');
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) {
-    res.status(400).json({
-      ok: false,
-      error: T`Maaier-GPS niet gemeld: wacht tot de maaier online is, op het dock staat en RTK FIX heeft`,
-      restoredItems: restored,
-    });
-    return;
-  }
-
-  // ── 5. Update DB chargerGps to live reading ─────────────────────────────
-  mapRepo.setChargerGps(sn, lat, lng);
-
-  // ── 6. Regenerate enriched _latest.zip ──────────────────────────────────
-  const regenPath = regenerateLatestZipFromBackup(sn);
-  if (!regenPath) {
-    res.status(500).json({
-      ok: false,
-      error: T`Kon <SN>_latest.zip niet opnieuw genereren`,
-      restoredItems: restored,
-      anchor,
-    });
-    return;
-  }
-
-  // ── 7. Trigger sync_map MQTT (must be online) ───────────────────────────
-  if (!isDeviceOnline(sn)) {
-    res.status(404).json({
-      ok: false,
-      error: T`Maaier offline: sync_map kan niet draaien`,
-      restoredItems: restored,
-      anchor,
-      gps: { lat, lng },
-      note: T`De serverstatus is al hersteld; de maaier neemt het over bij de volgende sync_map`,
-    });
-    return;
-  }
-
-  const syncResult = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const respond = data.sync_map_respond as Record<string, unknown> | undefined;
-      if (!respond) return;
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: respond.result === 0, respond });
-    };
-    onExtendedResponse(sn, handler);
-    // The pin was just set from the docked mower's own GPS: this push may
-    // write pos.json from it (ordinary pushes never do).
-    requestPosJsonWrite(sn);
-    publishToExtended(sn, { sync_map: { write_charging_pose: true } });
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: false, timeout: true });
-    }, 8000);
-  });
-
-  if (syncResult.timeout) {
-    res.status(504).json({
-      ok: false,
-      error: T`Maaier reageerde niet binnen 8 s`,
-      restoredItems: restored,
-      anchor,
-      gps: { lat, lng },
-      partial: true,
-    });
-    return;
-  }
-
-  // After sync_map writes the CSVs (and map.yaml/pgm/png from the ZIP if
-  // those were included), trigger save_map type:1 as a safety net so the
-  // mower re-renders the map artifacts from the freshly applied CSVs.
-  // Stale restored ZIPs can carry mismatched yaml/pgm; this re-render
-  // guarantees Errors 107/118 don't surface immediately after a restore.
-  // Fire-and-forget — caller doesn't need the respond.
-  if (syncResult.ok) {
-    publishToDevice(sn, { save_map: { type: 1, mapName: 'map', totalArea: 0 } });
-    console.log(`[Admin] restore-and-realign ${sn}: post-sync save_map type:1 dispatched to render map.yaml/pgm`);
-    // Per-map slot files (map<N>.yaml/.pgm/.png) — mapping-node only
-    // emits these inside a real edge-recording session; recovery callers
-    // never go through that path. Mirror map.yaml/pgm/png into each
-    // map<N> slot via the custom extended_commands handler so Nav2 can
-    // resolve `start_navigation` lookups for any work-map without
-    // hitting Error 107. Small delay so save_map type:1 finishes
-    // writing map.yaml before we copy from it.
-    setTimeout(() => {
-      publishToExtended(sn, { regenerate_per_map_files: {} });
-      console.log(`[Admin] restore-and-realign ${sn}: regenerate_per_map_files dispatched`);
-    }, 3000);
-  }
-
-  console.log(
-    `[Admin] restore-and-realign ${sn} from ${filename}: restored=${restored} anchor=(${anchor.x}, ${anchor.y}, ${anchor.orientation}) gps=(${lat}, ${lng}) syncOk=${syncResult.ok}`,
-  );
-  res.json({
-    ok: syncResult.ok,
-    restoredItems: restored,
-    anchor,
-    gps: { lat, lng },
-    syncResult: syncResult.respond ?? null,
-  });
+// Retired: this path wrote an origin from an unchecked GPS reading.
+adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', (req: AuthRequest, res: Response) => {
+  res.status(410).json({ ok: false, error: 'legacy_restore_retired',
+    message: 'Restore a portable snapshot, then use the existing re-anchor wizard if frame verification requires it.',
+    replacement: `/api/dashboard/reanchor/${encodeURIComponent(req.params.sn)}` });
 });
 
-// ── Portable map export ──────────────────────────────────────────────────────
-
-// ── Portable backup vault (auto + manual snapshots) ────────────────────────
 // GET    /maps/:sn/portable-backups                  — list
 // POST   /maps/:sn/portable-backups                  — manual snapshot now
 // GET    /maps/:sn/portable-backups/:filename        — download
@@ -1728,125 +1532,15 @@ adminStatusRouter.post('/maps/:sn/portable-backups/:filename/restore', async (re
 
 // GET /api/admin-status/maps/:sn/export-portable
 adminStatusRouter.get('/maps/:sn/export-portable', async (req: AuthRequest, res: Response) => {
-  const T = reqT(req);
-  const sn = req.params.sn;
-  const cal = mapRepo.getCalibration(sn);
-  if (!cal?.charger_lat || !cal?.charger_lng) {
-    res.status(409).json({ ok: false, error: T`geen laadstation-anker in de database: eerst sync_map` });
-    return;
+  try {
+    const { capturePortableBundle } = await import('../services/portableBackup.js');
+    const bytes = await capturePortableBundle(req.params.sn);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${req.params.sn}-portable.novabotmap"`);
+    res.send(bytes);
+  } catch (error) {
+    res.status(409).json({ ok: false, error: String(error) });
   }
-  const workRows = mapRepo.findAllByMowerSnAndType(sn, 'work').filter((w) => w.map_area);
-  if (workRows.length === 0) { res.status(404).json({ ok: false, error: T`geen werkpolygoon` }); return; }
-  const obstacles = mapRepo.findAllByMowerSnAndType(sn, 'obstacle');
-  const unicom = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
-
-  // Fetch verbatim mower files (CSVs + charging_station.yaml + map_info.json
-  // with REAL charging_pose) live via MQTT extended `read_map_files`. Falls
-  // back gracefully when the mower is offline or doesn't have the handler:
-  // bundle still ships with DB-derived polygons, just without the
-  // exact-restore mower payload. Requires custom firmware (extended_commands.py).
-  const mowerData = await new Promise<{
-    csvFiles?: Record<string, string>;
-    chargingStationYaml?: string;
-    chargingPose?: { x: number; y: number; orientation: number };
-    posJson?: string;
-    mapFilesText?: Record<string, string>;
-    mapFilesB64?: Record<string, string>;
-  }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const r = data.read_map_files_respond as {
-        result?: number;
-        csv_files?: Record<string, string>;
-        charging_station_yaml?: string;
-        pos_json?: string | null;
-        map_files_text?: Record<string, string>;
-        map_files_b64?: Record<string, string>;
-      } | undefined;
-      if (!r) return;
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      if (r.result !== 0) {
-        resolve({});
-        return;
-      }
-      let chargingPose: { x: number; y: number; orientation: number } | undefined;
-      const mapInfoStr = r.csv_files?.['map_info.json'];
-      if (mapInfoStr) {
-        try {
-          const mi = JSON.parse(mapInfoStr) as { charging_pose?: { x: number; y: number; orientation: number } };
-          if (mi.charging_pose
-            && Number.isFinite(mi.charging_pose.x)
-            && Number.isFinite(mi.charging_pose.y)
-            && Number.isFinite(mi.charging_pose.orientation)) {
-            chargingPose = mi.charging_pose;
-          }
-        } catch { /* malformed map_info.json — skip */ }
-      }
-      resolve({
-        csvFiles: r.csv_files,
-        chargingStationYaml: r.charging_station_yaml,
-        chargingPose,
-        posJson: r.pos_json ?? undefined,
-        mapFilesText: r.map_files_text,
-        mapFilesB64: r.map_files_b64,
-      });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { read_map_files: {} });
-    // Bumped to 20 s so map.pgm + per-slot pgm/png base64 payload (~3 MB
-    // on a 3-map mower) can fit on the wire without truncation.
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({});
-    }, 20000);
-  });
-
-  // Prefer the LIVE charging_pose (from map_info.json on disk) over the DB
-  // field — DB has dual-meaning drift history (see polygon-rotation-bug.md).
-  const fallbackOrient = mapRepo.getPolygonChargingOrientation(sn);
-  const chargingPose = mowerData.chargingPose ?? {
-    x: 0, y: 0, orientation: fallbackOrient ?? 0,
-  };
-
-  const zip = await exportBundle({
-    sn,
-    chargerLat: cal.charger_lat,
-    chargerLng: cal.charger_lng,
-    rtkQuality: null,
-    chargingPose,
-    workMaps: workRows.map((w, i) => ({
-      canonical: w.canonical_name ?? `map${i}`,
-      alias: w.map_name ?? `work${i}`,
-      points: JSON.parse(w.map_area as string),
-    })),
-    obstacles: obstacles.filter((o) => o.map_area).map((o) => ({
-      canonical: o.canonical_name ?? '',
-      alias: o.map_name ?? '',
-      points: JSON.parse(o.map_area as string),
-    })),
-    unicom: unicom.map((u) => {
-      const canonical = (u.canonical_name ?? u.file_name ?? u.map_name ?? '').replace(/\.csv$/, '');
-      return {
-        canonical,
-        targetMapName: bundleUnicomTargetName(canonical),
-        points: u.map_area ? JSON.parse(u.map_area as string) : [],
-      };
-    }),
-    csvFilesRaw: mowerData.csvFiles,
-    chargingStationYaml: mowerData.chargingStationYaml,
-    posJson: mowerData.posJson,
-    mapFilesText: mowerData.mapFilesText,
-    mapFilesB64: mowerData.mapFilesB64,
-  });
-
-  const fname = `${sn}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16)}-portable.novabotmap`;
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
-  res.send(zip);
 });
 
 // Peek at metadata.json in a buffered ZIP to detect a walker-exported
@@ -1881,48 +1575,6 @@ function parsedVerbatimRestore(parsed: ParsedBundle): boolean {
   ));
 }
 
-function bundleUnicomTargetName(canonical: string): string {
-  const inter = canonical.match(/^map\d+to(map\d+)_\d+_unicom$/);
-  if (inter) return inter[1];
-  if (/^map\d+tocharge_unicom$/.test(canonical)) return 'charge';
-  const fallback = canonical.match(/^map\d+to(.+?)_?unicom$/);
-  return fallback?.[1] ?? 'charge';
-}
-
-function importParsedBundleServerCopy(sn: string, parsed: ParsedBundle) {
-  db.prepare(`DELETE FROM maps WHERE mower_sn = ?`).run(sn);
-  const ins = db.prepare(
-    `INSERT INTO maps (mower_sn, map_id, map_name, map_type, file_name, map_area, canonical_name) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const workPolys = parsed.polygons && parsed.polygons.length > 0
-    ? parsed.polygons
-    : [parsed.polygon];
-  for (let i = 0; i < workPolys.length; i++) {
-    const wp = workPolys[i];
-    ins.run(sn, `imp_work_${i}`, wp.alias, 'work', `${wp.name}.csv`, JSON.stringify(wp.points), wp.name);
-  }
-  for (let i = 0; i < parsed.obstacles.length; i++) {
-    const o = parsed.obstacles[i];
-    ins.run(sn, `imp_obs_${i}`, o.alias, 'obstacle', `${o.name}.csv`, JSON.stringify(o.points), o.name);
-  }
-  for (let i = 0; i < parsed.unicom.length; i++) {
-    const u = parsed.unicom[i];
-    const mapArea = u.points.length >= 2 ? JSON.stringify(u.points) : null;
-    ins.run(sn, `imp_uni_${i}`, u.targetMapName, 'unicom', `${u.name}.csv`, mapArea, u.name);
-  }
-
-  const origOrient = parsed.metadata?.originalChargingPose?.orientation;
-  if (typeof origOrient === 'number' && Number.isFinite(origOrient)) {
-    mapRepo.setPolygonChargingOrientation(sn, origOrient);
-  }
-  mapRepo.setPolygonOffset(sn, 0, 0);
-  return {
-    work: workPolys.length,
-    obstacles: parsed.obstacles.length,
-    unicom: parsed.unicom.length,
-  };
-}
-
 async function writeLatestZipFromCsvFiles(sn: string, csvFiles?: Record<string, string>): Promise<number | null> {
   if (!csvFiles || Object.keys(csvFiles).length === 0) return null;
   const storage = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
@@ -1940,10 +1592,10 @@ async function writeLatestZipFromCsvFiles(sn: string, csvFiles?: Record<string, 
     }
     if (written === 0) return null;
     const zipPath = path.join(storage, `${sn}_latest.zip`);
-    if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+    const pendingZip = path.join(tmpDir, 'latest.zip');
     const archiver = (await import('archiver')).default;
     await new Promise<void>((resolve, reject) => {
-      const output = fs.createWriteStream(zipPath);
+      const output = fs.createWriteStream(pendingZip);
       const archive = archiver('zip', { zlib: { level: 9 } });
       output.on('close', resolve);
       archive.on('error', reject);
@@ -1951,6 +1603,7 @@ async function writeLatestZipFromCsvFiles(sn: string, csvFiles?: Record<string, 
       archive.directory(csvDir, 'csv_file');
       archive.finalize();
     });
+    fs.renameSync(pendingZip, zipPath);
     return fs.statSync(zipPath).size;
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2564,40 +2217,16 @@ adminStatusRouter.get(
 
     const bundleClass = classifyBundle(bundle);
 
-    // Mower-side enumeration is best-effort. Offline mower → empty list,
-    // operator can still proceed in "replace" mode (overwrites whatever
-    // is there). For "add-only" the UI should refuse to apply when the
-    // mower list is empty (server-side enforcement happens at apply time
-    // via a fresh read_map_files call against the live state).
+    // Unknown inventory stays null; it must never masquerade as an empty map set.
     let mowerSide: ClassifyResult | null = null;
     if (isDeviceOnline(sn)) {
-      const mowerData = await new Promise<{ csvFiles?: Record<string, string>; chargingStationYaml?: string | null }>(resolve => {
-        let settled = false;
-        const handler = (data: Record<string, unknown>) => {
-          const r = data.read_map_files_respond as
-            | { result?: number; csv_files?: Record<string, string>; charging_station_yaml?: string }
-            | undefined;
-          if (!r || settled) return;
-          settled = true;
-          offExtendedResponse(sn, handler);
-          if (r.result !== 0) { resolve({}); return; }
-          resolve({ csvFiles: r.csv_files, chargingStationYaml: r.charging_station_yaml ?? null });
-        };
-        onExtendedResponse(sn, handler);
-        publishToExtended(sn, { read_map_files: {} });
-        setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          offExtendedResponse(sn, handler);
-          resolve({});
-        }, 8000);
-      });
-      if (mowerData.csvFiles) {
-        mowerSide = classifyBundle({
-          csvFiles: mowerData.csvFiles,
-          chargingStationYaml: mowerData.chargingStationYaml ?? null,
-        });
-      }
+      try {
+        const snapshot = await readMowerMapSnapshot(sn);
+        if (snapshot?.result === 0 && snapshot.snapshot_consistent === true && snapshot.csv_files) {
+          mowerSide = classifyBundle({ csvFiles: snapshot.csv_files as Record<string, string>,
+            chargingStationYaml: snapshot.charging_station_yaml as string | null });
+        }
+      } catch (error) { res.status(409).json({ ok: false, error: (error as { code?: string }).code ?? String(error) }); return; }
     }
 
     res.json({
@@ -2609,108 +2238,10 @@ adminStatusRouter.get(
   },
 );
 
-// POST /api/admin-status/maps/:sn/import-portable/:stagingId/start-drive
-// Drive the mower 1 m backward off the dock and derive heading from RTK delta.
-// No pre-RTK requirement: the act of driving away from the dock typically
-// upgrades loc_quality from FLOAT to FIX once the mower clears the charger
-// metal and gets clean sky. We snapshot start pose immediately (whatever
-// quality is available), drive, then poll for RTK FIX up to 30 s before
-// snapshotting end pose. If RTK never reaches 100, abort with reason.
-adminStatusRouter.post(
-  '/maps/:sn/import-portable/:stagingId/start-drive',
-  async (req: AuthRequest, res: Response) => {
-    const T = reqT(req);
-    const { sn, stagingId } = req.params;
-    const session = importStaging.get(stagingId);
-    if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: T`onbekende staging-sessie` });
-      return;
-    }
-    if (session.state !== 'UPLOADED') {
-      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
-      return;
-    }
-
-    const sensors = deviceCache.get(sn);
-    const startLat = parseFloat(sensors?.get('latitude') ?? '');
-    const startLng = parseFloat(sensors?.get('longitude') ?? '');
-    if (!Number.isFinite(startLat) || !Number.isFinite(startLng)) {
-      res.status(409).json({ ok: false, error: T`geen GPS voor start_pose` });
-      return;
-    }
-
-    // Don't transition yet — keep state in UPLOADED until we know the
-    // drive + RTK lock actually succeeded. On failure we leave the staging
-    // session intact so the operator can retry "Start drive" without
-    // re-uploading the bundle.
-    importAuditRepo.append({ sn, staging_id: stagingId, from_state: 'UPLOADED', to_state: 'UPLOADED', reason: 'drive started' });
-
-    // Stock MQTT joystick wire format (matches socketHandler.ts):
-    //   start_move:4 = backward direction enum
-    //   mst array [x_w*100, y_v*100, 8] every 150ms (signed; -y = backward)
-    //   start_move keepalive every 5 ticks
-    //   stop_move:null on stop
-    publishToDevice(sn, { start_move: 4 });
-    await new Promise((r) => setTimeout(r, 200));
-    const TICK_MS = 150;
-    const TOTAL_TICKS = 20;
-    const Y_V_BACKWARD = -50;
-    for (let i = 0; i < TOTAL_TICKS; i++) {
-      publishToDevice(sn, { mst: [0, Y_V_BACKWARD, 8] });
-      if (i > 0 && i % 5 === 0) {
-        publishToDevice(sn, { start_move: 4 });
-      }
-      await new Promise((r) => setTimeout(r, TICK_MS));
-    }
-    publishToDevice(sn, { stop_move: null });
-    await new Promise((r) => setTimeout(r, 500));
-
-    // Wait for RTK FIX before reading end pose. Polls the sensor cache every
-    // 1 s for up to 30 s. If RTK never reaches 100 → bail out with the best
-    // available quality so the operator can decide whether to retry.
-    let waitedMs = 0;
-    let endLocQ = parseInt(sensors?.get('loc_quality') ?? '', 10);
-    while (endLocQ !== 100 && waitedMs < 30_000) {
-      await new Promise((r) => setTimeout(r, 1000));
-      waitedMs += 1000;
-      endLocQ = parseInt(sensors?.get('loc_quality') ?? '', 10);
-    }
-
-    const endLat = parseFloat(sensors?.get('latitude') ?? '');
-    const endLng = parseFloat(sensors?.get('longitude') ?? '');
-    const heading = deriveHeading({ lat: startLat, lng: startLng }, { lat: endLat, lng: endLng });
-    if (heading.shortDistance || endLocQ !== 100) {
-      // Drive failed but recoverable: stay in UPLOADED, operator can retry.
-      const reason = heading.shortDistance
-        ? `drive distance ${heading.distanceM.toFixed(2)}m below 0.3m threshold`
-        : `RTK FIX never reached after ${waitedMs / 1000}s wait (loc_quality=${endLocQ})`;
-      importAuditRepo.append({ sn, staging_id: stagingId, from_state: 'UPLOADED', to_state: 'UPLOADED', reason });
-      const error = heading.shortDistance
-        ? T`gereden afstand ${heading.distanceM.toFixed(2)} m ligt onder de drempel van 0,3 m`
-        : T`RTK FIX niet bereikt na ${waitedMs / 1000} s wachten (loc_quality=${endLocQ})`;
-      res.status(409).json({ ok: false, error, recoverable: true });
-      return;
-    }
-
-    // Mower drove backward → flip GPS heading by π to recover forward heading.
-    const TWO_PI = Math.PI * 2;
-    const forwardHeadingRad = ((heading.headingRad + Math.PI + Math.PI) % TWO_PI) - Math.PI;
-
-    // Drive + RTK both OK: transition UPLOADED → AUTO_DOCK in one go.
-    const updated = importStaging.transition(stagingId, 'AUTO_DOCK', {
-      driveStart: { lat: startLat, lng: startLng },
-      driveEnd: { lat: endLat, lng: endLng },
-      derivedHeadingRad: forwardHeadingRad,
-    });
-    importAuditRepo.append({ sn, staging_id: stagingId, from_state: 'UPLOADED', to_state: 'AUTO_DOCK', reason: null });
-    res.json({
-      ok: true, state: updated.state,
-      derivedHeadingRad: forwardHeadingRad,
-      distanceM: heading.distanceM,
-      rtkWaitMs: waitedMs,
-    });
-  },
-);
+adminStatusRouter.post('/maps/:sn/import-portable/:stagingId/start-drive', (req: AuthRequest, res: Response) => {
+  res.status(410).json({ ok: false, error: 'legacy_restore_retired',
+    message: 'Import the server copy or use a complete snapshot with the confirmed restore. Use the OpenNova app for re-anchoring.' });
+});
 
 // POST /api/admin-status/maps/:sn/import-portable/:stagingId/auto-dock
 // Operator manually returns the mower to the dock (push or Control-tab
@@ -2878,215 +2409,12 @@ adminStatusRouter.get(
   },
 );
 
-// POST /api/admin-status/maps/:sn/import-portable/:stagingId/confirm
-// Final commit: write polygon to DB, push set_pos_origin + sync_map to mower.
-adminStatusRouter.post(
-  '/maps/:sn/import-portable/:stagingId/confirm',
-  async (req: AuthRequest, res: Response) => {
-    const T = reqT(req);
-    const { sn, stagingId } = req.params;
-    const session = importStaging.get(stagingId);
-    if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: 'unknown' });
-      return;
-    }
-    if (session.state !== 'PREVIEW_SHOWN') {
-      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
-      return;
-    }
-    if (!getMowerFileCapability(sn).mowerFileApplySupported) {
-      res.status(409).json(mowerFileUnsupportedPayload(sn, T));
-      return;
-    }
-
-    importStaging.transition(stagingId, 'USER_CONFIRMED', {});
-    importAuditRepo.append({ sn, staging_id: stagingId, from_state: 'PREVIEW_SHOWN', to_state: 'USER_CONFIRMED', reason: null });
-
-    const dir = path.join(process.env.STORAGE_PATH ?? './storage', 'imports', sn, stagingId);
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, 'bundle.json'), 'utf8'));
-    // See /preview for theta-delta rationale. Same formula here so the
-    // committed polygon matches what the operator approved. /preview can
-    // override rotation via ?rotateDeg, so accept the same in /confirm body
-    // (or query) — the operator commits whatever they previewed.
-    const origOrient = parsed.metadata?.originalChargingPose?.orientation ?? 0;
-    const rotateOverrideDegRaw = (req.body?.rotateDeg ?? req.query?.rotateDeg);
-    const rotateOverrideDeg = rotateOverrideDegRaw !== undefined && rotateOverrideDegRaw !== null && rotateOverrideDegRaw !== ''
-      ? parseFloat(String(rotateOverrideDegRaw))
-      : null;
-    const theta = rotateOverrideDeg !== null && Number.isFinite(rotateOverrideDeg)
-      ? (rotateOverrideDeg * Math.PI) / 180
-      : (session.context.derivedHeadingRad ?? 0) - origOrient;
-    const offsetXmRaw = (req.body?.offsetX ?? req.query?.offsetX);
-    const offsetYmRaw = (req.body?.offsetY ?? req.query?.offsetY);
-    const offsetXm = offsetXmRaw !== undefined && offsetXmRaw !== null && offsetXmRaw !== '' ? parseFloat(String(offsetXmRaw)) : 0;
-    const offsetYm = offsetYmRaw !== undefined && offsetYmRaw !== null && offsetYmRaw !== '' ? parseFloat(String(offsetYmRaw)) : 0;
-    const anchor = session.context.newCharger!;
-    const dockMP = session.context.newDockMapPosition;
-
-    // Update charger anchor + orientation in DB. polygon_charging_orientation
-    // holds the absolute new dock heading (not the rebase delta) — this is
-    // what gets exported next time as `originalChargingPose.orientation`.
-    mapRepo.setChargerGps(sn, anchor.lat, anchor.lng);
-    mapRepo.setPolygonChargingOrientation(sn, session.context.derivedHeadingRad ?? 0);
-    mapRepo.setPolygonOffset(sn, 0, 0);
-
-    // Polygon rebase = rotation by derived θ + translation so the unicom
-    // anchor lands exactly at the mower's current map_position at the dock.
-    // Without the translation, the bundle's original "charger in old map
-    // frame" coords (e.g. (-1.21, 0.48)) end up wherever the rotation moves
-    // them to — typically NOT where the firmware's localization places
-    // the dock — and mowing then drives off-target by the unmatched offset.
-    const firstUnicomRaw = (parsed.unicom[0]?.points?.[0] ?? { x: 0, y: 0 }) as { x: number; y: number };
-    const cos = Math.cos(theta);
-    const sin = Math.sin(theta);
-    const rotatedAnchor = {
-      x: firstUnicomRaw.x * cos + firstUnicomRaw.y * sin,
-      y: -firstUnicomRaw.x * sin + firstUnicomRaw.y * cos,
-    };
-    const tx = (dockMP?.x ?? 0) - rotatedAnchor.x + offsetXm;
-    const ty = (dockMP?.y ?? 0) - rotatedAnchor.y + offsetYm;
-    const rebase = (pts: { x: number; y: number }[]) =>
-      computeAnchorRebase(pts, theta).map((p) => ({ x: p.x + tx, y: p.y + ty }));
-
-    // Replace all polygon rows for this SN
-    db.prepare(`DELETE FROM maps WHERE mower_sn = ?`).run(sn);
-    const ins = db.prepare(
-      `INSERT INTO maps (mower_sn, map_id, map_name, map_type, file_name, map_area, canonical_name) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-);
-    const workPolygons: Array<{ name: string; alias: string; points: { x: number; y: number }[] }> =
-      Array.isArray(parsed.polygons) && parsed.polygons.length > 0 ? parsed.polygons : [parsed.polygon];
-    for (let wi = 0; wi < workPolygons.length; wi++) {
-      const wp = workPolygons[wi];
-      ins.run(sn, `imp_work_${wi}`, wp.alias, 'work', wp.name + '.csv', JSON.stringify(rebase(wp.points)), wp.name);
-    }
-    for (let i = 0; i < parsed.obstacles.length; i++) {
-      const o = parsed.obstacles[i];
-      ins.run(sn, `imp_obs_${i}`, o.alias, 'obstacle', o.name + '.csv', JSON.stringify(rebase(o.points)), o.name);
-    }
-    for (let i = 0; i < parsed.unicom.length; i++) {
-      const u = parsed.unicom[i];
-      ins.run(sn, `imp_uni_${i}`, u.targetMapName, 'unicom', u.name + '.csv', JSON.stringify(rebase(u.points)), u.name);
-    }
-
-    // Push new origin to mower then trigger sync_map
-    publishToExtended(sn, { set_pos_origin: { lat: anchor.lat, lng: anchor.lng } });
-    publishToExtended(sn, { sync_map: {} });
-
-    // Synthesize map.png + map.yaml on the mower so start_navigation has a
-    // raster to load. Portable import skips save_map type:1 (no real scan
-    // session), and without these files coverage_planner aborts Error 107.
-    // We pick the smallest empty raster that covers the rebased polygon
-    // bbox + 2m margin and shift its origin so the polygon sits inside.
-    const allPoints: { x: number; y: number }[] = [];
-    for (const wp of workPolygons) allPoints.push(...rebase(wp.points));
-    for (const o of parsed.obstacles) allPoints.push(...rebase(o.points));
-    for (const u of parsed.unicom) allPoints.push(...rebase(u.points));
-    if (allPoints.length > 0) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const p of allPoints) {
-        if (p.x < minX) minX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y > maxY) maxY = p.y;
-      }
-      const margin = 2.0;
-      const spanX = maxX - minX + 2 * margin;
-      const spanY = maxY - minY + 2 * margin;
-      const size = Math.max(spanX, spanY) > 30 ? 60 : 30;
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
-      const originX = cx - size / 2;
-      const originY = cy - size / 2;
-      publishToExtended(sn, {
-        generate_empty_map: { origin_x: originX, origin_y: originY, size, index: 0 },
-      });
-    }
-
-    // Exact-restore path: if the bundle ships with verbatim mower CSVs +
-    // charging_station.yaml, push the transformed copies straight to disk
-    // via the new MQTT extended write_map_files handler. This bypasses the
-    // sync_map roundtrip and gives an identical-to-export firmware state
-    // (modulo Δ rotation + translation aligning the polygon to the current
-    // dock pose). Older bundles without these fields skip this block; the
-    // legacy DB+sync_map path above remains the source of truth for them.
-    const mowerFiles = parsed.mowerFiles as
-      | { csvFiles: Record<string, string>; chargingStationYaml: string | null }
-      | undefined;
-    const origPose = parsed.metadata?.originalChargingPose as
-      | { x: number; y: number; orientation: number }
-      | undefined;
-    if (mowerFiles && origPose && dockMP) {
-      const dt = (dockMP.orientation ?? 0) - origPose.orientation;
-      const cosDt = Math.cos(dt);
-      const sinDt = Math.sin(dt);
-      const transformPoint = (px: number, py: number): [number, number] => {
-        const relX = px - origPose.x;
-        const relY = py - origPose.y;
-        const rx = relX * cosDt - relY * sinDt;
-        const ry = relX * sinDt + relY * cosDt;
-        return [rx + dockMP.x, ry + dockMP.y];
-      };
-      const transformedCsvs: Record<string, string> = {};
-      for (const [fname, content] of Object.entries(mowerFiles.csvFiles)) {
-        if (fname === 'map_info.json') {
-          // Re-emit map_info with the NEW charging_pose so firmware sees
-          // dock at its current frame position. Preserve other fields
-          // (e.g. map<name>.csv map_size entries) verbatim.
-          try {
-            const mi = JSON.parse(content) as Record<string, unknown>;
-            mi.charging_pose = {
-              x: dockMP.x,
-              y: dockMP.y,
-              orientation: dockMP.orientation ?? 0,
-            };
-            transformedCsvs[fname] = JSON.stringify(mi, null, 3);
-          } catch {
-            transformedCsvs[fname] = content;
-          }
-          continue;
-        }
-        if (!fname.endsWith('.csv')) {
-          transformedCsvs[fname] = content;
-          continue;
-        }
-        // Point-data CSV — each line is "x,y" in OLD mower frame.
-        const lines = content.split('\n');
-        const out: string[] = [];
-        for (const raw of lines) {
-          const line = raw.trim();
-          if (!line) { out.push(''); continue; }
-          const parts = line.split(',');
-          if (parts.length < 2) { out.push(line); continue; }
-          const px = parseFloat(parts[0]);
-          const py = parseFloat(parts[1]);
-          if (!Number.isFinite(px) || !Number.isFinite(py)) {
-            out.push(line);
-            continue;
-          }
-          const [nx, ny] = transformPoint(px, py);
-          out.push(`${nx.toFixed(2)},${ny.toFixed(2)}`);
-        }
-        transformedCsvs[fname] = out.join('\n');
-      }
-      const newYaml = `charging_pose: [${dockMP.x}, ${dockMP.y}, ${dockMP.orientation ?? 0}]\n`;
-      publishToExtended(sn, {
-        write_map_files: {
-          csv_files: transformedCsvs,
-          charging_station_yaml: newYaml,
-          restart_mapping: false,
-        },
-      });
-    }
-
-    importStaging.transition(stagingId, 'APPLIED', { applyResult: {} });
-    importAuditRepo.append({ sn, staging_id: stagingId, from_state: 'USER_CONFIRMED', to_state: 'APPLIED', reason: null });
-    res.json({
-      ok: true,
-      state: 'APPLIED',
-      exactRestore: !!(mowerFiles && origPose && dockMP),
-    });
-  },
-);
+// Retired: the old rebase flow mixed unchecked origin writes with unconfirmed map writes.
+adminStatusRouter.post('/maps/:sn/import-portable/:stagingId/confirm', (req: AuthRequest, res: Response) => {
+  res.status(410).json({ ok: false, error: 'legacy_restore_retired',
+    message: 'Use the confirmed portable restore and the existing re-anchor wizard.',
+    replacement: `/api/admin-status/maps/${encodeURIComponent(req.params.sn)}/import-portable/${encodeURIComponent(req.params.stagingId)}/apply-verbatim` });
+});
 
 // POST /api/admin-status/maps/:sn/import-portable/:stagingId/import-server-copy
 //
@@ -3118,27 +2446,19 @@ adminStatusRouter.post(
     }
 
     try {
-      const restored = importParsedBundleServerCopy(sn, parsed);
+      const commit = preparePortableImport(sn, normalizeBundleGeometry(parsed));
+      await withMowerMapOperation(sn, async () => {
+      const zipPath = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps', `${sn}_latest.zip`);
+      const previousZip = fs.existsSync(zipPath) ? fs.readFileSync(zipPath) : null;
       const latestZipBytes = await writeLatestZipFromCsvFiles(sn, parsed.mowerFiles?.csvFiles);
-
-      // First-restore ground-truth capture: a server-copy restore leaves the
-      // mower untouched, so the maps on it are still the user's working set.
-      // If there is no portable backup yet, snapshot the mower's ACTUAL current
-      // files (read_map_files via MQTT) + DB polygons into a real .novabotmap
-      // bundle — a recoverable ground-truth backup of the on-device map. Fire
-      // and forget so it never blocks the restore response.
-      // Only when the mower is ONLINE — createBackup reads its files live over
-      // MQTT, so an offline attempt is pointless (and the in-flight read must
-      // not outlive a request in tests, where the device is never online).
-      try {
-        const { listBackups, createBackup } = await import('../services/portableBackup.js');
-        if (isDeviceOnline(sn) && listBackups(sn).length === 0) {
-          void createBackup(sn, 'first-restore-ground-truth')
-            .then((b) => { if (b) console.log(`[Admin] ${sn}: first-restore ground-truth bundle captured from mower: ${b.filename}`); })
-            .catch((e) => console.warn(`[Admin] ${sn}: first-restore ground-truth capture failed:`, e));
+      let restored;
+      try { restored = commit(); }
+      catch (error) {
+        if (latestZipBytes !== null) {
+          if (previousZip) { fs.writeFileSync(`${zipPath}.rollback`, previousZip); fs.renameSync(`${zipPath}.rollback`, zipPath); }
+          else fs.rmSync(zipPath, { force: true });
         }
-      } catch (e) {
-        console.warn(`[Admin] ${sn}: ground-truth capture setup failed:`, e);
+        throw error;
       }
 
       importStaging.transition(stagingId, 'APPLIED', {
@@ -3160,319 +2480,105 @@ adminStatusRouter.post(
         ...getMowerFileCapability(sn),
         message: T`Alleen in de server/app-kopie geïmporteerd. De maaierbestanden zijn niet geschreven; maaien werkt alleen als deze kaarten al op de maaier staan.`,
       });
+      });
     } catch (err) {
-      res.status(500).json({ ok: false, error: T`import in de server-kopie mislukt: ${(err as Error).message}` });
+      res.status((err as { code?: string }).code === 'map_operation_busy' ? 409 : 500).json({ ok: false, error: T`import in de server-kopie mislukt: ${(err as Error).message}` });
     }
   },
 );
 
-// POST /api/admin-status/maps/:sn/import-portable/:stagingId/apply-verbatim
-//
-// Same-mower full state restore. Pushes csv_files + charging_station.yaml +
-// pos.json + map.yaml/pgm/png + per-slot mapN.yaml/pgm/png BACK to the
-// mower UNCHANGED (no Δ rotation, no translation, no charging_pose
-// override). The mower's pos.json anchors the local frame to UTM, so as
-// long as we restore the SAME pos.json that was in effect when the bundle
-// was captured, polygons sit at the same world coordinates and Nav2's
-// costmap matches.
-//
-// Soft-blocks when bundle.metadata.sourceSn !== :sn unless ?force=1. pos.json is
-// no longer pushed (the map is charger-relative and the dock-cycle re-anchors
-// the frame), so cross-mower restore is generally safe — the gate is just a
-// confirm so an accidental wrong-mower restore isn't silent.
-adminStatusRouter.post(
-  '/maps/:sn/import-portable/:stagingId/apply-verbatim',
-  async (req: AuthRequest, res: Response) => {
-    const T = reqT(req);
-    const { sn, stagingId } = req.params;
-    const force = req.query.force === '1' || req.body?.force === true;
-    const session = importStaging.get(stagingId);
-    if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: T`onbekende staging-sessie` });
-      return;
-    }
-    if (session.state !== 'UPLOADED') {
-      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
-      return;
-    }
-
-    const dir = path.join(process.env.STORAGE_PATH ?? './storage', 'imports', sn, stagingId);
-    let parsed: {
-      metadata?: {
-        sourceSn?: string;
-        originalChargingPose?: { x: number; y: number; orientation: number };
-      };
-      polygons?: Array<{ name: string; alias: string; points: { x: number; y: number }[] }>;
-      polygon?: { name: string; alias: string; points: { x: number; y: number }[] };
-      obstacles?: Array<{ name: string; alias: string; points: { x: number; y: number }[] }>;
-      unicom?: Array<{ name: string; targetMapName: string; points: { x: number; y: number }[] }>;
-      mowerFiles?: {
-        csvFiles: Record<string, string>;
-        chargingStationYaml: string | null;
-        posJson?: string | null;
-        mapFilesText?: Record<string, string>;
-        mapFilesB64?: Record<string, string>;
-      };
-    };
-    try {
-      parsed = JSON.parse(fs.readFileSync(path.join(dir, 'bundle.json'), 'utf8'));
-    } catch (err) {
-      res.status(500).json({ ok: false, error: T`bundel lezen mislukt: ${(err as Error).message}` });
-      return;
-    }
-    const mowerFiles = parsed.mowerFiles;
-    if (!mowerFiles || !mowerFiles.csvFiles || Object.keys(mowerFiles.csvFiles).length === 0) {
-      res.status(400).json({
-        ok: false,
-        error: T`de bundel heeft geen mowerFiles: hij is geëxporteerd voordat de verbatim-functie bestond`,
-      });
-      return;
-    }
-    if (!getMowerFileCapability(sn).mowerFileApplySupported) {
-      res.status(409).json(mowerFileUnsupportedPayload(sn, T));
-      return;
-    }
-
-    // SN match check (verbatim is only safe on same mower because pos.json
-    // is mower-specific — its UTM anchor is set by the mower's own GPS at
-    // first provisioning).
-    const sourceSn = parsed.metadata?.sourceSn;
-    if (sourceSn && sourceSn !== sn && !force) {
-      res.status(409).json({
-        ok: false,
-        error: T`de bundel is geëxporteerd van ${sourceSn}, niet van ${sn}. De kaart is relatief aan het laadstation en pos.json blijft ongemoeid, dus dit is meestal veilig (de dock-cyclus verankert het frame opnieuw). Geef force=1 mee om te bevestigen.`,
-        sourceSn,
-        targetSn: sn,
-      });
-      return;
-    }
-
-    // Build write_map_files payload — verbatim, no transformation.
-    // restart_mapping: false — killing novabot_mapping + coverage_planner
-    // mid-flight leaks iceoryx shm chunks (pool sized 50). After a few
-    // restart cycles the pool fills up, new nodes can't acquire chunks
-    // and crash on init, triggering robot_decision Error 140. Verified
-    // live LFIN2230700238 2026-05-21: apply-verbatim with restart_mapping
-    // = true caused the cascade. Same restart_mapping:false mitigation used
-    // (see comment at write_map_files call further up). Refresh of cached
-    // polygons happens via the save_map type:1 trigger below — firmware
-    // re-reads CSVs through its own native save flow without bouncing
-    // novabot_mapping.
-    //
-    // pos.json EXCLUDED — stock robot_decision rewrites /userdata/pos.json
-    // on every successful docking (open drop-in: mower/robot_decision.py
-    // line 2309 `self.save_utm_origin()` after result.code==100 SUCCESS).
-    // Restoring an old pos.json from a bundle clobbers the mower's current
-    // UTM anchor, putting the local frame out of sync with the physical
-    // world. Verified live LFIN2230700238 2026-05-21: apply-verbatim with
-    // bundle pos.json restored caused localization to report (-1.67, 0.88)
-    // while mower was physically on dock at (~0, 0.06). Let the mower's
-    // own docking flow refresh pos.json instead.
-    // Push verbatim — shared with the cloud-import map push so both routes
-    // write to the mower identically (write_map_files + raster fallback,
-    // pos.json untouched). restart_mapping:false avoids the iceoryx-shm leak.
-    // The bundle ships a complete occupancy grid (whole map.pgm + every
-    // mapN.pgm, generated server-side); write_map_files lands those on disk and
-    // coverage_planner loads map_yaml fresh per task, so the restored raster is
-    // used directly. The firmware's own save_map type:1 + regenerate_per_map_files
-    // were only ever needed to GENERATE the raster on-device when the bundle
-    // lacked one — applyVerbatimToMower only falls back to them in that case.
-    const applyRes = applyVerbatimToMower(sn, mowerFiles);
-    if (!applyRes.pushed) {
-      // SAFETY GATE tripped: the raster set is structurally broken. Nothing was
-      // pushed — the mower's existing (working) map is untouched. Do NOT mark
-      // APPLIED or rewrite the DB; surface the failure so the operator can
-      // rebuild a clean bundle instead of silently shipping garbage.
-      importAuditRepo.append({
-        sn,
-        staging_id: stagingId,
-        from_state: 'UPLOADED',
-        to_state: 'UPLOADED',
-        reason: `verbatim-restore BLOCKED by map validation: ${applyRes.validation.hardFailures.join('; ')}`,
-      });
-      console.error(`[Admin] apply-verbatim ${sn} BLOCKED by map validation — mower untouched:`, applyRes.validation.hardFailures);
-      res.status(422).json({
-        ok: false,
-        state: 'BLOCKED',
-        error: 'map_validation_failed',
-        message: T`Geweigerd: de te herstellen kaart is structureel kapot (losgekoppelde zones of inconsistente afmetingen). De maaier is NIET aangeraakt.`,
-        failures: applyRes.validation.hardFailures,
-        warnings: applyRes.validation.warnings,
-      });
-      return;
-    }
-
-    // Update server DB so dashboard map view reflects what's now on disk.
-    // Polygon points come from the bundle untransformed (same frame as
-    // CSVs we just shipped back).
-    db.prepare(`DELETE FROM maps WHERE mower_sn = ?`).run(sn);
-    const ins = db.prepare(
-      `INSERT INTO maps (mower_sn, map_id, map_name, map_type, file_name, map_area, canonical_name) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const workPolys = parsed.polygons && parsed.polygons.length > 0
-      ? parsed.polygons
-      : (parsed.polygon ? [parsed.polygon] : []);
-    for (let i = 0; i < workPolys.length; i++) {
-      const wp = workPolys[i];
-      ins.run(sn, `imp_work_${i}`, wp.alias, 'work', wp.name + '.csv',
-        JSON.stringify(wp.points), wp.name);
-    }
-    for (let i = 0; i < (parsed.obstacles ?? []).length; i++) {
-      const o = parsed.obstacles![i];
-      ins.run(sn, `imp_obs_${i}`, o.alias, 'obstacle', o.name + '.csv',
-        JSON.stringify(o.points), o.name);
-    }
-    for (let i = 0; i < (parsed.unicom ?? []).length; i++) {
-      const u = parsed.unicom![i];
-      ins.run(sn, `imp_uni_${i}`, u.targetMapName, 'unicom', u.name + '.csv',
-        JSON.stringify(u.points), u.name);
-    }
-
-    // Keep DB's polygon_charging_orientation in sync with the bundle's
-    // stored value (the mower's old dock heading in its own frame).
-    const origOrient = parsed.metadata?.originalChargingPose?.orientation;
-    if (typeof origOrient === 'number' && Number.isFinite(origOrient)) {
-      mapRepo.setPolygonChargingOrientation(sn, origOrient);
-    }
-    mapRepo.setPolygonOffset(sn, 0, 0);
-
-    importStaging.transition(stagingId, 'APPLIED', { applyResult: {} });
-    // Verify first: a bundle from this mower on an unchanged frame needs no
-    // re-anchor. Docked with RTK Fixed on the restored dock anchor means the
-    // frame is right; anything else locks navigation until the re-anchor.
-    const frameCheck = settleRestoredFrame(sn);
-    console.log(`[Admin] ${sn} after apply-verbatim: frame ${frameCheck.ok ? 'verified' : `unvalidated (${frameCheck.reason})`}${frameCheck.distM != null ? `, ${frameCheck.distM.toFixed(2)} m from the dock anchor` : ''}`);
-    importAuditRepo.append({
-      sn,
-      staging_id: stagingId,
-      from_state: 'UPLOADED',
-      to_state: 'APPLIED',
-      reason: force ? 'verbatim-restore (forced cross-SN)' : 'verbatim-restore same-SN',
-    });
-    res.json({
-      ok: true,
-      state: 'APPLIED',
-      mode: 'verbatim',
-      sourceSn,
-      forced: !!force,
-      written: {
-        csvFiles: Object.keys(mowerFiles.csvFiles).length,
-        posJson: false,
-        mapFilesText: Object.keys(mowerFiles.mapFilesText ?? {}).length,
-        mapFilesB64: Object.keys(mowerFiles.mapFilesB64 ?? {}).length,
-        chargingStationYaml: !!mowerFiles.chargingStationYaml,
-      },
-      requires_dock_anchor_refresh: !frameCheck.ok,
-      frameCheck,
-    });
-  },
-);
-
-// POST /api/admin-status/maps/:sn/refresh-dock-anchor
-//
-// After a restore (apply-verbatim) the mower's pos.json
-// UTM anchor on disk no longer matches reality: the bundle's polygons are
-// in their export-time local frame, but the mower's running localization
-// has its own current frame. The only way to make these coincide is to
-// force a fresh docking cycle — stock robot_decision calls
-// save_utm_origin_info on each successful dock (verified in open
-// drop-in: mower/robot_decision.py line 2309), rewriting pos.json with
-// the current UTM-to-local anchor. The next boot then reads the fresh
-// anchor and polygons land where they belong.
-//
-// Two modes:
-//   - manual: caller drives the mower off-and-on themselves (lift + place,
-//     or joystick). Server just returns an instruction text.
-//   - auto: server drives the mower off dock via the manual-control MQTT
-//     protocol (start_move:4 → mst back velocity → stop_move) then
-//     triggers go_to_charge so the docking sequence runs end-to-end with
-//     ArUco alignment. save_utm_origin fires automatically on SUCCESS.
-//
-// Response is immediate; the auto sequence runs async. Caller polls
-// battery_state via /devices to see when 'Charging' returns.
-adminStatusRouter.post(
-  '/maps/:sn/refresh-dock-anchor',
-  (req: AuthRequest, res: Response) => {
-    const T = reqT(req);
-    const sn = req.params.sn;
-    const mode = (req.body?.mode ?? '') as string;
-
-    if (mode === 'manual') {
-      console.log(`[Admin] refresh-dock-anchor ${sn}: manual mode acknowledged`);
-      res.json({
-        ok: true,
-        mode: 'manual',
-        instruction:
-          "Pick the mower up briefly and place it back on the dock, OR use the joystick to drive ~1m off and back. The mower's own docking flow refreshes the UTM anchor on successful contact. Wait until battery_state = Charging before mowing.",
-      });
-      return;
-    }
-
-    if (mode !== 'auto') {
-      res.status(400).json({ ok: false, error: "mode required: 'auto' or 'manual'" });
-      return;
-    }
-
-    const sensors = deviceCache.get(sn);
-    const battery = (sensors?.get('battery_state') ?? '').toUpperCase();
-    const rs = String(sensors?.get('recharge_status') ?? '');
-    const onDock = battery === 'CHARGING' || battery === 'FULL' || rs === '9' || rs === '1';
-    if (!onDock) {
-      res.status(409).json({
-        ok: false,
-        error: T`de automatische modus vereist dat de maaier nu op het dock staat (laden). battery_state='${battery}', recharge_status='${rs}'`,
-      });
-      return;
-    }
-
-    // Respond immediately; the sequence runs over ~40s.
-    res.json({
-      ok: true,
-      mode: 'auto',
-      message: T`automatische her-dockreeks gestart: 1 m achteruit → stop → go_to_charge. Volg battery_state in /devices tot Charging.`,
-      estimated_duration_s: 45,
-    });
-
-    // Fire-and-forget async sequence.
-    (async () => {
+// A restore is applied only after correlated write + exact readback and the DB commit.
+adminStatusRouter.post('/maps/:sn/import-portable/:stagingId/apply-verbatim', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
+  const { sn, stagingId } = req.params;
+  const session = importStaging.get(stagingId);
+  if (!session || session.sn !== sn) { res.status(404).json({ ok: false, error: 'unknown_staging_session' }); return; }
+  if (!['UPLOADED', 'RECONCILE_REQUIRED'].includes(session.state)) {
+    res.status(409).json({ ok: false, error: 'invalid_staging_state', state: session.state }); return;
+  }
+  if (!getMowerFileCapability(sn).mowerFileApplySupported) {
+    res.status(409).json(mowerFileUnsupportedPayload(sn, T)); return;
+  }
+  const dir = path.join(process.env.STORAGE_PATH ?? './storage', 'imports', sn, stagingId);
+  let parsed: ParsedBundle;
+  let bundleHash: string;
+  try {
+    const bytes = fs.readFileSync(path.join(dir, 'bundle.json'));
+    bundleHash = crypto.createHash('sha256').update(bytes).digest('hex');
+    parsed = normalizeBundleGeometry(JSON.parse(bytes.toString('utf8')) as ParsedBundle);
+  } catch (error) { res.status(400).json({ ok: false, error: String(error) }); return; }
+  const mowerFiles = parsed.mowerFiles;
+  if (!mowerFiles?.csvFiles || Object.keys(mowerFiles.csvFiles).length === 0) {
+    res.status(400).json({ ok: false, error: 'bundle_has_no_mower_files' }); return;
+  }
+  const sourceSn = parsed.metadata.sourceSn;
+  const force = req.query.force === '1' || req.body?.force === true;
+  if (sourceSn && sourceSn !== sn && !force) {
+    res.status(409).json({ ok: false, error: 'Cross-mower full restore requires explicit confirmation and frame verification. Use zone copy to retain the physical location of a source zone.', sourceSn, targetSn: sn }); return;
+  }
+  let commit: ReturnType<typeof preparePortableImport>;
+  try { commit = preparePortableImport(sn, parsed); }
+  catch (error) { res.status(400).json({ ok: false, error: String(error) }); return; }
+  const reconcile = session.state === 'RECONCILE_REQUIRED';
+  if (reconcile && session.context.applyResult?.bundleHash !== bundleHash) {
+    res.status(409).json({ ok: false, error: 'staged_bundle_changed', state: session.state }); return;
+  }
+  try {
+    await withMowerMapOperation(sn, async operation => {
+      // Preserve the original server copy for recovery, before the first device write.
+      const recoveryFile = path.join(dir, 'server-before.json');
+      if (!fs.existsSync(recoveryFile)) fs.writeFileSync(recoveryFile, JSON.stringify({
+        maps: mapRepo.findByMowerSn(sn), calibration: mapRepo.getCalibration(sn),
+        orientation: mapRepo.getPolygonChargingOrientation(sn),
+      }));
+      importStaging.transition(stagingId, 'APPLYING', { applyResult: { operationId: operation.id, bundleHash } });
       try {
-        console.log(`[Admin] refresh-dock-anchor ${sn}: auto sequence start`);
-
-        // 1. Enter manual mode, back direction.
-        publishToDevice(sn, { start_move: 4 });
-        await new Promise((r) => setTimeout(r, 300));
-
-        // 2. Drive straight back ~1m using the EXACT manual-joystick format
-        //    (socketHandler joystick:move): mst = List [x_w*100, y_v*100, 8],
-        //    x_w=0 (no turn), y_v negative (backward), start_move keepalive
-        //    every ~750ms, stop_move: null. The old { x_w:0.2, y_v:0 } object
-        //    form commanded a turn -> mower veered diagonally.
-        {
-          const started = Date.now();
-          let tick = 0;
-          while (Date.now() - started < 5000) {
-            publishToDevice(sn, { mst: [0, -20, 8] });
-            tick++;
-            if (tick % 5 === 0) publishToDevice(sn, { start_move: 4 });
-            await new Promise((r) => setTimeout(r, 150));
-          }
+        const applied = await (reconcile ? verifyMowerMapFiles : applyVerbatimToMower)(sn, mowerFiles, operation);
+        if (!applied.pushed) {
+          const state = reconcile || applied.uncertain ? 'RECONCILE_REQUIRED' : 'UPLOADED';
+          importStaging.transition(stagingId, state, { applyResult: {
+            operationId: operation.id, bundleHash, error: applied.error ?? 'map_validation_failed',
+          } });
+          res.status(state === 'RECONCILE_REQUIRED' ? 409 : 422).json({ ok: false, state,
+            error: applied.error ?? 'map_validation_failed', uncertain: !!applied.uncertain,
+            failures: applied.validation.hardFailures, warnings: applied.validation.warnings });
+          return;
         }
-
-        // 3. Exit manual mode.
-        publishToDevice(sn, { stop_move: null });
-        await new Promise((r) => setTimeout(r, 1500));
-
-        // 4. Auto-redock — full ArUco-aligned approach. robot_decision
-        //    fires save_utm_origin_info on SUCCESS (result.code == 100),
-        //    rewriting /userdata/pos.json with the current UTM anchor.
-        publishToDevice(sn, { go_to_charge: {} }, { bypassFrameGuard: true });
-        console.log(`[Admin] refresh-dock-anchor ${sn}: go_to_charge dispatched (frame-guard bypassed)`);
-      } catch (err) {
-        console.error(`[Admin] refresh-dock-anchor ${sn}: sequence failed`, err);
+        const restored = commit();
+        const frameCheck = settleRestoredFrame(sn);
+        importAuditRepo.append({ sn, staging_id: stagingId, from_state: session.state, to_state: 'APPLIED',
+          reason: reconcile ? 'readback reconciled; server committed' : 'mower readback verified; server committed' });
+        importStaging.transition(stagingId, 'APPLIED', { applyResult: {
+          operationId: operation.id, bundleHash, mowerVerified: true,
+        } });
+        res.json({ ok: true, state: 'APPLIED', mode: 'verbatim', sourceSn, forced: force,
+          mowerVerified: true, restored, operationId: operation.id,
+          written: { csvFiles: Object.keys(mowerFiles.csvFiles).length, posJson: false,
+            mapFilesText: Object.keys(mowerFiles.mapFilesText ?? {}).length,
+            mapFilesB64: Object.keys(mowerFiles.mapFilesB64 ?? {}).length,
+            chargingStationYaml: !!mowerFiles.chargingStationYaml },
+          requires_dock_anchor_refresh: isFrameUnvalidated(sn), frameValidated: !isFrameUnvalidated(sn), frameCheck });
+      } catch (error) {
+        // The device may already contain the new files. Keep the exact staged payload;
+        // another request only compares it with the device, never blindly writes again.
+        if (importStaging.get(stagingId)?.state === 'APPLYING') importStaging.transition(stagingId, 'RECONCILE_REQUIRED', {
+          applyResult: { operationId: operation.id, bundleHash, error: String(error) },
+        });
+        markFrameUnvalidated(sn);
+        res.status(409).json({ ok: false, state: 'RECONCILE_REQUIRED', error: String(error), uncertain: true });
       }
-    })();
-  },
-);
+    });
+  } catch (error) {
+    res.status(409).json({ ok: false, error: (error as { code?: string }).code ?? String(error) });
+  }
+});
+
+// Retired: an automatic dock does not establish a valid map frame.
+adminStatusRouter.post('/maps/:sn/refresh-dock-anchor', (req: AuthRequest, res: Response) => {
+  res.status(410).json({ ok: false, error: 'legacy_reanchor_retired',
+    message: 'Use the re-anchor wizard in the OpenNova app. This request did not move or change the mower.',
+    replacement: `/api/dashboard/reanchor/${encodeURIComponent(req.params.sn)}` });
+});
 
 // POST /api/admin-status/maps/:sn/import-portable/:stagingId/cancel
 // Idempotent: returns 200 even if session is already gone.
@@ -3484,6 +2590,9 @@ adminStatusRouter.post(
     if (!session || session.sn !== sn) {
       res.json({ ok: true });
       return;
+    }
+    if (session.state === 'APPLYING' || session.state === 'RECONCILE_REQUIRED') {
+      res.status(409).json({ ok: false, error: 'restore_requires_reconciliation', state: session.state }); return;
     }
     importAuditRepo.append({ sn, staging_id: stagingId, from_state: session.state, to_state: 'CANCELLED', reason: 'user cancel' });
     importStaging.cancel(stagingId, 'user cancel');
@@ -3759,55 +2868,9 @@ adminStatusRouter.get('/wifi-heatmap/:sn', (req: AuthRequest, res: Response) => 
 
 // POST /api/admin-status/maps/:sn/reset-polygon-offset
 adminStatusRouter.post('/maps/:sn/reset-polygon-offset', async (req: AuthRequest, res: Response) => {
-  const T = reqT(req);
   const { sn } = req.params;
-
-  mapRepo.setPolygonOffset(sn, 0, 0);
-  const regenPath = regenerateLatestZipFromBackup(sn);
-  if (!regenPath) {
-    res.status(400).json({ ok: false, error: T`Geen kaartgegevens gevonden voor deze maaier: breng het gebied eerst in kaart.`, dx_m: 0, dy_m: 0 });
-    return;
-  }
-  if (!isDeviceOnline(sn)) {
-    res.status(404).json({
-      ok: false, partial: true,
-      error: T`Maaier offline: sync_map niet verstuurd; de maaier neemt de verschuiving over bij de volgende verbinding`,
-      dx_m: 0, dy_m: 0,
-    });
-    return;
-  }
-
-  const syncResult = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const respond = data.sync_map_respond as Record<string, unknown> | undefined;
-      if (!respond) return;
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: respond.result === 0, respond });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { sync_map: {} });
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: false, timeout: true });
-    }, 30000);
-  });
-
-  if (syncResult.timeout) {
-    res.status(504).json({
-      ok: false, partial: true,
-      error: T`Maaier reageerde niet binnen 30 s; de synchronisatie kan op de achtergrond nog afronden`,
-      dx_m: 0, dy_m: 0,
-    });
-    return;
-  }
-
-  console.log(`[Admin] reset-polygon-offset ${sn}: syncOk=${syncResult.ok}`);
-  res.json({ ok: syncResult.ok, dx_m: 0, dy_m: 0, syncResult: syncResult.respond ?? null });
+  const ok = await applyMapsToMower(sn, { x: 0, y: 0 });
+  res.status(ok ? 200 : 409).json({ ok, reason: ok ? null : 'map_apply_failed', dx_m: 0, dy_m: 0 });
 });
 
 // POST /api/admin-status/factory-reset — wipe all user data and return to setup

@@ -218,6 +218,8 @@ export async function fetchMaps(sn: string): Promise<MapsResponse> {
     chargerGps: data.chargerGps ?? null,
     chargerOrientation: data.chargerOrientation ?? 0,
     chargingPose: data.chargingPose ?? null,
+    calibration: data.calibration,
+    polygonOffset: data.polygonOffset,
   };
 }
 
@@ -249,6 +251,12 @@ export async function saveCalibration(
     body: JSON.stringify(cal),
   });
   return res.json();
+}
+
+export async function alignDockPhoto(sn: string, lat: number, lng: number): Promise<void> {
+  const res = await post(`${BASE}/calibration/${encodeURIComponent(sn)}/dock-photo`, { lat, lng });
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error ?? 'Dock photo alignment failed');
 }
 
 export async function applyPolygonOffset(sn: string, dxM: number, dyM: number): Promise<{ ok: boolean; error?: string }> {
@@ -322,17 +330,39 @@ export interface ZoneCopyResult {
   warnings?: string[];
 }
 
+export interface ZoneCopyAlignment {
+  alignmentId: string;
+  phase: 'source_first' | 'source_second' | 'target_first' | 'target_second' | 'ready';
+  sourceSn: string;
+  targetSn: string;
+  canonical: string;
+  expiresAt: number;
+  dockAtB?: LocalPoint;
+  captures: { source: unknown[]; target: unknown[] };
+}
+
+/** Capture the next required observation at the physically confirmed source dock. */
+export async function captureZoneCopyAlignment(sn: string, source: string, canonical: string, alignmentId?: string): Promise<ZoneCopyAlignment> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/alignment`, { canonical, alignmentId, atSourceDock: true });
+  return res.json();
+}
+
 /** Plan zonder te schrijven. Invoerfouten (400/404/409) komen als Error met de servertekst. */
-export async function previewZoneCopy(sn: string, source: string, canonical: string, dockAtB: LocalPoint, withObstacles = true): Promise<ZoneCopyPlan> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, dockAtB, withObstacles });
+export async function previewZoneCopy(sn: string, source: string, canonical: string, alignmentId: string, withObstacles = true): Promise<ZoneCopyPlan> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, alignmentId, withObstacles });
   return res.json();
 }
 
 export async function copyZone(
-  sn: string, source: string, canonical: string, dockAtB: LocalPoint,
+  sn: string, source: string, canonical: string, alignmentId: string,
   opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean } = {},
 ): Promise<ZoneCopyResult> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, dockAtB, ...opts });
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, alignmentId, ...opts });
+  return res.json();
+}
+
+export async function fetchMapMeasurement(sn: string): Promise<{ x: number; y: number; measurementId: string; sampledAt: number; sampleCount: number; spreadM: number }> {
+  const res = await get(`${BASE}/maps/${encodeURIComponent(sn)}/measurement`);
   return res.json();
 }
 

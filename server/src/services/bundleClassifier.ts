@@ -33,9 +33,9 @@ export interface BundleEntry {
   bytes: number;
 }
 
-const WORK_RE = /^(map\d+)\.csv$/;
+const WORK_RE = /^(map\d+)(?:_work)?\.csv$/;
 const OBSTACLE_RE = /^(map\d+)_(\d+)_obstacle\.csv$/;
-const UNICOM_RE = /^(map\d+)to([a-z0-9]+)_unicom\.csv$/i;
+const UNICOM_RE = /^(map\d+)to([a-z0-9]+)(?:_\d+)?_unicom\.csv$/i;
 
 /**
  * Classify a single CSV filename. Returns null for filenames we don't

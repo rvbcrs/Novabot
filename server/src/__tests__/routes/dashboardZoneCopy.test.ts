@@ -5,7 +5,29 @@
  */
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach, afterAll } from 'vitest';
+
+// Preflight itself has native-snapshot/telemetry tests in dockChannelRepair.test.ts.
+vi.mock('../../services/dockChannelRepair.js', () => ({
+  repairDockChannels: vi.fn(),
+  withConfirmedCopyDocks: vi.fn(async (_target, _source, run) => run({
+    source: { x: 0.03, y: 0.73, orientation: -Math.PI / 2 },
+    target: { x: 0.1, y: -0.5, orientation: -Math.PI / 2 },
+  })),
+}));
+
+// Marker acquisition/validation is exercised in copyAlignment.test.ts; these
+// route tests verify that no old photo/position request bypasses that service.
+vi.mock('../../services/copyAlignment.js', () => ({
+  beginCopyAlignment: vi.fn(async () => ({ alignmentId: 'verified', phase: 'source_first' })),
+  getCopyAlignment: vi.fn(() => ({ alignmentId: 'verified', phase: 'target_first' })),
+  captureCopyAlignment: vi.fn(async () => ({ alignmentId: 'verified', phase: 'source_second' })),
+  validateCopyAlignment: vi.fn((id: string) => {
+    if (!['verified', 'far'].includes(id)) throw new Error('Unknown alignment');
+    return { dockAtB: id === 'far' ? { x: 50, y: 50 } : { x: 0.1, y: -0.5 } };
+  }),
+  consumeCopyAlignment: vi.fn(),
+}));
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -96,12 +118,23 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
   UNSUPPORTED_FIRMWARE_MSG_KEY: 'requiresOpenNovaFirmware',
 }));
 
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import archiver from 'archiver';
+import { PassThrough } from 'node:stream';
+import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
+import { clearFrameUnvalidated, isFrameUnvalidated } from '../../services/frameValidation.js';
+const zipFixture = vi.hoisted(() => ({ path: '' }));
+vi.mock('../../services/mapBackup.js', () => ({ regenerateLatestZipFromBackup: () => zipFixture.path, scheduleSnapshot: vi.fn() }));
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { publishToExtended, onExtendedResponse } from '../../mqtt/mapSync.js';
+import { publishToExtended, onExtendedResponse, offExtendedResponse } from '../../mqtt/mapSync.js';
 import { forwardToDashboard } from '../../dashboard/socketHandler.js';
 import { mapApplyTiming, PHASE_KEY, ERROR_KEY } from '../../services/mapApplyStatus.js';
 import { isDeviceOnline } from '../../mqtt/broker.js';
 import { mapRepo } from '../../db/repositories/index.js';
+import { withConfirmedCopyDocks } from '../../services/dockChannelRepair.js';
+import { captureCopyAlignment, consumeCopyAlignment, validateCopyAlignment } from '../../services/copyAlignment.js';
 
 const app = express();
 app.use(express.json());
@@ -120,6 +153,22 @@ const addRow = (sn: string, canonical: string, type: string, pts: unknown[], ali
   mapRepo.create({ map_id: `${sn}-${canonical}`, mower_sn: sn, map_name: alias, map_type: type, map_area: JSON.stringify(pts), canonical_name: canonical });
 const url = (suffix = '') => `/api/dashboard/maps/${B}/copy-from/${A}${suffix}`;
 
+const csvFixture = { 'map_info.json': JSON.stringify({ charging_pose: { ...dockB, orientation: 1.5 } }), 'map0_work.csv': '0,0\n2,0\n0,2\n', 'map0tocharge_unicom.csv': '0.1,-0.5\n0.3,-0.8\n' };
+const snapshot = () => ({ result: 0, snapshot_consistent: true, csv_files: csvFixture, x3_csv_files: csvFixture, charging_station_yaml: 'charging_pose: [0.1,-0.5,1.5]', pos_json: '{"utm_origin":{"x":1,"y":2}}' });
+let fixtureDir: string;
+beforeAll(async () => {
+  fixtureDir = mkdtempSync(join(tmpdir(), 'copy-sync-test-'));
+  zipFixture.path = join(fixtureDir, 'maps.zip');
+  const archive = archiver('zip'); const chunks: Buffer[] = [];
+  const output = new PassThrough(); output.on('data', b => chunks.push(b));
+  const complete = new Promise<void>((resolve, reject) => { output.on('end', resolve); archive.on('error', reject); });
+  archive.pipe(output);
+  for (const [name, text] of Object.entries(csvFixture)) archive.append(text, { name: `csv_file/${name}` });
+  await archive.finalize(); await complete; writeFileSync(zipFixture.path, Buffer.concat(chunks));
+});
+afterAll(() => rmSync(fixtureDir, { recursive: true, force: true }));
+beforeEach(() => { clearFrameUnvalidated(B); clearFrameUnvalidated(A); clearPositionTelemetry(B); vi.mocked(publishToExtended).mockReset(); });
+
 describe('zone copy routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -132,8 +181,52 @@ describe('zone copy routes', () => {
     addRow(B, 'map0tocharge_unicom', 'unicom', [dockB, { x: 0.3, y: -0.8 }]);
   });
 
+  it('a photo point or legacy position token cannot bypass the marker wizard', async () => {
+    const before = mapRepo.findByMowerSn(B);
+    for (const suffix of ['', '/preview']) for (const extra of [
+      { dockAtB: dockB }, { dockAtB: dockB, alignmentId: 'verified' },
+      { measurementId: 'old-position-token', alignmentId: 'verified' }, { alignmentId: 'unknown' },
+    ]) {
+      const res = await request(server).post(url(suffix)).send({ canonical: 'map0', ...extra });
+      expect(res.status).toBe(409);
+      expect(mapRepo.findByMowerSn(B)).toEqual(before);
+    }
+    expect(publishToExtended).not.toHaveBeenCalled();
+    expect(consumeCopyAlignment).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed copy options before measurement or mutation', async () => {
+    for (const suffix of ['', '/preview']) for (const body of [
+      [], { canonical: ['map0'] }, { canonical: 'map0', name: 42 },
+      { canonical: 'map0', withObstacles: 'false' }, { canonical: 'map0', acceptChannel: 0 },
+    ]) {
+      expect((await request(server).post(url(suffix)).send(body)).status).toBe(400);
+    }
+    expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
+    expect(consumeCopyAlignment).not.toHaveBeenCalled();
+  });
+
+  it('a changed or incomplete alignment is refused before any mutation', async () => {
+    vi.mocked(validateCopyAlignment).mockImplementationOnce(() => { throw new Error('Frame changed'); });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
+    expect(res.status).toBe(409);
+    expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
+    expect(consumeCopyAlignment).not.toHaveBeenCalled();
+    expect(publishToExtended).not.toHaveBeenCalled();
+  });
+
+  it('capture requires physical source-dock confirmation and server chooses the mower', async () => {
+    expect((await request(server).post(url('/alignment')).send({ canonical: 'map0' })).status).toBe(400);
+    expect(captureCopyAlignment).not.toHaveBeenCalled();
+    expect((await request(server).post(url('/alignment')).send({ canonical: 'map0', atSourceDock: true, side: 'target' })).status).toBe(200);
+    expect(captureCopyAlignment).toHaveBeenLastCalledWith('verified', 'source');
+    expect((await request(server).post(url('/alignment')).send({ canonical: 'map0', atSourceDock: true, alignmentId: 'verified' })).status).toBe(200);
+    expect(captureCopyAlignment).toHaveBeenLastCalledWith('verified', 'target');
+    expect(publishToExtended).not.toHaveBeenCalled();
+  });
+
   it('preview: 200 met plan, geen DB-mutatie, geen push', async () => {
-    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.canonical).toBe('map0');
@@ -144,22 +237,22 @@ describe('zone copy routes', () => {
   });
 
   it('preview: refusal komt als 200 met ok:false en leesbare tekst', async () => {
-    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: { x: 50, y: 50 } });
+    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', alignmentId: 'far' });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(false);
     expect(res.body.refusal).toBe('too_far_from_dock');
     expect(typeof res.body.error).toBe('string');
   });
 
-  it('preview zonder dockAtB: 400 bad_dock, niets geschreven', async () => {
+  it('preview zonder verplichte uitlijning: 409, niets geschreven', async () => {
     const res = await request(server).post(url('/preview')).send({ canonical: 'map0' });
-    expect(res.status).toBe(400);
-    expect(res.body.reason).toBe('bad_dock');
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('alignment_required');
     expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
   });
 
-  it('copy: rijen + sync_map-push, antwoord zoals de tekenroute', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+  it('copy: na bevestigde preflight rijen opgeslagen; apply controleert dock opnieuw', async () => {
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.map.canonicalName).toBe('map0');
@@ -168,28 +261,39 @@ describe('zone copy routes', () => {
     expect(res.body.obstacles).toEqual(['map0_0_obstacle']);
     expect(res.body.channels).toEqual(['map0tocharge_unicom']);
     expect(res.body.needsChannel).toBe(false);
+    expect(consumeCopyAlignment).toHaveBeenCalledWith('verified');
     const rows = mapRepo.findByMowerSn(B).map(r => r.canonical_name).sort();
     expect(rows).toEqual(['map0', 'map0_0_obstacle', 'map0tocharge_unicom']);
     await new Promise(r => setTimeout(r, 0));
     const sent = vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0]);
-    expect(sent).toEqual(['sync_map']);
+    expect(sent).toEqual([]);
   });
 
   it('copy: eigen naam wint van de bron-alias', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB, name: 'Achtertuin' });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified', name: 'Achtertuin' });
     expect(res.body.map.mapName).toBe('Achtertuin');
+  });
+
+  it('copy: an unconfirmed native dock is refused before any DB mutation or push', async () => {
+    const before = mapRepo.findByMowerSn(B);
+    vi.mocked(withConfirmedCopyDocks).mockRejectedValueOnce(new Error('Dockbestanden spreken elkaar tegen'));
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('dock_unconfirmed');
+    expect(mapRepo.findByMowerSn(B)).toEqual(before);
+    expect(publishToExtended).not.toHaveBeenCalled();
   });
 
   it('copy: 409 offline, niets geschreven', async () => {
     vi.mocked(isDeviceOnline).mockReturnValue(false);
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('offline');
     expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
   });
 
   it('copy: 409 met refusal-reden als het plan weigert', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: { x: 50, y: 50 } });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'far' });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('too_far_from_dock');
     expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
@@ -197,15 +301,20 @@ describe('zone copy routes', () => {
 
   it('stock firmware: 409 unsupported_firmware op beide routes', async () => {
     fw.supported = false;
-    expect((await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: dockB })).body.reason).toBe('unsupported_firmware');
-    expect((await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB })).body.reason).toBe('unsupported_firmware');
+    expect((await request(server).post(url('/preview')).send({ canonical: 'map0', alignmentId: 'verified' })).body.reason).toBe('unsupported_firmware');
+    expect((await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' })).body.reason).toBe('unsupported_firmware');
   });
 });
 
 describe('toepassen op de maaier: status voor het dashboard', () => {
   const saved = { ...mapApplyTiming };
   let handlers: Array<(d: Record<string, unknown>) => void> = [];
-  const answer = (d: Record<string, unknown>) => { for (const h of handlers) h(d); };
+  const answer = async (d: Record<string, unknown>) => {
+    const [key, raw] = Object.entries(d)[0]; const command = key.replace(/_respond$/, '');
+    await vi.waitFor(() => expect(vi.mocked(publishToExtended).mock.calls.some(c => c[1][command])).toBe(true));
+    const params = vi.mocked(publishToExtended).mock.calls.map(c => c[1][command]).filter(Boolean).at(-1) as Record<string, unknown>;
+    for (const h of [...handlers]) h({ [key]: { ...(raw as object), operation_id: params?.operation_id } });
+  };
   const tick = () => new Promise(r => setTimeout(r, 5));
   const phases = () => vi.mocked(forwardToDashboard).mock.calls
     .filter(c => c[0] === B && (c[1] as Map<string, string>).has(PHASE_KEY))
@@ -217,6 +326,11 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     vi.mocked(isDeviceOnline).mockReturnValue(true);
     Object.assign(mapApplyTiming, { settleMinMs: 0, settleMaxMs: 50, pollMs: 1 });
     handlers = [];
+    ingestPositionTelemetry(B, { battery_state: 'CHARGING', rtk_fix_quality: 4, localization_state: 'RUNNING' });
+    vi.mocked(offExtendedResponse).mockImplementation((_sn, h) => { handlers = handlers.filter(x => x !== h); });
+    vi.mocked(publishToExtended).mockImplementation((_sn, command) => {
+      if (command.read_map_files) queueMicrotask(() => answer({ read_map_files_respond: snapshot() }));
+    });
     vi.mocked(onExtendedResponse).mockImplementation((_sn, h) => { handlers.push(h as (d: Record<string, unknown>) => void); });
     for (const sn of [A, B]) for (const m of mapRepo.findByMowerSn(sn)) mapRepo.deleteById(m.map_id);
     addRow(A, 'map0', 'work', square(0, 0), 'Grote tuin');
@@ -224,24 +338,63 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     addRow(B, 'map0tocharge_unicom', 'unicom', [dockB, { x: 0.3, y: -0.8 }]);
   });
   afterAll(() => { Object.assign(mapApplyTiming, saved); });
+  afterEach(async () => { await new Promise(r => setTimeout(r, 60)); });
 
   it('meldt syncing → regenerating → settling → klaar', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(200);
     await tick();
     expect(phases()).toEqual(['syncing']);
-    answer({ sync_map_respond: { result: 0 } });
+    await answer({ sync_map_respond: { result: 0 } });
     await tick();
-    expect(phases()).toEqual(['syncing', 'regenerating']);
-    answer({ regenerate_per_map_files_respond: { result: 0 } });
-    await tick(); await tick();
-    expect(phases()).toEqual(['syncing', 'regenerating', 'settling', '']);
+    await vi.waitFor(() => expect(phases()).toEqual(['syncing', 'regenerating']));
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); ingestPositionTelemetry(B, { error_status: 0 }); await tick(); await tick();
+    await vi.waitFor(() => expect(phases()).toEqual(['syncing', 'regenerating', 'settling', '']));
+  });
+
+  it('can install the first copied zone after all old channels have been deleted', async () => {
+    let reads = 0;
+    vi.mocked(publishToExtended).mockImplementation((_sn, command) => {
+      if (!command.read_map_files) return;
+      const data = snapshot();
+      if (reads++ === 0) {
+        data.csv_files = { 'map_info.json': csvFixture['map_info.json'] } as typeof csvFixture;
+        data.x3_csv_files = data.csv_files;
+      }
+      queueMicrotask(() => answer({ read_map_files_respond: data }));
+    });
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
+    await answer({ sync_map_respond: { result: 0 } });
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); ingestPositionTelemetry(B, { error_status: 0 });
+    await vi.waitFor(() => expect(phases().at(-1)).toBe(''));
+    expect(reads).toBe(2);
+    expect(isFrameUnvalidated(B)).toBe(false);
+  });
+
+  it('keeps navigation locked if sync reports a failed restart despite result zero', async () => {
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
+    await answer({ sync_map_respond: { result: 0, restart: false } });
+    await vi.waitFor(() => expect(phases().at(-1)).toBe('failed'));
+    expect(isFrameUnvalidated(B)).toBe(true);
+    expect(vi.mocked(publishToExtended).mock.calls.some(c => c[1].regenerate_per_map_files)).toBe(false);
+  });
+
+  it('blocks concurrent writes and keeps planner timeout failed with navigation locked', async () => {
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' }); await tick();
+    expect((await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' })).status).toBe(409);
+    await answer({ sync_map_respond: { result: 0 } }); await tick();
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await new Promise(r => setTimeout(r, 80));
+    const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
+    expect(last.get(ERROR_KEY)).toBe('planner_timeout'); expect(isFrameUnvalidated(B)).toBe(true);
   });
 
   it('een mislukte sync_map laat failed staan met de reden', async () => {
-    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     await tick();
-    answer({ sync_map_respond: { result: 1, error: 'download failed' } });
+    await answer({ sync_map_respond: { result: 1, error: 'download failed' } });
     await tick();
     const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
     expect(last.get(PHASE_KEY)).toBe('failed');
@@ -249,11 +402,11 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   });
 
   it('een mislukte regenerate laat failed staan met de reden', async () => {
-    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     await tick();
-    answer({ sync_map_respond: { result: 0 } });
+    await answer({ sync_map_respond: { result: 0 } });
     await tick();
-    answer({ regenerate_per_map_files_respond: { result: 1, error: 'map.pgm missing' } });
+    await answer({ regenerate_per_map_files_respond: { result: 1, error: 'map.pgm missing' } });
     await tick();
     const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
     expect(last.get(PHASE_KEY)).toBe('failed');
@@ -268,12 +421,12 @@ describe('POST /maps/:sn/apply — opnieuw op de maaier zetten na een mislukte p
     vi.mocked(isDeviceOnline).mockReturnValue(true);
   });
 
-  it('start de push opnieuw (sync_map)', async () => {
+  it('weigert device-write zonder verse dockmeting, zichtbaar als failed', async () => {
     const res = await request(server).post(`/api/dashboard/maps/${B}/apply`).send({});
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     await new Promise(r => setTimeout(r, 0));
-    expect(vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0])).toEqual(['sync_map']);
+    expect(publishToExtended).not.toHaveBeenCalled();
   });
 
   it('409 offline, geen push', async () => {
@@ -288,5 +441,23 @@ describe('POST /maps/:sn/apply — opnieuw op de maaier zetten na een mislukte p
     fw.supported = false;
     const res = await request(server).post(`/api/dashboard/maps/${B}/apply`).send({});
     expect(res.body.reason).toBe('unsupported_firmware');
+  });
+});
+
+describe('server-qualified measurement', () => {
+  it('refuses cached/Float data, accepts eight actual stable packets and binds the token to coordinates', async () => {
+    fw.supported = true; vi.mocked(isDeviceOnline).mockReturnValue(true);
+    for (const m of mapRepo.findByMowerSn(B)) mapRepo.deleteById(m.map_id);
+    addRow(B, 'map0tocharge_unicom', 'unicom', [dockB, { x: 0.3, y: -0.8 }]);
+    const endpoint = `/api/dashboard/maps/${B}/measurement`;
+    expect((await request(server).get(endpoint)).status).toBe(409);
+    for (let i = 0; i < 8; i++) ingestPositionTelemetry(B, { rtk_fix_quality: 4, localization_state: 'RUNNING', map_position_x: 2, map_position_y: 3 }, Date.now() - 8000 + i * 1000);
+    const result = await request(server).get(endpoint);
+    expect(result.status).toBe(200); expect(result.body.sampleCount).toBe(8);
+    expect((await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: { x: 5, y: 6 }, measurementId: result.body.measurementId })).status).toBe(409);
+    for (const m of mapRepo.findByMowerSn(B)) mapRepo.deleteById(m.map_id);
+    expect((await request(server).get(endpoint)).status).toBe(200);
+    ingestPositionTelemetry(B, { rtk_fix_quality: 5 });
+    expect((await request(server).get(endpoint)).status).toBe(409);
   });
 });

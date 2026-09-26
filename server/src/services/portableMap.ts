@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import archiver from 'archiver';
 import { PassThrough } from 'node:stream';
 import unzipper from 'unzipper';
+import { mowerFilesManifest, type SnapshotMetadata } from './portableSnapshot.js';
+import { gridLocalToGps } from '../mqtt/mapConverter.js';
 
 export interface XY {
   x: number;
@@ -57,6 +59,8 @@ export interface ExportInput {
    * filename (e.g. `map0_work.csv`, `map_info.json`, etc). Restoring these
    * back to disk on the same mower preserves exact firmware state. */
   csvFilesRaw?: Record<string, string>;
+  x3CsvFilesRaw?: Record<string, string>;
+  snapshot?: SnapshotMetadata;
   /** Verbatim contents of /userdata/lfi/charging_station_file/charging_station.yaml
    * at export time. Single line: `charging_pose: [x, y, theta]`. */
   chargingStationYaml?: string;
@@ -71,7 +75,6 @@ export interface ExportInput {
 }
 
 const SCHEMA_VERSION = 1;
-const METERS_PER_DEG = 111320;
 
 function polygonAreaM2(pts: XY[]): number {
   if (pts.length < 3) return 0;
@@ -95,23 +98,19 @@ function bounds(pts: XY[]) {
   return { minX, maxX, minY, maxY };
 }
 
-function localToGps(p: XY, originLat: number, originLng: number): [number, number] {
-  // Inverse of gpsToLocal with theta=0 (charger-relative bundle frame).
-  const cosLat = Math.cos((originLat * Math.PI) / 180);
-  const lng = originLng + p.x / (cosLat * METERS_PER_DEG);
-  const lat = originLat + p.y / METERS_PER_DEG;
-  return [lng, lat];
-}
-
 function buildGeoJson(
   features: Array<{ name: string; type: 'Polygon' | 'LineString'; pts: XY[] }>,
   originLat: number,
   originLng: number,
+  anchor: XY,
 ): unknown {
   return {
     type: 'FeatureCollection',
     features: features.map((f) => {
-      const ring = f.pts.map((p) => localToGps(p, originLat, originLng));
+      const ring = f.pts.map((p) => {
+        const gps = gridLocalToGps({ x: p.x - anchor.x, y: p.y - anchor.y }, { lat: originLat, lng: originLng });
+        return [gps.lng, gps.lat];
+      });
       if (f.type === 'Polygon') {
         ring.push(ring[0]);
         return {
@@ -169,6 +168,8 @@ export async function exportBundle(input: ExportInput): Promise<Buffer> {
 
   const metadata = {
     schemaVersion: SCHEMA_VERSION,
+    ...(input.snapshot ? { snapshot: input.snapshot } : {}),
+    ...(input.x3CsvFilesRaw !== undefined ? { x3CsvDirectoryPresent: true } : {}),
     exportedAt: new Date().toISOString(),
     sourceSn: input.sn,
     sourceCharger: {
@@ -197,16 +198,19 @@ export async function exportBundle(input: ExportInput): Promise<Buffer> {
     input.workMaps.map((m) => ({ name: m.alias, type: 'Polygon' as const, pts: m.points })),
     input.chargerLat,
     input.chargerLng,
+    input.chargingPose,
   );
   const obsGeo = buildGeoJson(
     input.obstacles.map((o) => ({ name: o.alias, type: 'Polygon' as const, pts: o.points })),
     input.chargerLat,
     input.chargerLng,
+    input.chargingPose,
   );
   const uniGeo = buildGeoJson(
     input.unicom.map((u) => ({ name: u.targetMapName, type: 'LineString' as const, pts: u.points })),
     input.chargerLat,
     input.chargerLng,
+    input.chargingPose,
   );
 
   return await new Promise<Buffer>((resolve, reject) => {
@@ -235,6 +239,11 @@ export async function exportBundle(input: ExportInput): Promise<Buffer> {
     if (input.csvFilesRaw) {
       for (const [fname, content] of Object.entries(input.csvFilesRaw)) {
         archive.append(content, { name: `mower/csv_file/${fname}` });
+      }
+    }
+    if (input.x3CsvFilesRaw) {
+      for (const [fname, content] of Object.entries(input.x3CsvFilesRaw)) {
+        archive.append(content, { name: `mower/x3_csv_file/${fname}` });
       }
     }
     if (input.chargingStationYaml) {
@@ -277,6 +286,7 @@ export class BundleValidationError extends Error {
 
 export interface ParsedBundle {
   metadata: {
+    snapshot?: SnapshotMetadata;
     schemaVersion: number;
     exportedAt: string;
     sourceSn: string;
@@ -299,6 +309,7 @@ export interface ParsedBundle {
    * without these fall back to DB-reconstructed CSVs. */
   mowerFiles?: {
     csvFiles: Record<string, string>;
+    x3CsvFiles?: Record<string, string>;
     chargingStationYaml: string | null;
     /** /userdata/pos.json content — UTM origin anchor. Absent on
      * pre-2026-05-13 bundles. */
@@ -429,6 +440,7 @@ export async function parseBundle(buf: Buffer): Promise<ParsedBundle> {
   // these; downstream import handles the absence by falling back to
   // DB-reconstructed CSVs.
   const csvFiles: Record<string, string> = {};
+  const x3CsvFiles: Record<string, string> = {};
   let chargingStationYaml: string | null = null;
   let posJson: string | null = null;
   const mapFilesText: Record<string, string> = {};
@@ -437,6 +449,9 @@ export async function parseBundle(buf: Buffer): Promise<ParsedBundle> {
     if (path.startsWith('mower/csv_file/')) {
       const fname = path.slice('mower/csv_file/'.length);
       if (fname && !fname.includes('/')) csvFiles[fname] = content;
+    } else if (path.startsWith('mower/x3_csv_file/')) {
+      const fname = path.slice('mower/x3_csv_file/'.length);
+      if (fname && !fname.includes('/')) x3CsvFiles[fname] = content;
     } else if (path === 'mower/charging_station.yaml') {
       chargingStationYaml = content;
     } else if (path === 'mower/pos.json') {
@@ -459,8 +474,19 @@ export async function parseBundle(buf: Buffer): Promise<ParsedBundle> {
     Object.keys(mapFilesText).length > 0 ||
     Object.keys(mapFilesB64).length > 0;
   const mowerFiles = hasAnyMowerFile
-    ? { csvFiles, chargingStationYaml, posJson, mapFilesText, mapFilesB64 }
+    ? { csvFiles, ...(Object.keys(x3CsvFiles).length || metaRaw.x3CsvDirectoryPresent === true ? { x3CsvFiles } : {}), chargingStationYaml, posJson, mapFilesText, mapFilesB64 }
     : undefined;
+
+  // Existing bundles have no manifest. Preserve compatibility without claiming
+  // their capture was verified; a present manifest, however, must match exactly.
+  const snapshot = metaRaw.snapshot as SnapshotMetadata | undefined;
+  if (snapshot) {
+    const actual = mowerFiles ? mowerFilesManifest(mowerFiles) : {};
+    if (!snapshot.files || Object.keys(actual).length !== Object.keys(snapshot.files).length
+      || Object.entries(actual).some(([name, hash]) => snapshot.files[name] !== hash)) {
+      throw new BundleValidationError('snapshot manifest does not match mower files');
+    }
+  }
 
   return {
     metadata: metaRaw as ParsedBundle['metadata'],

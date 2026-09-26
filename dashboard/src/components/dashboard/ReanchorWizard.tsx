@@ -86,9 +86,9 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
   const startDock = useCallback(async () => {
     setErr(null);
     try {
-      const r = await reanchorAction(sn, 'continue_dock');
+      const r = await reanchorAction(sn, 'verify');
       if (!r.ok) { setErr(r.error ?? t('reanchor.startFailed', 'Starten mislukt')); return; }
-      setStatus(s => (s ? { ...s, phase: 'dock', msgKey: 'reanchorMsgDock', message: '' } : s));
+      setStatus(s => (s ? { ...s, phase: 'verify', msgKey: 'reanchorMsgVerify', message: '' } : s));
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('reanchor.startFailed', 'Starten mislukt'));
     }
@@ -153,11 +153,11 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
       ) : status?.phase === 'needs_position' ? (
         <>
           <span className="text-sm text-amber-300 font-semibold">{liveMessage(status)}</span>
-          <p className="text-xs text-gray-300">{t('reanchor.needsPositionHint', 'Rij de maaier recht voor de dock op ~50 cm en druk op "Start docken".')}</p>
+          <p className="text-xs text-gray-300">{t('reanchor.returnToDockHint', 'Rij met de joystick terug op het dock en druk op Verifieer.')}</p>
           {StatusBlock}
           {err && <span className="text-xs text-red-400 font-semibold">{err}</span>}
           <ManualControlPanel sn={sn} online={online} sensors={sensors} />
-          <WizardButton label={t('reanchor.btnDock', 'Start docken')} onClick={startDock} />
+          <WizardButton label={t('reanchor.btnVerify', 'Verifieer')} onClick={startDock} />
           <WizardButton label={t('reanchor.btnLater', 'Later')} onClick={onClose} secondary />
         </>
       ) : running || phaseRunning ? (
@@ -166,7 +166,7 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
             <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
             <span className="text-sm text-gray-200 flex-1">{liveMessage(status)}</span>
           </div>
-          <p className="text-[11px] text-gray-500">{t('reanchor.runningHint', 'De maaier rijdt zelf; houd hem in de gaten.')}</p>
+          <p className="text-[11px] text-gray-500">{t('reanchor.waitingHint', 'Wacht op de controle. Rijden gebeurt met de joystick onder toezicht.')}</p>
         </>
       ) : status?.phase === 'done' && status.ok ? (
         <div className="flex items-center gap-2">
@@ -183,12 +183,12 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
           {StatusBlock}
           <ManualControlPanel sn={sn} online={online} sensors={sensors} />
           <WizardButton label={t('reanchor.btnVerify', 'Verifieer')} onClick={verifyManual} disabled={!canVerify} />
-          <WizardButton label={t('reanchor.btnRetryAuto', 'Opnieuw automatisch')} onClick={startAuto} disabled={!canStart} secondary />
+          <WizardButton label={t('reanchor.btnRetryAuto', 'Opnieuw proberen')} onClick={startAuto} disabled={!canStart} secondary />
           <WizardButton label={t('reanchor.btnLater', 'Later')} onClick={onClose} secondary />
         </>
       ) : (
         <>
-          <p className="text-sm text-gray-300">{t('reanchor.idleIntro', 'Na een restore moet het kaartframe opnieuw worden verankerd op de dock. Eén knop doet de hele reeks.')}</p>
+          <p className="text-sm text-gray-300">{t('reanchor.idleIntro', 'Zet de maaier op het onverplaatste dock en wacht op RTK Fixed. Start het herankeren en volg de stappen met de joystick, terwijl je bij de maaier staat.')}</p>
           {StatusBlock}
           {err && <span className="text-xs text-red-400 font-semibold">{err}</span>}
           {canStart ? (

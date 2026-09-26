@@ -10,10 +10,45 @@
 import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
-  "Achteruit rijden om te re-locken...": {
-    en: "Reversing to re-lock...",
-    fr: "Marche arrière pour se reverrouiller...",
-    de: "Rückwärtsfahrt zum erneuten Einrasten...",
+  "Wachten op acht verse, stabiele Fixed-metingen op het dock.": {
+    en: "Waiting for eight fresh, stable Fixed readings on the dock.",
+    fr: "Attente de huit mesures Fixed fraîches et stables sur la station.",
+    de: "Warten auf acht neue, stabile Fixed-Messungen auf der Ladestation.",
+  },
+  "Rij onder toezicht met de joystick ongeveer één meter van het dock. Wacht op verse RUNNING + RTK Fixed.": {
+    en: "Under supervision, use the joystick to drive about one metre away from the dock. Wait for fresh RUNNING + RTK Fixed.",
+    fr: "Sous surveillance, éloignez la tondeuse d’environ un mètre avec le joystick. Attendez de nouvelles données RUNNING + RTK Fixed.",
+    de: "Fahren Sie unter Aufsicht mit dem Joystick etwa einen Meter von der Ladestation weg. Warten Sie auf neue RUNNING + RTK Fixed-Daten.",
+  },
+  "Lokalisatie hersteld. Rij met de joystick terug op het dock en druk op Verifieer.": {
+    en: "Localization restored. Return onto the dock using the joystick and press Verify.",
+    fr: "Localisation rétablie. Revenez sur la station avec le joystick et appuyez sur Vérifier.",
+    de: "Lokalisierung wiederhergestellt. Fahren Sie mit dem Joystick auf die Ladestation zurück und drücken Sie Prüfen.",
+  },
+  "Acht verse dockmetingen en de geladen oorsprong controleren.": {
+    en: "Checking eight fresh dock readings and the loaded origin.",
+    fr: "Vérification de huit nouvelles mesures sur la station et de l’origine chargée.",
+    de: "Acht neue Dockmessungen und den geladenen Ursprung prüfen.",
+  },
+  "Frame gecontroleerd: {0} m van het vaste dockanker.": {
+    en: "Frame verified: {0} m from the fixed dock anchor.",
+    fr: "Repère vérifié : {0} m du point fixe de la station.",
+    de: "Koordinatenrahmen geprüft: {0} m vom festen Dockanker.",
+  },
+  "{0}": {
+    en: "{0}",
+    fr: "{0}",
+    de: "{0}",
+  },
+  "Dockanker en maaierbestanden controleren.": {
+    en: "Checking the dock anchor and mower files.",
+    fr: "Vérification du point de référence de la station et des fichiers de la tondeuse.",
+    de: "Dockanker und Mäherdateien prüfen.",
+  },
+  "Zet de kaartverschuiving van beide maaiers op nul voordat je een zone kopieert.": {
+    en: "Set both mowers’ map offsets to zero before copying a zone.",
+    fr: "Remettez les décalages de carte des deux tondeuses à zéro avant de copier une zone.",
+    de: "Setzen Sie die Kartenverschiebungen beider Mäher auf null, bevor Sie eine Zone kopieren.",
   },
   "Alleen in de server/app-kopie geïmporteerd. De maaierbestanden zijn niet geschreven; maaien werkt alleen als deze kaarten al op de maaier staan.": {
     en: "Imported into the server/app copy only. Mower files were not written; mowing works only if these maps already exist on the mower.",
@@ -40,25 +75,10 @@ export const CATALOG: Catalog = {
     fr: "Appareil introuvable",
     de: "Gerät nicht gefunden",
   },
-  "Automatisch her-ankeren moet beginnen met de maaier op het dock (laden).": {
-    en: "auto re-anchor must start with the mower on the dock (charging).",
-    fr: "Le réancrage automatique doit commencer avec la tondeuse sur le dock (en charge).",
-    de: "Das automatische Neuverankern muss mit dem Mäher auf dem Dock (Laden) beginnen.",
-  },
-  "Automatisch her-ankeren vereist een echte RTK Fixed; wacht tot de fix Fixed is.": {
-    en: "auto re-anchor needs a real RTK Fixed; wait for the fix to go Fixed.",
-    fr: "Le réancrage automatique nécessite un vrai RTK Fixed ; attendez que le fix soit Fixed.",
-    de: "Das automatische Neuverankern erfordert ein echtes RTK Fixed; warten Sie, bis der Fix Fixed ist.",
-  },
   "Autonoom karteren": {
     en: "Autonomous mapping",
     fr: "La cartographie autonome",
     de: "Das autonome Kartieren",
-  },
-  "Backup heeft geen mapNtocharge_unicom, dus de laadpositie kan niet verankerd worden": {
-    en: "Backup has no mapNtocharge_unicom: cannot anchor charger pose",
-    fr: "La sauvegarde n'a pas de mapNtocharge_unicom : impossible d'ancrer la position de charge",
-    de: "Das Backup hat kein mapNtocharge_unicom: die Ladeposition kann nicht verankert werden",
   },
   "Batterijstatus is '{0}', niet CHARGING. Zet de maaier eerst op het dock, of POST met {\"force\": true} om dit te negeren.": {
     en: "Battery state is '{0}', not CHARGING. Put mower on dock first, or POST with {\"force\": true} to override.",
@@ -79,16 +99,6 @@ export const CATALOG: Catalog = {
     en: "Bluetooth not available on this server",
     fr: "Bluetooth n'est pas disponible sur ce serveur",
     de: "Bluetooth ist auf diesem Server nicht verfügbar",
-  },
-  "Buiten tolerantie: dock op ({0}, {1}) m, {2} m van origin.": {
-    en: "Out of tolerance: dock at ({0}, {1}) m, {2} m from origin.",
-    fr: "Hors tolérance : dock à ({0}, {1}) m, à {2} m de l'origine.",
-    de: "Außerhalb der Toleranz: Dock bei ({0}, {1}) m, {2} m vom Ursprung.",
-  },
-  "Buiten tolerantie: dock op ({0}, {1}) m, {2} m van origin. Probeer opnieuw.": {
-    en: "Out of tolerance: dock at ({0}, {1}) m, {2} m from origin. Try again.",
-    fr: "Hors tolérance : dock à ({0}, {1}) m, à {2} m de l'origine. Réessayez.",
-    de: "Außerhalb der Toleranz: Dock bei ({0}, {1}) m, {2} m vom Ursprung. Versuchen Sie es erneut.",
   },
   "Camera gaf een leeg frame": {
     en: "Camera returned an empty frame",
@@ -115,16 +125,6 @@ export const CATALOG: Catalog = {
     fr: "Échec de la resynchronisation cloud",
     de: "Cloud-Resync fehlgeschlagen",
   },
-  "Controle: gedockt op de origin?": {
-    en: "Check: docked on the origin?",
-    fr: "Vérification : amarrée sur l'origine ?",
-    de: "Prüfung: am Ursprung angedockt?",
-  },
-  "Controle: maaier op de dock en RTK Fixed?": {
-    en: "Check: mower on the dock and RTK Fixed?",
-    fr: "Vérification : tondeuse sur le dock et RTK Fixed ?",
-    de: "Prüfung: Mäher auf dem Dock und RTK Fixed?",
-  },
   "De coverage-planner radius": {
     en: "The coverage planner radius",
     fr: "Le rayon du planificateur de couverture",
@@ -150,11 +150,6 @@ export const CATALOG: Catalog = {
     fr: "La tondeuse n'a pas répondu (délai dépassé)",
     de: "Der Mäher hat nicht geantwortet (Zeitüberschreitung)",
   },
-  "De maaier antwoordde niet binnen 30 s; de synchronisatie kan op de achtergrond nog afronden": {
-    en: "Mower did not respond within 30s; sync may still complete in background",
-    fr: "La tondeuse n'a pas répondu dans les 30 s ; la synchronisation peut encore se terminer en arrière-plan",
-    de: "Der Mäher hat nicht innerhalb von 30 s geantwortet; die Synchronisierung kann im Hintergrund noch abgeschlossen werden",
-  },
   "De maaier antwoordde niet binnen 8 s": {
     en: "Mower did not respond within 8s",
     fr: "La tondeuse n'a pas répondu dans les 8 s",
@@ -164,11 +159,6 @@ export const CATALOG: Catalog = {
     en: "The mower did not respond to the delete command: {0}",
     fr: "La tondeuse n'a pas répondu à la commande de suppression : {0}",
     de: "Der Mäher hat nicht auf den Löschbefehl geantwortet: {0}",
-  },
-  "De maaier bevestigde de nieuwe dockpositie niet op tijd. Probeer opnieuw.": {
-    en: "The mower did not confirm the new dock position in time. Try again.",
-    fr: "La tondeuse n'a pas confirmé la nouvelle position du dock à temps. Réessayez.",
-    de: "Der Mäher hat die neue Dockposition nicht rechtzeitig bestätigt. Versuchen Sie es erneut.",
   },
   "De maaier gaf een leeg preview-pad terug": {
     en: "mower returned an empty preview path",
@@ -210,11 +200,6 @@ export const CATALOG: Catalog = {
     fr: "Le serveur fonctionne. Connectez-vous avec l'application OpenNova.",
     de: "Der Server läuft. Verbinden Sie sich mit der OpenNova-App.",
   },
-  "De serverstatus is al hersteld; de maaier neemt het over bij de volgende sync_map": {
-    en: "Server-side state already restored; the mower will pick it up on the next sync_map",
-    fr: "L'état côté serveur est déjà restauré ; la tondeuse le reprendra au prochain sync_map",
-    de: "Der serverseitige Zustand ist bereits wiederhergestellt; der Mäher übernimmt ihn beim nächsten sync_map",
-  },
   "De verschuiving mag per as hoogstens {0} m zijn": {
     en: "Offset magnitude must be ≤ {0} m per axis",
     fr: "Le décalage doit être au maximum de {0} m par axe",
@@ -229,26 +214,6 @@ export const CATALOG: Catalog = {
     en: "This is the channel from the zone to the charging station. The mower writes it itself when the charge position is saved and every other polygon is anchored to its first point, so it cannot be deleted. If the charging station moved, use Recalibrate charging pose or Re-anchor instead.",
     fr: "Il s'agit du canal entre la zone et la station de charge. La tondeuse l'écrit elle-même lorsque la position de charge est enregistrée et tous les autres polygones sont ancrés à son premier point, il ne peut donc pas être supprimé. Si la station de charge a été déplacée, utilisez plutôt Recalibrer la position de charge ou Réancrer.",
     de: "Dies ist der Kanal von der Zone zur Ladestation. Der Mäher schreibt ihn selbst, wenn die Ladeposition gespeichert wird, und jedes andere Polygon ist an seinem ersten Punkt verankert, daher kann er nicht gelöscht werden. Wurde die Ladestation versetzt, verwenden Sie stattdessen Ladeposition neu kalibrieren oder Neu verankern.",
-  },
-  "Docken (visuele ArUco)...": {
-    en: "Docking (visual ArUco)...",
-    fr: "Amarrage (ArUco visuel)...",
-    de: "Andocken (visuelles ArUco)...",
-  },
-  "Docken duurde te lang. Dok handmatig met de joystick en druk Verifieer.": {
-    en: "Docking took too long. Dock manually with the joystick and press Verify.",
-    fr: "L'amarrage a pris trop de temps. Amarrez manuellement avec le joystick et appuyez sur Vérifier.",
-    de: "Das Andocken hat zu lange gedauert. Docken Sie manuell mit dem Joystick an und drücken Sie Überprüfen.",
-  },
-  "Dockpositie opslaan (poging {0})...": {
-    en: "Saving dock position (attempt {0})...",
-    fr: "Enregistrement de la position du dock (tentative {0})...",
-    de: "Dockposition wird gespeichert (Versuch {0})...",
-  },
-  "Dockpositie opslaan...": {
-    en: "Saving dock position...",
-    fr: "Enregistrement de la position du dock...",
-    de: "Dockposition wird gespeichert...",
   },
   "Download mislukt": {
     en: "Download failed",
@@ -340,20 +305,10 @@ export const CATALOG: Catalog = {
     fr: "Aucune URL de téléchargement configurée pour cette version",
     de: "Keine Download-URL für diese Version konfiguriert",
   },
-  "Geen geldige GPS-coordinaten van de maaier.": {
-    en: "No valid GPS coordinates from the mower.",
-    fr: "Aucune coordonnée GPS valide de la tondeuse.",
-    de: "Keine gültigen GPS-Koordinaten vom Mäher.",
-  },
   "Geen kaarten gevonden voor dit apparaat": {
     en: "No maps found for this device",
     fr: "Aucune carte trouvée pour cet appareil",
     de: "Keine Karten für dieses Gerät gefunden",
-  },
-  "Geen kaartgegevens gevonden voor deze maaier: breng het gebied eerst in kaart.": {
-    en: "No map data found for this mower: map the area first.",
-    fr: "Aucune donnée de carte trouvée pour cette tondeuse : cartographiez d'abord la zone.",
-    de: "Keine Kartendaten für diesen Mäher gefunden: Kartieren Sie zuerst den Bereich.",
   },
   "Geen lokale gebruiker met dat e-mailadres: voer eerst /admin/import uit.": {
     en: "No local user with that email: run /admin/import first.",
@@ -374,16 +329,6 @@ export const CATALOG: Catalog = {
     en: "preview generation failed",
     fr: "Échec de la génération de l'aperçu",
     de: "Erstellen der Vorschau fehlgeschlagen",
-  },
-  "Geslaagd. Gedockt op ({0}, {1}) m.": {
-    en: "Succeeded. Docked at ({0}, {1}) m.",
-    fr: "Réussi. Amarrée à ({0}, {1}) m.",
-    de: "Erfolgreich. Angedockt bei ({0}, {1}) m.",
-  },
-  "Geweigerd: de te herstellen kaart is structureel kapot (losgekoppelde zones of inconsistente afmetingen). De maaier is NIET aangeraakt.": {
-    en: "Refused: the map to restore is structurally broken (disconnected zones or inconsistent dimensions). The mower was NOT touched.",
-    fr: "Refusé : la carte à restaurer est structurellement cassée (zones déconnectées ou dimensions incohérentes). La tondeuse n'a PAS été modifiée.",
-    de: "Abgelehnt: die wiederherzustellende Karte ist strukturell defekt (getrennte Zonen oder inkonsistente Abmessungen). Der Mäher wurde NICHT verändert.",
   },
   "Grootte komt niet overeen: verwacht {0}, gekregen {1}": {
     en: "Size mismatch: expected {0}, got {1}",
@@ -419,11 +364,6 @@ export const CATALOG: Catalog = {
     en: "The extended command {0}",
     fr: "La commande étendue {0}",
     de: "Der erweiterte Befehl {0}",
-  },
-  "Het frame is al gevalideerd; her-ankeren is niet nodig": {
-    en: "frame is already validated; no re-anchor needed",
-    fr: "Le repère est déjà validé ; aucun réancrage nécessaire",
-    de: "Der Bezugsrahmen ist bereits validiert; Neuverankern ist nicht nötig",
   },
   "Het laadstation antwoordde niet (time-out)": {
     en: "Charger did not respond (timeout)",
@@ -479,11 +419,6 @@ export const CATALOG: Catalog = {
     en: "Applying map changes requires OpenNova custom firmware. On stock firmware, use \"Edit map\" in the app.",
     fr: "L'application des modifications de carte nécessite le firmware personnalisé OpenNova. Avec le firmware d'origine, utilisez « Modifier la carte » dans l'application.",
     de: "Das Anwenden von Kartenänderungen erfordert die OpenNova Custom-Firmware. Verwenden Sie bei der Standard-Firmware „Karte bearbeiten“ in der App.",
-  },
-  "Kon <SN>_latest.zip niet opnieuw genereren": {
-    en: "Failed to regenerate <SN>_latest.zip",
-    fr: "Impossible de régénérer <SN>_latest.zip",
-    de: "<SN>_latest.zip konnte nicht neu erzeugt werden",
   },
   "Kon ZIP niet parsen": {
     en: "Could not parse ZIP",
@@ -560,45 +495,10 @@ export const CATALOG: Catalog = {
     fr: "Tondeuse introuvable dans les équipements",
     de: "Mäher nicht in den Geräten gefunden",
   },
-  "Maaier offline: sync_map kan niet draaien": {
-    en: "Mower offline: sync_map cannot run",
-    fr: "Tondeuse hors ligne : sync_map ne peut pas s'exécuter",
-    de: "Mäher offline: sync_map kann nicht ausgeführt werden",
-  },
-  "Maaier offline: sync_map niet verstuurd; de maaier neemt de verschuiving over bij de volgende verbinding": {
-    en: "Mower offline: sync_map not pushed; mower will pick up offset on next reconnect",
-    fr: "Tondeuse hors ligne : sync_map non envoyé ; la tondeuse appliquera le décalage à la prochaine connexion",
-    de: "Mäher offline: sync_map nicht gesendet; der Mäher übernimmt die Verschiebung bei der nächsten Verbindung",
-  },
   "Maaier offline: verwijderen vereist een online maaier, zodat die de kaart van zijn schijf kan wissen": {
     en: "mower offline: delete needs an online mower so it can wipe the map from disk",
     fr: "Tondeuse hors ligne : la suppression nécessite une tondeuse en ligne pour effacer la carte de son disque",
     de: "Mäher offline: Zum Löschen muss der Mäher online sein, damit er die Karte von seinem Speicher löschen kann",
-  },
-  "Maaier reageerde niet binnen 30 s; de synchronisatie kan op de achtergrond nog afronden": {
-    en: "Mower did not respond within 30s; sync may still complete in the background",
-    fr: "La tondeuse n'a pas répondu en 30 s ; la synchronisation peut encore se terminer en arrière-plan",
-    de: "Der Mäher hat nicht innerhalb von 30 s geantwortet; die Synchronisierung kann im Hintergrund noch abgeschlossen werden",
-  },
-  "Maaier reageerde niet binnen 8 s": {
-    en: "Mower did not respond within 8s",
-    fr: "La tondeuse n'a pas répondu en 8 s",
-    de: "Der Mäher hat nicht innerhalb von 8 s geantwortet",
-  },
-  "Maaier staat niet op de dock (laden). Dok hem eerst, dan opnieuw.": {
-    en: "Mower is not on the dock (charging). Dock it first, then try again.",
-    fr: "La tondeuse n'est pas sur le dock (en charge). Placez-la d'abord sur le dock, puis réessayez.",
-    de: "Der Mäher steht nicht auf dem Dock (Laden). Docken Sie ihn zuerst an und versuchen Sie es dann erneut.",
-  },
-  "Maaier staat niet op de dock. Dok hem eerst.": {
-    en: "Mower is not on the dock. Dock it first.",
-    fr: "La tondeuse n'est pas sur le dock. Placez-la d'abord sur le dock.",
-    de: "Der Mäher steht nicht auf dem Dock. Docken Sie ihn zuerst an.",
-  },
-  "Maaier-GPS niet gemeld: wacht tot de maaier online is, op het dock staat en RTK FIX heeft": {
-    en: "Mower GPS not reported: wait for the mower to be online, on the dock and at RTK FIX",
-    fr: "GPS de la tondeuse non signalé : attendez que la tondeuse soit en ligne, sur le dock et en RTK FIX",
-    de: "Mäher-GPS nicht gemeldet: warten Sie, bis der Mäher online ist, im Dock steht und RTK FIX hat",
   },
   "Manifest ophalen mislukt": {
     en: "Failed to fetch manifest",
@@ -614,21 +514,6 @@ export const CATALOG: Catalog = {
     en: "New drawings are only possible as an obstacle with parentMap",
     fr: "Un nouveau tracé n'est possible que comme obstacle avec parentMap",
     de: "Neu zeichnen ist nur als Hindernis mit parentMap möglich",
-  },
-  "Nog geen RTK Fixed. Wacht tot de fix Fixed is en probeer opnieuw.": {
-    en: "No RTK Fixed yet. Wait until the fix is Fixed and try again.",
-    fr: "Pas encore de RTK Fixed. Attendez que le fix soit Fixed et réessayez.",
-    de: "Noch kein RTK Fixed. Warten Sie, bis der Fix Fixed ist, und versuchen Sie es erneut.",
-  },
-  "Nog niet gelockt. Rij met de joystick nog ~1 m recht achteruit; ik ga automatisch verder zodra de localisatie lockt.": {
-    en: "Not locked yet. Drive straight back another ~1 m with the joystick; I will continue automatically as soon as localization locks.",
-    fr: "Pas encore verrouillé. Reculez encore de ~1 m en ligne droite avec le joystick ; je continuerai automatiquement dès que la localisation sera verrouillée.",
-    de: "Noch nicht eingerastet. Fahren Sie mit dem Joystick noch ~1 m gerade rückwärts; es geht automatisch weiter, sobald die Lokalisierung einrastet.",
-  },
-  "Nog steeds geen lock na extra achteruit rijden. Rij handmatig met de joystick terug naar de dock en start de automatische re-anchor opnieuw.": {
-    en: "Still no lock after extra reversing. Drive back to the dock manually with the joystick and start the automatic re-anchor again.",
-    fr: "Toujours pas de verrouillage après la marche arrière supplémentaire. Ramenez la tondeuse au dock manuellement avec le joystick et relancez le réancrage automatique.",
-    de: "Immer noch nicht eingerastet nach zusätzlicher Rückwärtsfahrt. Fahren Sie manuell mit dem Joystick zurück zum Dock und starten Sie die automatische Neuverankerung erneut.",
   },
   "OTA versie niet gevonden": {
     en: "OTA version not found",
@@ -665,11 +550,6 @@ export const CATALOG: Catalog = {
     fr: "Rôle non valide. Valides : {0}",
     de: "Ungültige Rolle. Gültig: {0}",
   },
-  "Onverwachte fout: {0}": {
-    en: "Unexpected error: {0}",
-    fr: "Erreur inattendue : {0}",
-    de: "Unerwarteter Fehler: {0}",
-  },
   "Ophalen van het preview-pad duurde te lang (15 s): de kaart is misschien groot of traag, of de maaier gaf het pad niet op tijd terug": {
     en: "preview path fetch timed out (15s): the map may be large/slow to serialise, or the mower did not return the path in time",
     fr: "La récupération du trajet d'aperçu a expiré (15 s) : la carte est peut-être grande ou lente, ou la tondeuse n'a pas renvoyé le trajet à temps",
@@ -705,40 +585,15 @@ export const CATALOG: Catalog = {
     fr: "Un provisionnement est déjà en cours",
     de: "Die Einrichtung läuft bereits",
   },
-  "RTK FIX niet bereikt na {0} s wachten (loc_quality={1})": {
-    en: "RTK FIX never reached after {0}s wait (loc_quality={1})",
-    fr: "RTK FIX non atteint après {0} s d'attente (loc_quality={1})",
-    de: "RTK FIX nach {0} s Wartezeit nicht erreicht (loc_quality={1})",
-  },
   "RTK FIX vereist op het dock: loc_quality={0}": {
     en: "RTK FIX required at dock: loc_quality={0}",
     fr: "RTK FIX requis sur le dock : loc_quality={0}",
     de: "RTK FIX im Dock erforderlich: loc_quality={0}",
   },
-  "RTK te onrustig op de dock (zwabbert ±{0} cm). Wacht op een rustige Fixed en probeer opnieuw.": {
-    en: "RTK too unstable on the dock (wobbling ±{0} cm). Wait for a steady Fixed and try again.",
-    fr: "RTK trop instable sur le dock (oscille de ±{0} cm). Attendez un Fixed stable et réessayez.",
-    de: "RTK auf dem Dock zu unruhig (schwankt ±{0} cm). Warten Sie auf ein ruhiges Fixed und versuchen Sie es erneut.",
-  },
   "Randmaaien op schemadagen": {
     en: "Edge cutting on schedule days",
     fr: "La coupe des bordures les jours planifiés",
     de: "Das Kantenmähen an geplanten Tagen",
-  },
-  "Re-anchor gestart...": {
-    en: "Re-anchor started...",
-    fr: "Réancrage démarré...",
-    de: "Neuverankerung gestartet...",
-  },
-  "Re-lock gelukt. Rij de maaier nu zelf recht voor de dock, op ~50 cm afstand. Druk daarna op \"Start docken\".": {
-    en: "Re-lock succeeded. Now drive the mower yourself straight in front of the dock, about 50 cm away. Then press \"Start docking\".",
-    fr: "Reverrouillage réussi. Placez maintenant vous-même la tondeuse bien en face du dock, à environ 50 cm. Appuyez ensuite sur « Démarrer l'amarrage ».",
-    de: "Erneutes Einrasten erfolgreich. Fahren Sie den Mäher jetzt selbst gerade vor das Dock, etwa 50 cm entfernt. Drücken Sie dann auf „Andocken starten“.",
-  },
-  "Rijden moet beginnen met de maaier op het dock (laden). Rij hem eerst op het dock.": {
-    en: "drive must start with the mower on the dock (charging). Drive it onto the dock first.",
-    fr: "La conduite doit commencer avec la tondeuse sur le dock (en charge). Amenez-la d'abord sur le dock.",
-    de: "Die Fahrt muss mit dem Mäher auf dem Dock (Laden) beginnen. Fahren Sie ihn zuerst auf das Dock.",
   },
   "SHA256 komt niet overeen: verwacht {0}, gekregen {1}": {
     en: "SHA256 mismatch: expected {0}, got {1}",
@@ -764,16 +619,6 @@ export const CATALOG: Catalog = {
     en: "soft restart dispatched; the mower goes offline ~30-60s then returns",
     fr: "Redémarrage logiciel envoyé ; la tondeuse passe hors ligne ~30-60 s puis revient",
     de: "Soft-Neustart gesendet; der Mäher geht ~30-60 s offline und kommt dann zurück",
-  },
-  "Stabiliteit controleren op de dock (±{0} cm)...": {
-    en: "Checking stability on the dock (±{0} cm)...",
-    fr: "Vérification de la stabilité sur le dock (±{0} cm)...",
-    de: "Stabilität auf dem Dock wird geprüft (±{0} cm)...",
-  },
-  "Stabiliteit controleren op de dock...": {
-    en: "Checking stability on the dock...",
-    fr: "Vérification de la stabilité sur le dock...",
-    de: "Stabilität auf dem Dock wird geprüft...",
   },
   "Stock firmware heeft een rit van het dock en terug nodig voordat de lokalisatie geldig is. Zolang de maaier bij het opstarten gedockt staat, is map_position altijd nul.": {
     en: "Stock firmware needs a drive-back cycle before localization is valid. While docked at boot, map_position is always zero.",
@@ -805,25 +650,10 @@ export const CATALOG: Catalog = {
     fr: "Pose suspecte : x et y sont exactement égaux ({0}). Le firmware de la tondeuse signale une localisation erronée. Attendez une nouvelle mise à jour timer_data et réessayez.",
     de: "Verdächtige Pose: x und y sind exakt gleich ({0}). Die Firmware des Mähers meldet eine fehlerhafte Lokalisierung. Warten Sie auf ein neues timer_data-Update und versuchen Sie es erneut.",
   },
-  "Verifiëren moet gebeuren met de maaier terug op het dock.": {
-    en: "verify must run with the mower back on the dock.",
-    fr: "La vérification doit se faire avec la tondeuse de retour sur le dock.",
-    de: "Die Überprüfung muss mit dem Mäher zurück auf dem Dock erfolgen.",
-  },
-  "Verifiëren vereist eerst de her-ankercyclus: de maaier moet het dock hebben verlaten, RUNNING + RTK Fixed hebben bereikt en daarna opnieuw gedockt zijn.": {
-    en: "verify needs the re-anchor cycle first: the mower must have left the dock, reached RUNNING + RTK Fixed, then re-docked.",
-    fr: "La vérification nécessite d'abord le cycle de réancrage : la tondeuse doit avoir quitté le dock, atteint RUNNING + RTK Fixed, puis être revenue sur le dock.",
-    de: "Die Überprüfung erfordert zuerst den Neuverankerungszyklus: Der Mäher muss das Dock verlassen, RUNNING + RTK Fixed erreicht haben und danach wieder angedockt sein.",
-  },
   "Verschuiving groter dan {0} m: buiten ooit gescand gebied is het navigatiegedrag onbewezen": {
     en: "Displacement larger than {0} m: outside the area that was ever scanned, navigation behaviour is unproven",
     fr: "Déplacement supérieur à {0} m : hors de la zone déjà scannée, le comportement de navigation n'est pas éprouvé",
     de: "Verschiebung größer als {0} m: außerhalb des jemals gescannten Bereichs ist das Navigationsverhalten unerprobt",
-  },
-  "Wachten op re-lock (RUNNING + Fixed)...": {
-    en: "Waiting for re-lock (RUNNING + Fixed)...",
-    fr: "Attente du reverrouillage (RUNNING + Fixed)...",
-    de: "Warten auf erneutes Einrasten (RUNNING + Fixed)...",
   },
   "Weerdata ophalen mislukt": {
     en: "Weather fetch failed",
@@ -844,11 +674,6 @@ export const CATALOG: Catalog = {
     en: "device offline",
     fr: "appareil hors ligne",
     de: "Gerät offline",
-  },
-  "automatische her-dockreeks gestart: 1 m achteruit → stop → go_to_charge. Volg battery_state in /devices tot Charging.": {
-    en: "auto-redock sequence started: back 1m → stop → go_to_charge. Poll /devices for battery_state → Charging.",
-    fr: "séquence de ré-amarrage automatique lancée : 1 m en arrière → arrêt → go_to_charge. Suivez battery_state dans /devices jusqu'à Charging.",
-    de: "automatische Re-Dock-Sequenz gestartet: 1 m zurück → Stopp → go_to_charge. Verfolgen Sie battery_state in /devices bis Charging.",
   },
   "backup niet gevonden": {
     en: "backup not found",
@@ -899,21 +724,6 @@ export const CATALOG: Catalog = {
     en: "data (base64 ZIP) is required",
     fr: "data (ZIP en base64) est requis",
     de: "data (Base64-ZIP) ist erforderlich",
-  },
-  "de automatische modus vereist dat de maaier nu op het dock staat (laden). battery_state='{0}', recharge_status='{1}'": {
-    en: "auto mode requires mower currently on dock (charging). battery_state='{0}', recharge_status='{1}'",
-    fr: "le mode automatique exige que la tondeuse soit actuellement sur le dock (en charge). battery_state='{0}', recharge_status='{1}'",
-    de: "der Automatikmodus erfordert, dass der Mäher gerade im Dock steht (lädt). battery_state='{0}', recharge_status='{1}'",
-  },
-  "de bundel heeft geen mowerFiles: hij is geëxporteerd voordat de verbatim-functie bestond": {
-    en: "bundle has no mowerFiles: it was exported before the verbatim feature shipped",
-    fr: "le bundle n'a pas de mowerFiles : il a été exporté avant l'arrivée de la fonction verbatim",
-    de: "das Bundle hat keine mowerFiles: es wurde exportiert, bevor es die Verbatim-Funktion gab",
-  },
-  "de bundel is geëxporteerd van {0}, niet van {1}. De kaart is relatief aan het laadstation en pos.json blijft ongemoeid, dus dit is meestal veilig (de dock-cyclus verankert het frame opnieuw). Geef force=1 mee om te bevestigen.": {
-    en: "bundle was exported from {0}, not {1}. The map is charger-relative and pos.json is left untouched, so this is generally safe (the dock-cycle re-anchors the frame). Pass force=1 to confirm.",
-    fr: "le bundle a été exporté depuis {0}, pas {1}. La carte est relative à la station de charge et pos.json n'est pas modifié, c'est donc généralement sans risque (le cycle de dock réancre le repère). Passez force=1 pour confirmer.",
-    de: "das Bundle wurde von {0} exportiert, nicht von {1}. Die Karte ist relativ zur Ladestation und pos.json bleibt unverändert, daher ist dies in der Regel sicher (der Dock-Zyklus verankert den Rahmen neu). Übergeben Sie force=1 zur Bestätigung.",
   },
   "de fabriekstabel met MAC-prefixen is leeg, dus apparaten zijn niet te herkennen": {
     en: "the factory table with MAC prefixes is empty, so devices cannot be recognised",
@@ -990,11 +800,6 @@ export const CATALOG: Catalog = {
     fr: "pas de GPS dans le cache des capteurs",
     de: "kein GPS im Sensor-Cache",
   },
-  "geen GPS voor start_pose": {
-    en: "no GPS for start_pose",
-    fr: "pas de GPS pour start_pose",
-    de: "kein GPS für start_pose",
-  },
   "geen JPEG of PNG": {
     en: "not a JPEG or PNG",
     fr: "ce n'est pas un JPEG ni un PNG",
@@ -1019,11 +824,6 @@ export const CATALOG: Catalog = {
     en: "no maps",
     fr: "aucune carte",
     de: "keine Karten",
-  },
-  "geen laadstation-anker in de database: eerst sync_map": {
-    en: "no charger anchor in DB: sync_map first",
-    fr: "aucune ancre de station de charge dans la base : faites d'abord sync_map",
-    de: "kein Ladestations-Anker in der Datenbank: zuerst sync_map",
   },
   "geen live map_position in de sensorcache; is de maaier online en gedockt?": {
     en: "no live map_position in sensor cache; is the mower online and docked?",
@@ -1064,16 +864,6 @@ export const CATALOG: Catalog = {
     en: "no terrain for this mower",
     fr: "aucun terrain pour cette tondeuse",
     de: "kein Gelände für diesen Mäher",
-  },
-  "geen werkpolygoon": {
-    en: "no work polygon",
-    fr: "aucun polygone de travail",
-    de: "kein Arbeitspolygon",
-  },
-  "gereden afstand {0} m ligt onder de drempel van 0,3 m": {
-    en: "drive distance {0}m below 0.3m threshold",
-    fr: "distance parcourue de {0} m inférieure au seuil de 0,3 m",
-    de: "gefahrene Strecke {0} m liegt unter der Schwelle von 0,3 m",
   },
   "get_map_list gestuurd naar {0}": {
     en: "get_map_list sent to {0}",
@@ -1335,10 +1125,10 @@ export const CATALOG: Catalog = {
     fr: "Copier une zone",
     de: "Eine Zone kopieren",
   },
-  "Het dockkanaal zou door een obstakel lopen; verwijder dat obstakel na het kopiëren of kies een andere zone.": {
-    en: "The dock channel would run through an obstacle; remove that obstacle after copying or choose another zone.",
-    fr: "Le couloir vers la station traverserait un obstacle ; supprimez cet obstacle après la copie ou choisissez une autre zone.",
-    de: "Der Dockkanal würde durch ein Hindernis verlaufen; entfernen Sie das Hindernis nach dem Kopieren oder wählen Sie eine andere Zone.",
+  "Er is geen vrije dockaanloop naar deze zone. Controleer obstakels en de ligging van het werkgebied.": {
+    en: "There is no clear dock approach to this zone. Check the obstacles and the work area's position.",
+    fr: "Il n’y a pas d’approche dégagée depuis la station vers cette zone. Vérifiez les obstacles et la position de la zone de travail.",
+    de: "Es gibt keine freie Dockzufahrt zu dieser Zone. Prüfen Sie die Hindernisse und die Lage des Arbeitsbereichs.",
   },
   "kopie": {
     en: "copy",

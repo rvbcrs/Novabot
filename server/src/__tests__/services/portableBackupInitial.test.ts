@@ -38,11 +38,7 @@ afterEach(() => { fs.rmSync(snDir, { recursive: true, force: true }); });
 describe('ensureInitialBackup', () => {
   it('reaches createBackup when no backup exists yet', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = await ensureInitialBackup(SN);
-    // No anchor/work polygon in the in-memory test DB → createBackup no-ops
-    // (returns null) — but it WAS reached, proving we did not skip.
-    expect(result).toBeNull();
-    expect(warn.mock.calls.flat().join(' ')).toMatch(/no charger anchor|no work polygon/i);
+    await expect(ensureInitialBackup(SN)).rejects.toThrow(/docked and idle/);
     warn.mockRestore();
   });
 
