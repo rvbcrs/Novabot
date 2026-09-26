@@ -98,4 +98,3 @@ async function regeneratePerMapFiles(sn: string, operation: MowerMapOperation): 
     return 'regenerate_failed';
   }
 }
-
