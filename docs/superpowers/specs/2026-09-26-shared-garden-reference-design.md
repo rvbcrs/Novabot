@@ -1,6 +1,6 @@
 # Verplichte dockmeting bij zonekopieën
 
-Status: lokale testimplementatie, nog niet gedeployed. De eerste herhaalmeting op .100 voldoet niet aan de acceptatiegrenzen; kopiëren via deze methode is nog niet fysiek gevalideerd. Er is geen nauwkeurigheidsgarantie en geen vrijgave voor autonoom maaien op basis van deze proef. Uitvoering wordt gevolgd onder Beads `Novabot-55f`.
+Status: lokale testimplementatie, nog niet gedeployed. De eerste herhaalmetingen op .100 faalden; het laatste paar voldoet aan de geometrische herhaalgrenzen. Een volledige registratie en kopie tussen beide maaiers zijn nog niet fysiek gevalideerd. Er is geen nauwkeurigheidsgarantie en geen vrijgave voor autonoom maaien op basis van deze proef. Uitvoering wordt gevolgd onder Beads `Novabot-55f`.
 
 ## Besluit en afbakening
 
@@ -42,7 +42,7 @@ De huidige controles omvatten verse RTK Fixed/lokalisatie, stabiele stilstand, t
 
 Een `pos.json`-/dockfingerprint en serverframerevisie herkennen bestands- en bekende framewijzigingen, maar niet iedere interne lokalisatiecompensatie. Die compensatie kan tijdens rijden veranderen zonder dat een bestandshash wijzigt. De 20-minutensessie voorkomt langdurig hergebruik, maar neemt dit risico niet weg. Onafhankelijke controles van de bestaande fysieke grens, verspreid over de tuin en na rijden, blijven nodig voor globale acceptatie.
 
-## Live bronproef op .100: afgekeurd
+## Live bronproef op .100: afstandsafhankelijke resultaten
 
 De ruwe opnamen en het controlescript staan lokaal in `research/captures/2026-09-26-dock-marker/` (gitignored). De bestanden `novabot-aruco-source-first.json` en `novabot-aruco-source-second.json` zijn omgerekend met `novabot-analyze-marker.py`. Dit zijn diagnostische opnamen; de nieuwe wizard/extended-command-code is daarvoor niet gedeployed.
 
@@ -62,6 +62,10 @@ Zestig unieke beeldtijdstempels zijn hier geen bewijs van zestig onafhankelijke 
 Een derde diagnostische opname (`novabot-aruco-source-close.json`) vanaf circa 35 cm camera-afstand gaf marker `(0,140179; -0,055441; 0,081412)` m en yaw `91,3374°`. Ten opzichte van de eerste stand is dat circa 3,03 cm XY, 5,01 cm in 3D en 0,83° yaw. Ook die vergelijking voldoet nog niet aan de positiegrens.
 
 De vierde opname (`novabot-aruco-source-close-repeat.json`) vanaf circa 47 cm camera-afstand gaf marker `(0,119959; -0,043026; 0,071005)` m en yaw `91,7327°`. Ten opzichte van de derde opname is dit **2,373 cm XY, 2,591 cm in 3D en 0,395° yaw**. De onderlinge afwijking is beter, maar de gemeten voertuigverplaatsing bedraagt slechts **11,245 cm**, onder het minimum van 15 cm voor twee voldoende verschillende standplaatsen. Deze vergelijking is daarom nog geen geslaagde registratie. De 61 beeldstempels leverden één verschillende camerapose, dus de interne spreiding blijft geen zelfstandig nauwkeurigheidsbewijs.
+
+De vijfde opname (`novabot-aruco-source-close-final.json`) vanaf circa 71 cm camera-afstand geeft marker `(0,108154; -0,049137; 0,094232)` m en yaw `91,4792°`. Het laatste paar (vierde naar vijfde) verschilt **1,329 cm XY, 2,676 cm in 3D en 0,2535° yaw**, met **23,673 cm voertuigverplaatsing**. Dit paar voldoet aan de geometrische herhaalgrenzen. De eerdere grotere verschillen blijven bewijs dat afstand en gezichtspunt ertoe doen; één geaccepteerd paar bewijst geen algemene of absolute nauwkeurigheid.
+
+De vijfde opname bevat ook tien chassisberichten met beide LoRa-vlaggen onwaar, 101 BestPos-berichten met qual 4 en correctieouderdom 1,2–2,0 seconden, en LOC_SUCCESS. De lokale productievalidator accepteert het vooraf gekozen middelste venster van 12 seconden. Een onafhankelijke herberekening accepteert ook de aangrenzende vensters (+3 tot +7 seconden start): het geometrische resultaat hangt niet van één gunstig venster af. Dit is nog geen volledige productregistratie: de vierde opname mist gelijktijdige chassisgegevens en de diagnostische opnamen zijn niet via een actieve server-wizardsessie gedaan. De detector is na de vijfde opname aantoonbaar uitgeschakeld. De volgende proef meet .244 voor hetzelfde fysieke dock van .100.
 
 ### Algemene LoRa-status en actuele meetgezondheid
 
