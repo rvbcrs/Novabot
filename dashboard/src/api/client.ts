@@ -218,6 +218,8 @@ export async function fetchMaps(sn: string): Promise<MapsResponse> {
     chargerGps: data.chargerGps ?? null,
     chargerOrientation: data.chargerOrientation ?? 0,
     chargingPose: data.chargingPose ?? null,
+    calibration: data.calibration,
+    polygonOffset: data.polygonOffset,
   };
 }
 
@@ -249,6 +251,12 @@ export async function saveCalibration(
     body: JSON.stringify(cal),
   });
   return res.json();
+}
+
+export async function alignDockPhoto(sn: string, lat: number, lng: number): Promise<void> {
+  const res = await post(`${BASE}/calibration/${encodeURIComponent(sn)}/dock-photo`, { lat, lng });
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error ?? 'Dock photo alignment failed');
 }
 
 export async function applyPolygonOffset(sn: string, dxM: number, dyM: number): Promise<{ ok: boolean; error?: string }> {

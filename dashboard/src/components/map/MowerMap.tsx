@@ -22,7 +22,7 @@ import {
   type DroneOverlayMeta, type DroneOverlayPlacement, type DroneCorners, type GardenRenderState, type GardenRenderFraming, type GardenRenderMeta,
 } from '../../api/client';
 import {
-  fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
+  fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, alignDockPhoto,
   deleteMap, renameMap, updateMapArea, createMap,
   navigateToPosition, stopNavigation,
   fetchVirtualWalls, createVirtualWall, deleteVirtualWall,
@@ -1442,13 +1442,26 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActi
 
   // Re-fetch the canonical map list from the server (used after draft save /
   // apply / revert, where optimistic local edits no longer match the server).
+  const mapLoadGeneration = useRef(0);
   const reloadMaps = useCallback(async () => {
     if (!sn) return;
+    const generation = ++mapLoadGeneration.current;
     try {
       const resp = await fetchMaps(sn);
+      // New servers return the entire display frame in one response. Keep
+      // compatibility when this dashboard is connected to an older server.
+      const cal = resp.calibration ?? await fetchCalibration(sn);
+      let offset = resp.polygonOffset;
+      if (!offset) {
+        const legacyOffset = await fetchPolygonOffset(sn);
+        offset = { x: legacyOffset.dxM, y: legacyOffset.dyM };
+      }
+      if (generation !== mapLoadGeneration.current) return;
       setMaps(resp.maps);
       setChargerGps(resp.chargerGps);
       setChargingPose(resp.chargingPose ?? null);
+      setSavedCal(cal);
+      setPolygonOffset(offset);
     } catch { /* keep current maps */ }
   }, [sn]);
 
@@ -1529,6 +1542,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActi
 
   // Place charger mode
   const [placingCharger, setPlacingCharger] = useState(false);
+  const [aligningDockPhoto, setAligningDockPhoto] = useState(false);
+  const dockPhotoBusy = useRef(false);
 
   // Navigate-to mode
   const [navigateMode, setNavigateMode] = useState(false);
@@ -1833,17 +1848,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActi
 
   useEffect(() => {
     if (sn) {
-      fetchMaps(sn).then(resp => {
-        setMaps(resp.maps);
-        setChargerGps(resp.chargerGps);
-        setChargingPose(resp.chargingPose ?? null);
-      }).catch(() => setMaps([]));
+      setMaps([]);
+      setChargerGps(null);
+      setChargingPose(null);
+      setSavedCal(DEFAULT_CAL);
+      void reloadMaps();
       // Server /trail geeft default lokale punten {x,y,ts} (ondanks de TrailPoint-
       // type-naam) — gebruik ze rechtstreeks als lokale trail.
       fetchTrail(sn).then(pts => setTrail(pts as unknown as Array<{ x: number; y: number; ts: number }>)).catch(() => setTrail([]));
-      fetchCalibration(sn).then(setSavedCal).catch(() => {});
-      setPolygonOffset({ x: 0, y: 0 });
-      fetchPolygonOffset(sn).then(p => setPolygonOffset({ x: p.dxM, y: p.dyM })).catch(() => {});
       // Initialize undo/redo history to a single fresh snapshot once the editor's
       // geometry has loaded for this mower (usually an empty snapshot = no drafts).
       refreshEditGeometry().then(resetHistory);
@@ -1860,6 +1872,19 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActi
       setTrail([]);
     }
   }, [sn]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const changed = (event: { sn: string }) => { if (event.sn === sn) void reloadMaps(); };
+    const refreshed = () => { void reloadMaps(); };
+    socket.on('maps:changed', changed);
+    socket.on('connect', refreshed);
+    return () => {
+      ++mapLoadGeneration.current;
+      socket.off('maps:changed', changed);
+      socket.off('connect', refreshed);
+    };
+  }, [sn, reloadMaps]);
 
   // Fetch virtual walls
   useEffect(() => {
@@ -3532,7 +3557,23 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActi
 
   // Change the photo reference, preserving the applied physical polygon shift.
   // Existing local geometry and the mower's frame remain unchanged.
-  const handlePlaceCharger = useCallback((lat: number, lng: number) => {
+  const handlePlaceCharger = useCallback(async (lat: number, lng: number) => {
+    if (dockPhotoBusy.current) return;
+    if (aligningDockPhoto) {
+      dockPhotoBusy.current = true;
+      setPlacingCharger(false);
+      try {
+        await alignDockPhoto(sn, lat, lng);
+        await reloadMaps();
+        toast(t('map.dockPhotoSaved', 'Dock gekoppeld aan de foto. Controleer nu andere herkenbare grondpunten.'), 'success');
+      } catch (error) {
+        toast(error instanceof Error ? error.message : String(error), 'error');
+      } finally {
+        dockPhotoBusy.current = false;
+        setAligningDockPhoto(false);
+      }
+      return;
+    }
     // Always set the real charger anchor (base) — never a visual offset. The
     // drop point IS where the charger physically sits, so the anchor moves there
     // and the charger + polygons shift together. No relocateCharger: the local
@@ -3541,16 +3582,20 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActi
     // app reads chargerGps directly and ignores offset.
     const shift = gridMetresToOffsetDeg(polygonOffset.x, polygonOffset.y, { lat, lng });
     const updated: MapCalibration = { ...savedCal, chargerLat: lat, chargerLng: lng, offsetLat: shift.offsetLat, offsetLng: shift.offsetLng };
-    setSavedCal(updated);
     // The zones, drawing, copying and navigate-to all project from chargerGps;
     // without this only the icon moved and everything else kept the old pin
     // until the maps were fetched again.
-    setChargerGps({ lat, lng });
     setPlacingCharger(false);
-    saveCalibration(sn, updated).then(() => {
+    try {
+      const result = await saveCalibration(sn, updated);
+      if (!result.ok) throw new Error(t('map.saveError', 'Opslaan mislukt'));
+      await reloadMaps();
       toast(t('map.chargerSaved'), 'success');
-    });
-  }, [sn, savedCal, polygonOffset, t]);
+    } catch (error) {
+      await reloadMaps();
+      toast(error instanceof Error ? error.message : String(error), 'error');
+    }
+  }, [sn, savedCal, polygonOffset, t, aligningDockPhoto, reloadMaps, toast]);
 
   // Push maps to mower via SSH
   // Navigate-to: the click is a map point, the mower wants map metres. Undo
@@ -4758,11 +4803,21 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, online, mowingActi
                   </button>
                   {railFlyout === 'dock' && (
                     <div className={railPanel}>
-                      <button onClick={() => { setPlacingCharger(!placingCharger); setRailFlyout(null); }} className={railRow(placingCharger)}>
+                      <button onClick={() => { setAligningDockPhoto(false); setPlacingCharger(!placingCharger); setRailFlyout(null); }} className={railRow(placingCharger && !aligningDockPhoto)}>
                         <MapPin className="w-4 h-4 opacity-70 shrink-0" />
                         <span className="text-left">
                           {t('map.alignToSatellite')}
                           <span className="block text-[11px] leading-snug text-gray-500">{t('map.alignToSatelliteHint')}</span>
+                        </span>
+                      </button>
+                      <button onClick={() => {
+                        setAligningDockPhoto(true); setPlacingCharger(true); setRailFlyout(null);
+                        toast(t('map.dockPhotoPick', 'Laat de maaier op het dock staan en klik op zijn echte positie op de foto.'), 'info');
+                      }} className={railRow(placingCharger && aligningDockPhoto)}>
+                        <Target className="w-4 h-4 opacity-70 shrink-0" />
+                        <span className="text-left">
+                          {t('map.dockPhotoAlign', 'Gedockte maaier koppelen aan foto')}
+                          <span className="block text-[11px] leading-snug text-gray-500">{t('map.dockPhotoHint', 'Gebruikt de gecontroleerde dockpositie. Verandert geen maaigrenzen of rijroutes.')}</span>
                         </span>
                       </button>
                     </div>

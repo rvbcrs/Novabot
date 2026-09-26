@@ -36,12 +36,18 @@ echo "Running server tests..."
 export TEST_HTTP_TRACE=1 TEST_HTTP_TRACE_FILE="/tmp/novabot-test-http-trace-$(date +%Y%m%d-%H%M%S).log"
 ( cd server && npm test --silent )
 
+# Same explicit cache override as release.sh.
+CACHE_ARGS=()
+if [ "${RELEASE_NO_CACHE:-0}" = "1" ] || [ "${RELEASE_NO_CACHE:-}" = "true" ]; then
+  CACHE_ARGS=(--no-cache)
+fi
+
 # Smoke vóór de push: kan de AI-classifier (onnxruntime, glibc) laden in de
 # verse image? Les van 2026-07-19: Alpine/musl brak dit stil — tests draaien
 # met een gestubde classifier op de host en zien zoiets nooit.
 echo "Smoke: classifier-import in verse image (host-arch)..."
 docker buildx build --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
-  --builder multiplatform-builder -t opennova-smoke --load .
+  --builder multiplatform-builder -t opennova-smoke --load "${CACHE_ARGS[@]}" .
 docker run --rm --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" --network none --workdir /app/server --entrypoint node opennova-smoke \
   -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke FAALT:',e.message);process.exit(1)})"
 
@@ -55,7 +61,7 @@ export SOURCE_DATE_EPOCH=0
 docker buildx build --platform linux/amd64,linux/arm64 \
   --builder multiplatform-builder \
   -t "rvbcrs/opennova:beta" \
-  --output type=image,push=true,rewrite-timestamp=true .
+  --output type=image,push=true,rewrite-timestamp=true "${CACHE_ARGS[@]}" .
 
 echo ""
 echo "Pushed rvbcrs/opennova:beta"

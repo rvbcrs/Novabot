@@ -103,6 +103,7 @@ import { dashboardRouter } from '../../routes/dashboard.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { equipmentRepo } from '../../db/repositories/equipment.js';
 import { mapRepo } from '../../db/repositories/maps.js';
+import { deviceSettingsRepo } from '../../db/repositories/deviceSettings.js';
 
 // Minimal Express wrapper — mirrors how index.ts mounts the router
 const app = express();
@@ -158,6 +159,21 @@ beforeEach(() => {
 });
 
 describe('GET /api/dashboard/maps/:sn — charger GPS auto-detect', () => {
+  it('returns the verified photo dock and its calibration together, leaving the channel intact', async () => {
+    seedEquipment();
+    const pose = { x: 0.03, y: 0.73, orientation: -1.518 };
+    const points = [{ x: -1.10, y: 1.18 }, { x: -1.09, y: 0.52 }];
+    mapRepo.setCalibration(TEST_SN, { charger_lat: 52.1, charger_lng: 6.2 });
+    mapRepo.create({ map_id: 'photo-channel', mower_sn: TEST_SN, canonical_name: 'map0tocharge_unicom', map_type: 'unicom', map_area: JSON.stringify(points) });
+    deviceSettingsRepo.upsert(TEST_SN, 'photo_dock_pose', JSON.stringify(pose));
+    const res = await request(server).get(`/api/dashboard/maps/${TEST_SN}`);
+    expect(res.status).toBe(200);
+    expect(res.body.chargingPose).toEqual(pose);
+    expect(res.body.chargerGps).toEqual({ lat: res.body.calibration.chargerLat, lng: res.body.calibration.chargerLng });
+    expect(res.body.polygonOffset).toEqual({ x: 0, y: 0 });
+    expect(res.body.maps[0].mapArea).toEqual(points);
+  });
+
   it('case 1: no deviceCache entry, no calibration → chargerGps: null', async () => {
     seedEquipment();
     // deviceCache is empty, no calibration row

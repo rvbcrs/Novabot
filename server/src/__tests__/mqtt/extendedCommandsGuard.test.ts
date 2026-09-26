@@ -43,16 +43,12 @@ describe('publishExtendedCommand frame-guard', () => {
     expect(publishToTopic).not.toHaveBeenCalled();
   });
 
-  // Niet-bewegingscommando's moeten juist WEL door blijven gaan terwijl het
-  // frame niet gevalideerd is: het her-anker-gereedschap (sync_map,
-  // reanchor_pos, is_opennova, ...) loopt over ditzelfde kanaal en is nodig
-  // om het frame weer geldig te krijgen.
-  it('laat niet-bewegingscommando\'s door terwijl het frame niet gevalideerd is', () => {
+  it('laat statusvragen door maar weigert herstelwrites zonder operatie-eigenaar', () => {
     markFrameUnvalidated(SN);
     publishExtendedCommand(SN, { is_opennova: {} });
     publishExtendedCommand(SN, { sync_map: {} });
     publishExtendedCommand(SN, { reanchor_pos: { lat: 52.0, lng: 5.0 } });
-    expect(publishToTopic).toHaveBeenCalledTimes(3);
+    expect(publishToTopic).toHaveBeenCalledExactlyOnceWith(`novabot/extended/${SN}`, { is_opennova: {} });
   });
 
   it('laat mow_zone en start_edge_cut weer door na validatie', () => {

@@ -63,8 +63,10 @@ export interface MapsResponse {
   maps: MapData[];
   chargerGps: GpsPoint | null;
   chargerOrientation: number;
-  /** Charger pose in local meter frame from map_info.json charging_pose */
+  /** Local dock used by the photo projection; never a navigation command. */
   chargingPose: { x: number; y: number; orientation: number } | null;
+  calibration?: MapCalibration;
+  polygonOffset?: LocalPoint;
 }
 
 export interface TrailPoint {

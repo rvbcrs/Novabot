@@ -36,6 +36,7 @@ export function loadFrameValidationFromDb(): void {
 
 export function markFrameUnvalidated(sn: string): void {
   unvalidated.add(sn);
+  deviceSettingsRepo.remove(sn, 'photo_dock_pose');
   revisions.set(sn, getFrameRevision(sn) + 1);
   // A restored or re-anchored frame is a new origin: the dock position
   // before it says nothing about the one after.

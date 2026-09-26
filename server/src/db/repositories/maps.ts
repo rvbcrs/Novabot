@@ -232,9 +232,16 @@ export class MapRepository {
   // Calibration
   private _getCalibration = db.prepare('SELECT * FROM map_calibration WHERE mower_sn = ?');
   private _setCalibration = db.prepare(`
-    INSERT OR REPLACE INTO map_calibration
+    INSERT INTO map_calibration
       (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, gps_charger_lat, gps_charger_lng, polygon_offset_x_m, polygon_offset_y_m, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(mower_sn) DO UPDATE SET
+      offset_lat = excluded.offset_lat, offset_lng = excluded.offset_lng,
+      rotation = excluded.rotation, scale = excluded.scale,
+      charger_lat = excluded.charger_lat, charger_lng = excluded.charger_lng,
+      gps_charger_lat = excluded.gps_charger_lat, gps_charger_lng = excluded.gps_charger_lng,
+      polygon_offset_x_m = excluded.polygon_offset_x_m, polygon_offset_y_m = excluded.polygon_offset_y_m,
+      updated_at = excluded.updated_at
   `);
   private _getChargerGps = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?');
   private _setPolygonOffset = db.prepare(`

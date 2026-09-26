@@ -64,6 +64,7 @@ import {
 import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
 import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from '../services/anchor.js';
+import { alignDockPhoto, getPhotoDockPose } from '../services/dockPhotoReference.js';
 import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
 import { positionTelemetry, freshPositionState, stablePosition, POSITION_MAX_AGE_MS } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
@@ -806,11 +807,17 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
     }
   }
 
+  // Display the verified local dock at the user-selected photo pin. Keep
+  // channel geometry intact: a wrong channel must stay visibly wrong.
+  chargingPose = getPhotoDockPose(sn) ?? chargingPose;
+  if (chargingPose) chargerOrientation = chargingPose.orientation;
   res.json({
     maps,
     chargerGps: chargerGps ? { lat: chargerGps.lat, lng: chargerGps.lng } : null,
     chargerOrientation,
     chargingPose,
+    calibration: calibrationDto(sn),
+    polygonOffset: mapRepo.getPolygonOffset(sn),
   });
 });
 
@@ -1835,7 +1842,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       res.status(400).json({ error: T`Positie van het laadstation onbekend: plaats eerst het laadstation op de kaart` });
       return;
     }
-    const anchor = getPolygonAnchor(sn);
+    const anchor = getPhotoDockPose(sn) ?? getPolygonAnchor(sn);
     if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
     localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); const offset = mapRepo.getPolygonOffset(sn); return { x: point.x + anchor.x - offset.x, y: point.y + anchor.y - offset.y }; });
   }
@@ -2056,7 +2063,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
         res.status(400).json({ error: T`Positie van het laadstation onbekend` });
         return;
       }
-      const anchor = getPolygonAnchor(sn);
+      const anchor = getPhotoDockPose(sn) ?? getPolygonAnchor(sn);
     if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
     localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); const offset = mapRepo.getPolygonOffset(sn); return { x: point.x + anchor.x - offset.x, y: point.y + anchor.y - offset.y }; });
     }
@@ -3071,18 +3078,18 @@ interface CalibrationRow {
 }
 
 // GET /api/dashboard/calibration/:sn — haal calibratie op
-dashboardRouter.get('/calibration/:sn', (req: Request, res: Response) => {
-  const { sn } = req.params;
+function calibrationDto(sn: string) {
   const row = mapRepo.getCalibration(sn);
-
-  res.json({
-    calibration: row
+  return row
       ? { offsetLat: row.offset_lat, offsetLng: row.offset_lng, rotation: row.rotation, scale: row.scale,
           chargerLat: row.charger_lat, chargerLng: row.charger_lng,
-          gpsChargerLat: row.gps_charger_lat, gpsChargerLng: row.gps_charger_lng }
+          gpsChargerLat: row.gps_charger_lat, gpsChargerLng: row.gps_charger_lng,
+          polygon_offset_x_m: row.polygon_offset_x_m, polygon_offset_y_m: row.polygon_offset_y_m }
       : { offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1,
-          chargerLat: null, chargerLng: null, gpsChargerLat: null, gpsChargerLng: null },
-  });
+          chargerLat: null, chargerLng: null, gpsChargerLat: null, gpsChargerLng: null };
+}
+dashboardRouter.get('/calibration/:sn', (req: Request, res: Response) => {
+  res.json({ calibration: calibrationDto(req.params.sn) });
 });
 
 // GET /api/dashboard/mdns-conflict — detect a SECOND OpenNova server advertising
@@ -3099,6 +3106,16 @@ dashboardRouter.get('/mdns-conflict', (_req: Request, res: Response) => {
 });
 
 // PUT /api/dashboard/calibration/:sn — sla calibratie op
+dashboardRouter.post('/calibration/:sn/dock-photo', async (req: Request, res: Response) => {
+  try {
+    const result = await alignDockPhoto(req.params.sn, req.body?.lat, req.body?.lng);
+    emitMapsChanged(req.params.sn);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const { offsetLat, offsetLng, rotation, scale, chargerLat, chargerLng,
@@ -3123,7 +3140,7 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
     gps_charger_lat: gpsChargerLat ?? null,
     gps_charger_lng: gpsChargerLng ?? null,
   });
-
+  emitMapsChanged(sn);
   res.json({ ok: true });
 });
 

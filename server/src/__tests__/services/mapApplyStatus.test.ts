@@ -6,7 +6,7 @@ import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/
  * zone nog niet klaar is. Aanleiding: na een zone-kopie gaf Start 50 s lang
  * "Clear error first" door Error 140 terwijl sync_map de planner herstartte.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../mqtt/sensorData.js', () => ({ deviceCache: new Map<string, Map<string, string>>() }));
 vi.mock('../../dashboard/socketHandler.js', () => ({ forwardToDashboard: vi.fn() }));
@@ -61,37 +61,46 @@ describe('errorCodeOf', () => {
 
 describe('waitForPlannerBack', () => {
   const timing = { settleMinMs: 30, settleMaxMs: 400, pollMs: 5 };
-  beforeEach(() => { deviceCache.clear(); clearPositionTelemetry(SN); deviceCache.set(SN, new Map()); });
+  beforeEach(() => { vi.useFakeTimers(); deviceCache.clear(); clearPositionTelemetry(SN); deviceCache.set(SN, new Map()); });
+  afterEach(() => vi.useRealTimers());
+  const finish = async () => {
+    const pending = waitForPlannerBack(SN, timing);
+    await vi.advanceTimersByTimeAsync(timing.settleMaxMs);
+    return pending;
+  };
 
   it('wacht zolang Error 140 (planner herstart) staat, en is klaar zodra hij weg is', async () => {
     ingestPositionTelemetry(SN, { error_status: 140 });
     setTimeout(() => ingestPositionTelemetry(SN, { error_status: 0 }), 80);
     const t0 = Date.now();
-    expect(await waitForPlannerBack(SN, timing)).toBe('settled');
+    expect(await finish()).toBe('settled');
     expect(Date.now() - t0).toBeGreaterThanOrEqual(80);
   });
 
   it('wacht altijd minstens settleMinMs, ook zonder fout (140 kan nog komen)', async () => {
     ingestPositionTelemetry(SN, { error_status: 0 });
-    const t0 = Date.now();
-    expect(await waitForPlannerBack(SN, timing)).toBe('settled');
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(timing.settleMinMs);
+    let done = false;
+    const pending = waitForPlannerBack(SN, timing).then(result => { done = true; return result; });
+    await vi.advanceTimersByTimeAsync(timing.settleMinMs - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(timing.pollMs + 1);
+    expect(await pending).toBe('settled');
   });
 
   it('geeft op na settleMaxMs als 140 blijft staan', async () => {
     ingestPositionTelemetry(SN, { error_status: 140 });
-    expect(await waitForPlannerBack(SN, timing)).toBe('timeout');
+    expect(await finish()).toBe('timeout');
   });
 
   it('een oud of ontbrekend rapport is geen bewijs dat de planner terug is', async () => {
     ingestPositionTelemetry(SN, { error_status: 0 }, Date.now() - 1);
-    expect(await waitForPlannerBack(SN, timing)).toBe('timeout');
+    expect(await finish()).toBe('timeout');
     clearPositionTelemetry(SN);
-    expect(await waitForPlannerBack(SN, timing)).toBe('timeout');
+    expect(await finish()).toBe('timeout');
   });
 
   it('een andere fout hoort niet bij de push: niet op wachten', async () => {
     ingestPositionTelemetry(SN, { error_status: 151 });
-    expect(await waitForPlannerBack(SN, timing)).toBe('settled');
+    expect(await finish()).toBe('settled');
   });
 });

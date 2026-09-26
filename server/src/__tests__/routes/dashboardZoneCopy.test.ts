@@ -230,8 +230,9 @@ describe('zone copy routes', () => {
 describe('toepassen op de maaier: status voor het dashboard', () => {
   const saved = { ...mapApplyTiming };
   let handlers: Array<(d: Record<string, unknown>) => void> = [];
-  const answer = (d: Record<string, unknown>) => {
+  const answer = async (d: Record<string, unknown>) => {
     const [key, raw] = Object.entries(d)[0]; const command = key.replace(/_respond$/, '');
+    await vi.waitFor(() => expect(vi.mocked(publishToExtended).mock.calls.some(c => c[1][command])).toBe(true));
     const params = vi.mocked(publishToExtended).mock.calls.map(c => c[1][command]).filter(Boolean).at(-1) as Record<string, unknown>;
     for (const h of [...handlers]) h({ [key]: { ...(raw as object), operation_id: params?.operation_id } });
   };
@@ -265,19 +266,19 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     expect(res.status).toBe(200);
     await tick();
     expect(phases()).toEqual(['syncing']);
-    answer({ sync_map_respond: { result: 0 } });
+    await answer({ sync_map_respond: { result: 0 } });
     await tick();
-    expect(phases()).toEqual(['syncing', 'regenerating']);
-    answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await vi.waitFor(() => expect(phases()).toEqual(['syncing', 'regenerating']));
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
     await tick(); ingestPositionTelemetry(B, { error_status: 0 }); await tick(); await tick();
-    expect(phases()).toEqual(['syncing', 'regenerating', 'settling', '']);
+    await vi.waitFor(() => expect(phases()).toEqual(['syncing', 'regenerating', 'settling', '']));
   });
 
   it('blocks concurrent writes and keeps planner timeout failed with navigation locked', async () => {
     await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB }); await tick();
     expect((await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB })).status).toBe(409);
-    answer({ sync_map_respond: { result: 0 } }); await tick();
-    answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await answer({ sync_map_respond: { result: 0 } }); await tick();
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
     await new Promise(r => setTimeout(r, 80));
     const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
     expect(last.get(ERROR_KEY)).toBe('planner_timeout'); expect(isFrameUnvalidated(B)).toBe(true);
@@ -286,7 +287,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   it('een mislukte sync_map laat failed staan met de reden', async () => {
     await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
     await tick();
-    answer({ sync_map_respond: { result: 1, error: 'download failed' } });
+    await answer({ sync_map_respond: { result: 1, error: 'download failed' } });
     await tick();
     const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
     expect(last.get(PHASE_KEY)).toBe('failed');
@@ -296,9 +297,9 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   it('een mislukte regenerate laat failed staan met de reden', async () => {
     await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
     await tick();
-    answer({ sync_map_respond: { result: 0 } });
+    await answer({ sync_map_respond: { result: 0 } });
     await tick();
-    answer({ regenerate_per_map_files_respond: { result: 1, error: 'map.pgm missing' } });
+    await answer({ regenerate_per_map_files_respond: { result: 1, error: 'map.pgm missing' } });
     await tick();
     const last = vi.mocked(forwardToDashboard).mock.calls.at(-1)![1] as Map<string, string>;
     expect(last.get(PHASE_KEY)).toBe('failed');
