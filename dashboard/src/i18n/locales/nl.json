@@ -303,7 +303,7 @@
     "speedSlow": "Langzaam",
     "speedNormal": "Normaal",
     "speedFast": "Snel",
-    "busyDriving": "Maaier is bezig — stop de taak eerst",
+    "busyDriving": "Messen draaien, pauzeer eerst",
     "bladeOn": "Mes aan",
     "bladeOff": "Mes uit",
     "bladeRunning": "Mes draait — {{rpm}} RPM (tik om te stoppen)",

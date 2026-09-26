@@ -233,7 +233,7 @@ export default {
   mowerOffline: 'Maaier offline',
   connectMowerToMap: 'Verbind de maaier om een kaart te maken',
   manualControlLocked: 'Handmatige bediening vergrendeld',
-  manualControlLockedDesc: 'Stop de huidige taak voordat je de maaier handmatig bedient.',
+  manualControlLockedDesc: 'De messen draaien. Pauzeer de maaier om handmatig te rijden.',
   readinessCheck: 'Gereedheidscheck',
   gps: 'GPS',
   gpsOk: 'OK',

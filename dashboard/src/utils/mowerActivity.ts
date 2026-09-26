@@ -124,6 +124,27 @@ export function isInterruptedCoverage(sensors: Sensors): boolean {
 }
 
 /**
+ * Whether the blades may be spinning: the only state that locks the joystick.
+ * Nothing reports the blade by default (blade_speed needs opt-in telemetry on
+ * OpenNova firmware, v6 does not send mow_blade_work_time), so this reads the
+ * coverage state. Live .100 log 2026-09-25: the planner lowers the blade at
+ * COVERING, keeps it down through AVOIDING and MOVING between lanes, and raises
+ * it ("stop blade") at a slip, a stop or the finish.
+ * ponytail: MOVING from the dock to the first lane runs with the blade up but
+ * reads the same, so the joystick stays locked there too.
+ */
+const BLADE_WORK = /Work:(COVERING|BOUNDARY_COVERING|COVERING_MISSING|AVOIDING|MOVING)\b/;
+const BLADE_WORK_STATUS = ['90', '91', '92', '93', '94',
+  'Mowing', 'Avoiding obstacle', 'Driving', 'Edge cutting', 'Re-covering missed spots'];
+export function bladesMaySpin(sensors: Sensors): boolean {
+  const s = sensors ?? {};
+  return BLADE_WORK.test(s.msg ?? '') ||
+    BLADE_WORK_STATUS.includes(s.work_status ?? '') ||
+    s.edge_active === '1' ||
+    (parseInt(s.blade_speed ?? '0', 10) || 0) !== 0;
+}
+
+/**
  * `mowerBusy` — the mower is mid-task and would reject a duplicate
  * start_navigation (firmware Error 2). Mirrors the app's mowerBusy regexes
  * (HomeScreen.tsx ~2296-2299). Detected via the raw `msg` field only because
@@ -183,8 +204,12 @@ export function deriveMowerActivity(
     msg.includes('Work:BOUNDARY_COVERING') ||
     msg.includes('Work:AVOIDING');
 
+  // RECOVER_ERROR_STOP: a slip or other recovery failed and the firmware waits
+  // for the user to move the mower and continue (Error 123); resume_navigation
+  // continues it, like a pause.
   const isCoveragePaused =
-    (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP')) &&
+    (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP') ||
+      msg.includes('Work:RECOVER_ERROR_STOP')) &&
     taskMode === 1 &&
     !isOnDock;
 

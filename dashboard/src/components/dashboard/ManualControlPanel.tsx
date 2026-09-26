@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { joystickStart, joystickMove, joystickStop } from '../../api/socket';
 import { sendExtendedCommand } from '../../api/client';
-import { deriveMowerActivity } from '../../utils/mowerActivity';
+import { bladesMaySpin, deriveMowerActivity } from '../../utils/mowerActivity';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 
 /** Saw-blade icon — the MaterialCommunityIcons "saw-blade" the OpenNova app uses. */
@@ -67,12 +67,9 @@ export function ManualControlPanel({ sn, online, sensors }: Props) {
   const [showBladeSheet, setShowBladeSheet] = useState(false);
   const [bladeHeightCm, setBladeHeightCm] = useState(5); // 5cm default
 
-  // Autonomous-busy: block joystick movement while the mower is mowing/
-  // returning/edge-cutting UNLESS the user is driving the blade themselves.
-  const autonomousBusy =
-    !bladeOn &&
-    (activity === 'mowing' || activity === 'returning' ||
-     activity === 'edge_cutting' || activity === 'mapping');
+  // The joystick is always free except while the firmware's blades may spin,
+  // and then only when that is not the user's own manual blade.
+  const autonomousBusy = !bladeOn && bladesMaySpin(sensors);
 
   // ── Blade control (extended commands) ──────────────────────────────
   const sendBladeOff = useCallback(() => {
@@ -253,7 +250,7 @@ export function ManualControlPanel({ sn, online, sensors }: Props) {
         {!online ? (
           <span className="text-red-400">{t('controls.offline')}</span>
         ) : autonomousBusy ? (
-          <span className="text-amber-400">{t('controls.busyDriving', 'Maaier is bezig — stop de taak eerst')}</span>
+          <span className="text-amber-400">{t('controls.busyDriving', 'Messen draaien, pauzeer eerst')}</span>
         ) : active ? (
           <span className="text-emerald-400">{speedMs} m/s</span>
         ) : (

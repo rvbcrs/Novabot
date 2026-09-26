@@ -232,7 +232,7 @@
     "speedSlow": "Slow",
     "speedNormal": "Normal",
     "speedFast": "Fast",
-    "busyDriving": "Mower is busy — stop the task first",
+    "busyDriving": "Blades are spinning, pause first",
     "bladeOn": "Blade on",
     "bladeOff": "Blade off",
     "bladeRunning": "Blade spinning — {{rpm}} RPM (tap to stop)",

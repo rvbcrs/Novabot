@@ -84,7 +84,7 @@ export default {
   mowZoneStartFailed: 'Mähen konnte nicht gestartet werden. Verbindung prüfen und erneut versuchen.',
   connectMowerToMap: 'Verbinden Sie den Mäher um eine Karte zu erstellen',
   manualControlLocked: 'Manuelle Steuerung gesperrt',
-  manualControlLockedDesc: 'Aktuelle Aufgabe stoppen, bevor der Mäher manuell gesteuert wird.',
+  manualControlLockedDesc: 'Die Messer drehen sich. Mäher pausieren, um ihn manuell zu fahren.',
   readinessCheck: 'Bereitschaftscheck', gps: 'GPS', gpsOk: 'OK', noSignal: 'Kein Signal',
   localization: 'Lokalisierung', ready: 'Bereit', initializing: 'Initialisierung...',
   mqtt: 'MQTT', mappingMode: 'Kartierungsmodus',

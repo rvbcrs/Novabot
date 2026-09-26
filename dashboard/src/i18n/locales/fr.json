@@ -200,7 +200,7 @@
     "speedSlow": "Lent",
     "speedNormal": "Normal",
     "speedFast": "Rapide",
-    "busyDriving": "Le robot est occupé — arrêtez d'abord la tâche",
+    "busyDriving": "Les lames tournent, mettez d'abord en pause",
     "bladeOn": "Lame activée",
     "bladeOff": "Lame désactivée",
     "bladeRunning": "Lame en rotation — {{rpm}} tr/min (appuyez pour arrêter)",

@@ -223,7 +223,11 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // Pauze-state: de firmware zet `Work:USER_STOP` wanneer je pauzeert via app
   // of hardware-knop (verified live 2026-04-20). `Work:PAUSED` is het ROS-niveau
   // pause dat zelden in msg verschijnt. We dekken beide.
-  const isCoveragePaused = (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP'))
+  // RECOVER_ERROR_STOP: a slip or other recovery failed and the firmware waits
+  // for the user to move the mower and continue (Error 123); resume_navigation
+  // continues it, like a pause.
+  const isCoveragePaused = (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP')
+    || msg.includes('Work:RECOVER_ERROR_STOP'))
     && taskMode === 1 && !isOnDock;
   // Recharge: FAILED — maaier reed naar dock maar kon niet dokken (miste de
   // charger, sensor glitch, of weg geblokt). Novabot toont hier meteen een

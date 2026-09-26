@@ -84,7 +84,7 @@ export default {
   mowZoneStartFailed: "Impossible de démarrer la tonte. Vérifiez la connexion et réessayez.",
   connectMowerToMap: 'Connectez la tondeuse pour créer une carte',
   manualControlLocked: 'Contrôle manuel verrouillé',
-  manualControlLockedDesc: 'Arrêtez la tâche en cours avant de piloter la tondeuse manuellement.',
+  manualControlLockedDesc: 'Les lames tournent. Mettez la tondeuse en pause pour la piloter manuellement.',
   readinessCheck: 'Vérification', gps: 'GPS', gpsOk: 'OK', noSignal: 'Pas de signal',
   localization: 'Localisation', ready: 'Prêt', initializing: 'Initialisation...',
   mqtt: 'MQTT', mappingMode: 'Mode cartographie',

@@ -235,7 +235,7 @@ export default {
   mowerOffline: 'Mower Offline',
   connectMowerToMap: 'Connect the mower to create a map',
   manualControlLocked: 'Manual control locked',
-  manualControlLockedDesc: 'Stop the current task before driving the mower manually.',
+  manualControlLockedDesc: 'The blades are spinning. Pause the mower to drive it manually.',
   readinessCheck: 'Readiness Check',
   gps: 'GPS',
   gpsOk: 'OK',

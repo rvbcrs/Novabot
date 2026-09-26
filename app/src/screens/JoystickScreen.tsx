@@ -35,6 +35,7 @@ import { DemoBanner } from '../components/DemoBanner';
 import { useDemo } from '../context/DemoContext';
 import { useI18n } from '../i18n';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
+import { bladesMaySpin } from '../utils/bladeState';
 import { fixQualityLabel } from '../utils/fixQuality';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -125,40 +126,10 @@ export default function JoystickScreen() {
   // docked would spin the blades against the charging contacts.
   const onDock = (mower?.sensors?.battery_state ?? '').toUpperCase() === 'CHARGING';
 
-  // Disable manual control while the mower is autonomously busy — mowing, mapping,
-  // or returning to the dock. Sending start_move / mst during an active task can
-  // corrupt the nav2 plan or cause the firmware to enter an inconsistent state.
-  // Matches the activity detection logic from HomeScreen.
-  const busyWithTask = (() => {
-    // User-driven manual mowing publishes a synthetic COVERING state to
-    // unlock the STM32 blade gate. Don't treat that as autonomous busy.
-    if (bladeOn) return false;
-    const s = mower?.sensors ?? {};
-    const msg = s.msg ?? '';
-    const taskMode = parseInt(s.task_mode ?? '0', 10);
-    const rechargeStatus = parseInt(s.recharge_status ?? '0', 10);
-    const workStatus = s.work_status ?? '';
-    const coverageRunning = msg.includes('Work:RUNNING')
-      || msg.includes('Work:COVERING') || msg.includes('Work:NAVIGATING')
-      || msg.includes('Work:MOVING') || msg.includes('Work:QUIT_PILE_INIT')
-      || msg.includes('Work:SENSOR_INIT') || msg.includes('Work:INIT_SUCCESS')
-      || msg.includes('Work:MAP_INIT') || msg.includes('Work:PAUSED');
-    const returning = rechargeStatus === 1 || msg.includes('Recharge: GOING')
-      || msg.includes('Work:GO_PILE') || msg.includes('Work:BACK_CHARGER')
-      || msg.includes('Work:DOCKING');
-    // The server translates work_status numeric → human label
-    // (sensorData.ts WORK_STATUS_LABELS). Check both raw and translated
-    // forms. Idle-like states (mower not actively executing a coverage
-    // path): '0'/'Idle', '9'/'Ready', '70'/'Finished once', '72'/'Cancelled'.
-    // A failed or cancelled task is over: the mower is idle, not mowing.
-    const IDLE_WORK_STATES = ['0', '1', '2', '7', '8', '9', '70', '72',
-      'Idle', 'Ready', 'Failed', 'Failed once', 'Finished once', 'Finished', 'Cancelled'];
-    const stickyMowing = !onDock && taskMode === 1 && !returning
-      && !IDLE_WORK_STATES.includes(workStatus)
-      && !msg.includes('Work:FINISHED') && !msg.includes('Work:CANCELLED');
-    const mapping = s.start_edit_or_assistant_map_flag === '1' && taskMode !== 1;
-    return coverageRunning || returning || stickyMowing || mapping;
-  })();
+  // Manual control is always allowed except while the firmware's blades may
+  // spin (bladesMaySpin), and then only when that is not the user's own manual
+  // blade: its synthetic COVERING state is not an autonomous task.
+  const busyWithTask = !bladeOn && bladesMaySpin(mower?.sensors ?? {});
 
   const [active, setActive] = useState(false);
   const [thumbX, setThumbX] = useState(0);

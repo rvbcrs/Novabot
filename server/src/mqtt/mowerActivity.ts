@@ -152,8 +152,12 @@ export function deriveMowerActivity(
     msg.includes('Work:BOUNDARY_COVERING') ||
     msg.includes('Work:AVOIDING');
 
+  // RECOVER_ERROR_STOP: a slip or other recovery failed and the firmware waits
+  // for the user to move the mower and continue (Error 123); resume_navigation
+  // continues it, like a pause.
   const isCoveragePaused =
-    (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP')) &&
+    (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP') ||
+      msg.includes('Work:RECOVER_ERROR_STOP')) &&
     taskMode === 1 &&
     !isOnDock;
 

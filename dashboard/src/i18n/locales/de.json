@@ -200,7 +200,7 @@
     "speedSlow": "Langsam",
     "speedNormal": "Normal",
     "speedFast": "Schnell",
-    "busyDriving": "Mäher ist beschäftigt — zuerst die Aufgabe stoppen",
+    "busyDriving": "Messer drehen sich, zuerst pausieren",
     "bladeOn": "Messer ein",
     "bladeOff": "Messer aus",
     "bladeRunning": "Messer dreht — {{rpm}} U/min (zum Stoppen tippen)",

@@ -7,6 +7,8 @@ interface Props {
   sn: string;
   online: boolean;
   speedLevel?: number; // 0=low, 1=medium, 2=high (from manual_controller_v setting)
+  /** Blades may be spinning: no manual driving (see bladesMaySpin). */
+  locked?: boolean;
 }
 
 const DEAD_ZONE = 0.05;
@@ -28,7 +30,7 @@ function getHoldType(x: number, y: number): number {
   return x < 0 ? 1 : 2; // left(1), right(2)
 }
 
-export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
+export function JoystickControl({ sn, online, speedLevel = 0, locked = false }: Props) {
   const { t } = useTranslation();
   const [active, setActive] = useState(false);
   const [thumbPos, setThumbPos] = useState({ x: 0, y: 0 });
@@ -83,7 +85,7 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
   }, [sn]);
 
   const startJoystick = useCallback((clientX: number, clientY: number) => {
-    if (!online) return;
+    if (!online || locked) return;
     activeRef.current = true;
     setActive(true);
     lastSendRef.current = 0; // reset throttle
@@ -111,7 +113,7 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
         z_g: 0,
       });
     }
-  }, [sn, online]);
+  }, [sn, online, locked]);
 
   // ── Mouse: capture at document level during drag ──
   const handleMouseMove = useCallback((e: MouseEvent) => {
@@ -168,6 +170,8 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
       <div className="text-[10px] font-mono h-4 tabular-nums">
         {!online ? (
           <span className="text-red-400">{t('controls.offline')}</span>
+        ) : locked ? (
+          <span className="text-amber-400">{t('controls.busyDriving')}</span>
         ) : active ? (
           <span className="text-emerald-400">{speedMs} m/s ({levelLabel})</span>
         ) : (
@@ -179,7 +183,7 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
       <div
         ref={baseRef}
         className={`relative w-28 h-28 md:w-24 md:h-24 rounded-full ring-1 select-none ${
-          online
+          online && !locked
             ? 'bg-gray-800/80 ring-gray-600 cursor-grab'
             : 'bg-gray-800/40 ring-gray-700 cursor-not-allowed opacity-50'
         }`}

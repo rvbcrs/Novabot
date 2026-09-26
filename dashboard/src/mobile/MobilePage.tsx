@@ -9,6 +9,7 @@ import { MapTab } from './components/MapTab';
 import { CameraTab } from './components/CameraTab';
 import { SchedulesTab } from './components/SchedulesTab';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
+import { bladesMaySpin } from '../utils/mowerActivity';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -46,6 +47,8 @@ export interface MowerDerived {
   manualSpeedLevel: number;
   /** Camera stream = camera_stream.py daemon → alleen OpenNova firmware (zelfde gate als de desktop-tegel). */
   cameraAvailable: boolean;
+  /** Joystick lock: only while the blades may spin (see bladesMaySpin). */
+  bladesMaySpin: boolean;
 }
 
 type CoveredLane = { lat1: number; lng1: number; lat2: number; lng2: number };
@@ -117,6 +120,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
     headlightOn: s.headlight === '2',
     manualSpeedLevel: parseInt(s.manual_controller_v ?? '0', 10) || 0,
     cameraAvailable: isOpenNovaFirmware(s.sw_version ?? s.version),
+    bladesMaySpin: bladesMaySpin(s),
   };
 }
 

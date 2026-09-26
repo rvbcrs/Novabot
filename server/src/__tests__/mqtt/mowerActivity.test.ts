@@ -137,3 +137,11 @@ describe('isInterruptedCoverage — #30: Low power laadpauze op stock 5.7.1', ()
     expect(isInterruptedCoverage({ ...docked, work_status: 'Finished', msg: 'Work:CANCELLED' })).toBe(false);
   });
 });
+
+describe('deriveMowerActivity: failed slip escape (Error 123)', () => {
+  it('RECOVER_ERROR_STOP off the dock is a resumable pause', () => {
+    const s = { task_mode: '1', battery_state: 'DISCHARGING', work_status: 'Recovery error',
+      error_status: 'Error (123)', msg: 'Mode:COVERAGE Work:RECOVER_ERROR_STOP Prev work:SLIPPING_HANDLE Recharge: WAIT' };
+    expect(deriveMowerActivity(s, { online: true })).toBe('paused');
+  });
+});

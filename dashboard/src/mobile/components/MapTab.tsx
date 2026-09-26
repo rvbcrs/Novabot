@@ -254,6 +254,7 @@ export function MapTab({ mower, liveOutlines, coveredLanes }: Props) {
                 sn={mower.sn}
                 online={mower.online}
                 speedLevel={mower.manualSpeedLevel}
+                locked={mower.bladesMaySpin}
               />
             </div>
           </div>
