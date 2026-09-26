@@ -4,13 +4,15 @@ Status: voorstel op verzoek van Ramon. Nog niet geïmplementeerd of fysiek geval
 
 ## Besluit
 
-Gebruik vaste fysieke grondpunten als referentie voor de tuin. Meet de koppeling van iedere maaier naar die punten en bewaar haar. Kopiëren gebruikt deze gemeten koppeling, niet een aangewezen dock op een foto. Kalibreer het beeld afzonderlijk op dezelfde grondpunten.
+De standaardoplossing moet volledig zonder drone, dronefoto, RTK-walker of externe landmeetapparatuur werken. Gebruik de maaiers zelf om vaste fysieke grondpunten te meten en bewaar de koppeling tussen hun kaartframes. Kopiëren gebruikt deze gemeten koppeling, niet een aangewezen dock op een foto. Een eenvoudige positioneermal of herhaalbare aanslag helpt om hetzelfde fysieke chassisreferentiepunt te meten; extra GNSS-meethardware is geen voorwaarde.
+
+De kaartinterface kan alle zones, obstakels, docks, kanalen en meetpunten rechtstreeks op een metrisch raster tonen. Een satellietlaag is optionele achtergrond. Het ontbreken of uitschakelen van beeld mag meten, registreren, kopiëren, backup of restore niet verhinderen. Dronebeelden zijn uitsluitend een optionele uitbreiding voor gebruikers die ze hebben.
 
 De bestaande, in de praktijk gebruikte .100-kaart kan aanvankelijk het numerieke tuinframe leveren. Haar native bestanden hoeven daarvoor niet te veranderen. De bijbehorende grondpunten worden vervolgens de blijvende fysieke referentie: een latere afwijking van .100 mag de tuinreferentie niet automatisch mee verschuiven. Een gemeenschappelijke lokale referentie vereist geen nauwkeurige absolute WGS84-positie. Die absolute koppeling is een afzonderlijke meting als uitwisseling met geografische brondata nodig is.
 
 ## Eenmalige meetprocedure
 
-Kies vijf vaste, goed bereikbare punten op stabiele ondergrond, verspreid over het relevante maaigebied. Drie dienen voor de berekening; twee blijven buiten die berekening voor controle. Dit aantal is een praktische ontwerpkeuze, geen wiskundig minimum en geen universeel voorschrift voor een droneproject. Vermijd een groep dicht bij één dock: een kleine hoekfout wordt pas op afstand zichtbaar.
+Kies vijf vaste, goed bereikbare punten op stabiele ondergrond, verspreid over het relevante maaigebied. Drie dienen voor de berekening; twee blijven buiten die berekening voor controle. Dit aantal is een praktische ontwerpkeuze, geen wiskundig minimum. De punten hoeven op geen enkele foto zichtbaar te zijn. Vermijd een groep dicht bij één dock: een kleine hoekfout wordt pas op afstand zichtbaar.
 
 Plaats beide maaiers na elkaar reproduceerbaar bij dezelfde punten met een positioneermal met aanslagen. De mal legt één gedefinieerd chassisreferentiepunt en de richting vast. Alleen op het oog boven een stip parkeren voldoet niet. Controleer dat de mal voor beide chassis hetzelfde fysieke referentiepunt oplevert. Verplaats geen dock voor deze procedure.
 
@@ -45,11 +47,23 @@ Bij kopiëren krijgen werkgebied en obstakels exact dezelfde omzetting. Het doel
 
 De eerste implementatie kan één bewaarde registratie .100 naar .244 gebruiken. Een migratie van alle kaarten naar een nieuwe databasevorm is niet nodig om deze foutbron weg te nemen. De blijvende tuinreferentie en aparte beeldkalibratie bepalen wel de verdere richting.
 
-## Nauwkeurig tekenen op beeld
+## Nieuwe grenzen zonder foto
 
-Voor de gewenste ervaring wordt een drone-orthofoto aan ingemeten grondpunten gekoppeld. Gebruik voldoende scherpe beelden, grondresolutie en spreiding van referentiepunten, passend bij terrein en gewenste tolerantie. Reserveer extra onafhankelijke controlepunten; punten waarop het beeld is passend gemaakt leveren op zichzelf geen onafhankelijke nauwkeurigheidscontrole. Het aantal beeldreferenties wordt voor de opname bepaald, niet automatisch gelijkgesteld aan de drie maaier-fitpunten.
+Nieuwe gebieden worden met de maaier op de grond opgenomen via de bestaande begeleide mappingflow. Een aanvullende puntmeting kan hoekpunten vastleggen; rechte segmenten mogen alleen worden verbonden waar de fysieke grens ook recht is. Gebogen randen worden gevolgd en bemonsterd. De vastgelegde punten verschijnen direct in de metrische tuinkaart. Na gevalideerde registratie kunnen andere maaiers dezelfde grondgeometrie gebruiken zonder opnieuw het hele gebied op te nemen.
 
-De keten wordt:
+De standaardketen wordt:
+
+```text
+fysiek gemeten grens -> vaste tuincoördinaten -> gecontroleerd maaierframe
+```
+
+Tekenen op een gewone satellietfoto blijft mogelijk als benadering, maar levert zonder aanvullende grondcontrole geen centimetergarantie. Dat is een informatiegrens: niet-zichtbare details en onbekende lokale beeldfouten kunnen niet uit een fotoklik worden teruggevonden. Als de gebruiker uitsluitend op satellietbeeld wil tekenen, moet deze beperking expliciet blijven; fysieke meting is een alternatief en geen stilzwijgend equivalente invulling van satelliet-only tekenen.
+
+## Optionele nauwkeurige beeldlaag
+
+Een gebruiker met geschikte eigen beelden kan aanvullend een drone-orthofoto aan ingemeten grondpunten koppelen. Dit is geen onderdeel van de vereiste installatie- of kopieerprocedure. Gebruik voldoende scherpe beelden, grondresolutie en spreiding van referentiepunten, passend bij terrein en gewenste tolerantie. Reserveer extra onafhankelijke controlepunten; punten waarop het beeld is passend gemaakt leveren op zichzelf geen onafhankelijke nauwkeurigheidscontrole. Het aantal beeldreferenties wordt voor de opname bepaald, niet automatisch gelijkgesteld aan de drie maaier-fitpunten.
+
+Alleen voor die optionele functie geldt:
 
 ```text
 dronebeeld -> vaste tuincoördinaten -> gecontroleerd maaierframe
