@@ -330,17 +330,34 @@ export interface ZoneCopyResult {
   warnings?: string[];
 }
 
+export interface ZoneCopyAlignment {
+  alignmentId: string;
+  phase: 'source_first' | 'source_second' | 'target_first' | 'target_second' | 'ready';
+  sourceSn: string;
+  targetSn: string;
+  canonical: string;
+  expiresAt: number;
+  dockAtB?: LocalPoint;
+  captures: { source: unknown[]; target: unknown[] };
+}
+
+/** Capture the next required observation at the physically confirmed source dock. */
+export async function captureZoneCopyAlignment(sn: string, source: string, canonical: string, alignmentId?: string): Promise<ZoneCopyAlignment> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/alignment`, { canonical, alignmentId, atSourceDock: true });
+  return res.json();
+}
+
 /** Plan zonder te schrijven. Invoerfouten (400/404/409) komen als Error met de servertekst. */
-export async function previewZoneCopy(sn: string, source: string, canonical: string, dockAtB: LocalPoint, withObstacles = true, measurementId?: string): Promise<ZoneCopyPlan> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, dockAtB, withObstacles, measurementId });
+export async function previewZoneCopy(sn: string, source: string, canonical: string, alignmentId: string, withObstacles = true): Promise<ZoneCopyPlan> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, alignmentId, withObstacles });
   return res.json();
 }
 
 export async function copyZone(
-  sn: string, source: string, canonical: string, dockAtB: LocalPoint,
-  opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean; measurementId?: string } = {},
+  sn: string, source: string, canonical: string, alignmentId: string,
+  opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean } = {},
 ): Promise<ZoneCopyResult> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, dockAtB, ...opts });
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, alignmentId, ...opts });
   return res.json();
 }
 

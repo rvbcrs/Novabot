@@ -1,99 +1,87 @@
-# Gedeelde tuinreferentie voor kopiëren en nauwkeurig tekenen
+# Verplichte dockmeting bij zonekopieën
 
-Status: voorstel op verzoek van Ramon. Nog niet geïmplementeerd of fysiek gevalideerd. Er worden voor dit ontwerp geen apparaten, kaarten, radiokoppelingen of firmware gewijzigd. Uitvoering wordt gevolgd in Beads onder `Novabot-55f`; beeldvalidatie blijft onderdeel van `.17`.
+Status: lokale testimplementatie, nog niet gedeployed. De eerste herhaalmeting op .100 voldoet niet aan de acceptatiegrenzen; kopiëren via deze methode is nog niet fysiek gevalideerd. Er is geen nauwkeurigheidsgarantie en geen vrijgave voor autonoom maaien op basis van deze proef. Uitvoering wordt gevolgd onder Beads `Novabot-55f`.
 
-## Besluit
+## Besluit en afbakening
 
-De standaardoplossing moet volledig zonder drone, dronefoto, RTK-walker of externe landmeetapparatuur werken. Gebruik de maaiers zelf om vaste fysieke grondpunten te meten en bewaar de koppeling tussen hun kaartframes. Kopiëren gebruikt deze gemeten koppeling, niet een aangewezen dock op een foto. Een eenvoudige positioneermal of herhaalbare aanslag helpt om hetzelfde fysieke chassisreferentiepunt te meten; extra GNSS-meethardware is geen voorwaarde.
+Iedere nieuwe zonekopie vereist dat beide maaiers hetzelfde fysieke bronlaadstation met hun bestaande camera meten. De doelmaaier rijdt daarvoor vóór het dock van de bronmaaier, zonder te docken. Een dronefoto, satellietklik, RTK-walker of externe landmeetapparatuur is niet nodig. De gebruiker rijdt zelf; de wizard stuurt geen rijcommando's.
 
-De kaartinterface kan alle zones, obstakels, docks, kanalen en meetpunten rechtstreeks op een metrisch raster tonen. Een satellietlaag is optionele achtergrond. Het ontbreken of uitschakelen van beeld mag meten, registreren, kopiëren, backup of restore niet verhinderen. Dronebeelden zijn uitsluitend een optionele uitbreiding voor gebruikers die ze hebben.
+Dit vervangt voor de huidige implementatie het eerdere voorstel voor een eenmalige, blijvend opgeslagen registratie. De wizard gebruikt een sessie in servergeheugen met een geldigheid van **20 minuten vanaf de start**, gebonden aan bronmaaier, doelmaaier en gekozen zone. Na succesvolle opslag van de kopie wordt de sessie verbruikt. Een serverherstart, verlopen sessie of volgende kopie vraagt nieuwe metingen. Wijzigen van bron of zone wist de wizardregistratie; wijzigen van de optie voor obstakels behoudt de metingen maar vraagt een nieuwe preview.
 
-De bestaande, in de praktijk gebruikte .100-kaart kan aanvankelijk het numerieke tuinframe leveren. Haar native bestanden hoeven daarvoor niet te veranderen. De bijbehorende grondpunten worden vervolgens de blijvende fysieke referentie: een latere afwijking van .100 mag de tuinreferentie niet automatisch mee verschuiven. Een gemeenschappelijke lokale referentie vereist geen nauwkeurige absolute WGS84-positie. Die absolute koppeling is een afzonderlijke meting als uitwisseling met geografische brondata nodig is.
+Een satellietlaag of dronefoto blijft optionele weergave. Geen beeldlaag bepaalt de omrekening van de gekopieerde navigatiegeometrie. De eigen docks en LoRa-koppelingen blijven behouden; de meetprocedure wijzigt `pos.json` niet.
 
-## Eenmalige meetprocedure
+## Wizard en eerste praktijktest
 
-Kies vijf vaste, goed bereikbare punten op stabiele ondergrond, verspreid over het relevante maaigebied. Drie dienen voor de berekening; twee blijven buiten die berekening voor controle. Dit aantal is een praktische ontwerpkeuze, geen wiskundig minimum. De punten hoeven op geen enkele foto zichtbaar te zijn. Vermijd een groep dicht bij één dock: een kleine hoekfout wordt pas op afstand zichtbaar.
+1. **Bron, eerste meting:** zet .100 stil vóór zijn eigen dock, met het patroon in beeld, zonder te docken. Bevestig het fysieke bronstation en neem de meting op.
+2. **Bron, herhaalmeting:** verplaats .100 ongeveer 20 cm, houd hetzelfde patroon in beeld, stop en meet opnieuw. De gemeten verplaatsing moet minstens 15 cm zijn.
+3. **Doel, eerste meting:** maak ruimte met .100. Rijd .244 vóór hetzelfde dock van .100, zonder te docken. Bevestig opnieuw het fysieke bronstation, stop en meet.
+4. **Doel, herhaalmeting:** verplaats .244 ongeveer 20 cm en meet hetzelfde patroon opnieuw terwijl hij stilstaat.
+5. **Preview en toepassen:** zet .244 terug op zijn eigen dock met laadcontact. Controleer zone, obstakels en voorgesteld dockkanaal; pas daarna toe via de bestaande bevestigde kaartoverdracht.
 
-Plaats beide maaiers na elkaar reproduceerbaar bij dezelfde punten met een positioneermal met aanslagen. De mal legt één gedefinieerd chassisreferentiepunt en de richting vast. Alleen op het oog boven een stip parkeren voldoet niet. Controleer dat de mal voor beide chassis hetzelfde fysieke referentiepunt oplevert. Verplaats geen dock voor deze procedure.
+Elke opname is een expliciete gebruikersactie. Het patroon identificeert het station niet uniek: daarom blijft de fysieke bronstationbevestiging bij iedere meting verplicht. Ontbrekende firmwareondersteuning, onvoldoende verse of onbetrouwbare metingen blokkeren de flow. Er is geen fotoklik, sleepbare kopieermarker of losse positiemeting als omweg. Annuleren of opnieuw beginnen blijft mogelijk; late antwoorden mogen een gesloten of gewijzigde wizard niet herstellen.
 
-De wizard verzamelt per plaatsing verse, tijdgestempelde lokale navigatieposes en de bijbehorende kwaliteitsgegevens. Meerdere pakketten met dezelfde sensorwaarde en oude ontvangerstempel tellen niet als onafhankelijke metingen. Een meetvenster geeft spreiding, niet automatisch een bewijs van juistheid. Herhaal de plaatsing, meet opnieuw op een ander moment en keer aan het eind terug naar het beginpunt om tijdsafhankelijke afwijkingen zichtbaar te maken.
+De eerste proef stopt al na stap 2 als dezelfde maaier hetzelfde stilstaande station niet voldoende reproduceerbaar meet. Pas na een geslaagde bronproef volgt de vergelijking tussen beide maaiers. Lokale tests en een succesvolle build vervangen deze apparaattest niet.
 
-Gebruik de effectieve lokale navigatiepose die ook voor de kaart wordt gebruikt. Zo wordt eventuele interne lokalisatiecompensatie niet ten onrechte genegeerd. Ligt het malreferentiepunt buiten het gerapporteerde voertuigpunt, reken dan de bekende offset om met de volledige oriëntatie. Raw GNSS vraagt daarnaast de geverifieerde antenne-offset; een antennepositie is niet hetzelfde als een chassis- of maaimespositie.
+## Berekening en controles in de testcode
 
-Leg tegelijk vast dat het referentieframe van .100 nog overeenkomt met zijn bestaande fysieke grens. Succesvol maaien is relevant praktijkbewijs; nieuwe controlepunten alleen reconstrueren niet automatisch de historische juistheid van iedere ingelopen grens.
+Gebruik de effectieve lokale navigatiepose, inclusief de interne lokalisatiecompensatie. De camera rapporteert een relatieve pose; de gecontroleerde richting van die transformatie en de volledige 3D-oriëntatie moeten behouden blijven. De lokalisatie-odometrie gebruikt het GPS-referentiepunt. Reken dit via de gemeten `base_link`–`gps_link`-transformatie naar het voertuigreferentiepunt om voordat de markerpose wordt samengesteld.
 
-## Omrekening en acceptatie
-
-Begin met het bestaande model: beide maaierframes hebben dezelfde UTM-gridassen en schaal. Voor ieder puntpaar is de kandidaatverschuiving:
-
-```text
-t_i = gemeten_punt_244_i - gemeten_punt_100_i
-punt_244 = punt_100 + t
-```
-
-Bereken één verschuiving uit de drie meetpunten. De spreiding tussen de afzonderlijke verschuivingen en de fouten op de twee ongebruikte controlepunten toetsen of dit model klopt. Een verkeerde meting wordt niet stilzwijgend passend gemaakt: toon afwijking, verwerp een ongeldige reeks en hermeet.
-
-Als meerdere meetrondes een echte constante hoekafwijking aantonen, kan een starre omzetting `R * punt + t` worden onderzocht. Gebruik geen schaalverandering, rek of homografie om navigatiepolygonen op slechte metingen te laten passen. Een onverwachte hoekfout is eerst reden om meetpunt, lokalisatie en assen te controleren.
-
-Rapporteer maximale controlefout, gemiddelde fout, herhaalbaarheid en het gebied waarbinnen gecontroleerd is. Een doel zoals maximaal 3 cm op de gemeten controlepunten is een acceptatie-eis die nog bewezen moet worden. Het is geen gegarandeerde maainauwkeurigheid overal en altijd. De uiteindelijke fout bevat ook de oorspronkelijke grensmeting, lokalisatie tijdens rijden, stuurgedrag en de afstand van voertuigreferentie tot maaimes. Als de hardware een gewenste grens niet haalt, moet dat zichtbaar blijven; software kan geen nauwkeurigheid bijmaken.
-
-## Hergebruik en veranderingen
-
-Bewaar de goedgekeurde transformatie met ruwe meetreeksen, fysieke puntidentiteiten, meetpuntgeometrie, kwaliteitsresultaten en duurzame bron-/doelframe-identiteiten. Een serverherstart en het toevoegen van een zone mogen de koppeling niet wissen. Het huidige vluchtige meet-ID van vijf minuten en de in-memory frame-revisie zijn hiervoor onvoldoende.
-
-Een gewijzigde navigatie-oorsprong, restore naar een ander frame, basisreferentie of relevante herlokalisatie vraagt nieuwe verificatie. Alleen een hash van `pos.json` is onvoldoende: de gemeten jump-compensatie kan veranderen zonder bestandswijziging. Bewaar fysieke controlepunten en gebruik runtime-diagnostiek om twijfel zichtbaar te maken; verschuif nooit automatisch de hele tuin op basis van één nieuwe dockpose. Een herstart is geen bewijs van een fout, maar mag ook geen ongecontroleerde nieuwe koppeling opleveren.
-
-Bij kopiëren krijgen werkgebied en obstakels exact dezelfde omzetting. Het doeldock blijft een apart object in het doelmaaierframe. Genereer de dockverbinding met de bestaande geometrie- en obstakelcontroles en pas toe via de bevestigde bestandsoverdracht. Het verplaatsen van een echt dock wijzigt zijn pose en verbinding, niet de fysieke tuin. De huidige 5cm-gate bij het dock blijft bestaande code; dit ontwerp verandert die grens niet en gebruikt haar niet als enige bewijs voor de koppeling.
-
-De eerste implementatie kan één bewaarde registratie .100 naar .244 gebruiken. Een migratie van alle kaarten naar een nieuwe databasevorm is niet nodig om deze foutbron weg te nemen. De blijvende tuinreferentie en aparte beeldkalibratie bepalen wel de verdere richting.
-
-## Nieuwe grenzen zonder foto
-
-Nieuwe gebieden worden met de maaier op de grond opgenomen via de bestaande begeleide mappingflow. Een aanvullende puntmeting kan hoekpunten vastleggen; rechte segmenten mogen alleen worden verbonden waar de fysieke grens ook recht is. Gebogen randen worden gevolgd en bemonsterd. De vastgelegde punten verschijnen direct in de metrische tuinkaart. Na gevalideerde registratie kunnen andere maaiers dezelfde grondgeometrie gebruiken zonder opnieuw het hele gebied op te nemen.
-
-De standaardketen wordt:
+Voor beide maaiers wordt de positie van hetzelfde markerpatroon in hun eigen kaartframe bepaald. De huidige kaartframes gebruiken dezelfde UTM-gridassen en schaal. Met `marker_A` en `marker_B` als gemiddelden van de twee geaccepteerde metingen:
 
 ```text
-fysiek gemeten grens -> vaste tuincoördinaten -> gecontroleerd maaierframe
+verschuiving = marker_B - marker_A
+punt_B = punt_A + verschuiving
+dock_A_in_B = opgeslagen_dock_A + verschuiving
 ```
 
-Tekenen op een gewone satellietfoto blijft mogelijk als benadering, maar levert zonder aanvullende grondcontrole geen centimetergarantie. Dat is een informatiegrens: niet-zichtbare details en onbekende lokale beeldfouten kunnen niet uit een fotoklik worden teruggevonden. Als de gebruiker uitsluitend op satellietbeeld wil tekenen, moet deze beperking expliciet blijven; fysieke meting is een alternatief en geen stilzwijgend equivalente invulling van satelliet-only tekenen.
+Het markerpatroon wordt dus niet gelijkgesteld aan het opgeslagen dockreferentiepunt. Werkgebied en obstakels krijgen dezelfde verschuiving. De opgeslagen dockpose van .244 bepaalt zijn eigen kanaalaansluiting. Het doeldock zelf wordt niet verplaatst.
 
-## Optionele nauwkeurige beeldlaag
+De huidige controles omvatten verse RTK Fixed/lokalisatie, stabiele stilstand, tijdkoppeling tussen camera en odometrie van maximaal 0,12 seconde, passende meetvensters, en ongewijzigde brongeometrie en frame-identiteiten. De herhaalde markerposities moeten binnen **3 cm in 3D** en **1 graad yaw** overeenkomen. De headings tussen beide maaiers worden eveneens gecontroleerd. De bestaande geometrie-, obstakel-, dock- en bevestigde overdrachtscontroles blijven gelden.
 
-Een gebruiker met geschikte eigen beelden kan aanvullend een drone-orthofoto aan ingemeten grondpunten koppelen. Dit is geen onderdeel van de vereiste installatie- of kopieerprocedure. Gebruik voldoende scherpe beelden, grondresolutie en spreiding van referentiepunten, passend bij terrein en gewenste tolerantie. Reserveer extra onafhankelijke controlepunten; punten waarop het beeld is passend gemaakt leveren op zichzelf geen onafhankelijke nauwkeurigheidscontrole. Het aantal beeldreferenties wordt voor de opname bepaald, niet automatisch gelijkgesteld aan de drie maaier-fitpunten.
+**De headinggrens van 1 graad is uitsluitend een controle op grove tegenspraak.** Zij bewijst geen centimeternauwkeurigheid verderop in de tuin: 1 graad komt op 25 meter overeen met circa 44 cm dwarsafwijking. Er wordt geen hele zone gedraaid om een enkele camerarichting passend te maken. Ook twee goede metingen bij één dock bewijzen de ligging van de volledige zone nog niet.
 
-Alleen voor die optionele functie geldt:
+Een `pos.json`-/dockfingerprint en serverframerevisie herkennen bestands- en bekende framewijzigingen, maar niet iedere interne lokalisatiecompensatie. Die compensatie kan tijdens rijden veranderen zonder dat een bestandshash wijzigt. De 20-minutensessie voorkomt langdurig hergebruik, maar neemt dit risico niet weg. Onafhankelijke controles van de bestaande fysieke grens, verspreid over de tuin en na rijden, blijven nodig voor globale acceptatie.
 
-```text
-dronebeeld -> vaste tuincoördinaten -> gecontroleerd maaierframe
-```
+## Live bronproef op .100: afgekeurd
 
-Een nieuwe foto of verplaatste weergavepin verandert bestaande grondzones niet. Nieuw tekenen gebruikt uitsluitend een goedgekeurde beeldkoppeling als centimeternauwkeurigheid wordt verlangd. Een gewone satellietlaag blijft bruikbaar als achtergrond, maar scherp inzoomen of één passend dock maakt haar niet aantoonbaar centimeters nauwkeurig. Controleer ook plekken met reliëf, begroeiing en slecht zichtbare grenzen.
+De ruwe opnamen en het controlescript staan lokaal in `research/captures/2026-09-26-dock-marker/` (gitignored). De bestanden `novabot-aruco-source-first.json` en `novabot-aruco-source-second.json` zijn omgerekend met `novabot-analyze-marker.py`. Dit zijn diagnostische opnamen; de nieuwe wizard/extended-command-code is daarvoor niet gedeployed.
 
-## Bestaande hardware: wat wel en niet nodig is
+| Gemiddelde markerpose in .100-kaartframe | Eerste stand | Tweede stand |
+|---|---:|---:|
+| x (m) | 0,109850 | 0,096185 |
+| y (m) | −0,056264 | −0,015350 |
+| z (m) | 0,041508 | 0,094297 |
+| yaw | 92,1641° | 89,5622° |
+| Unieke beeldtijdstempels | 60 | 60 |
+| Unieke uitgegeven `/aruco/pose`-waarden | 4 | 1 |
 
-Eén gedeelde RTK-basis is niet vereist voor de gemeten lokale koppeling. Ook meerdere vaste bases kunnen in één gecontroleerde referentie werken. Een gezamenlijke vaste en ingemeten correctiereferentie kan later de onderhoudslast verminderen, maar neemt ontvangst-, multipath- of stuurfouten niet weg.
+Hetzelfde vaste patroon verschilt tussen de twee standen **4,31 cm horizontaal, 6,82 cm in 3D en 2,60 graden in yaw**. De maaierverplaatsing was circa 23,4 cm. Dit overschrijdt de herhaalgrenzen; de koppeling is hiermee **niet bruikbaar verklaard**. De grenzen worden niet verruimd om deze proef alsnog te laten slagen.
 
-Beide Novabots eenvoudig hetzelfde LoRa-paar geven is geen verantwoorde implementatie: die verbinding draagt behalve RTK ook dockhandshake, status en besturingscommando's. De huidige gescheiden koppelingen blijven behouden. Het scheiden van correctiedata en besturing zou een aparte, op hardware te bewijzen wijziging zijn.
+Zestig unieke beeldtijdstempels zijn hier geen bewijs van zestig onafhankelijke poses: de detector gaf in de eerste opname slechts vier verschillende poses en in de tweede één pose uit. Kleine spreiding binnen zo'n opname bewijst daarom geen evenredig kleine meetfout; kwantisatie van gedetecteerde beeldhoeken kan herhaalde poses opleveren. Een aparte, latere alleen-lezen beeldcontrole (`novabot-camera-hash-shm-100.json`) gaf 30 beelden met 30 verschillende pixelhashes in circa 8 seconden: die stream stond toen niet stil. Omdat deze controle niet gelijktijdig met de poses plaatsvond, bewijst zij niet dat de eerdere 60 poses onafhankelijk waren. De detectoruitvoer en afstandsafhankelijkheid moeten verder worden onderzocht. Een vergelijking .100–.244 en een onafhankelijke grenscontrole zijn nog niet uitgevoerd.
 
-De bestaande RTK-walker is bruikbaar als verdere meetvoorziening. Hij kan passief van chargerbron wisselen. Op exact dezelfde onbeweeglijke antennepositie achtereenvolgens A, B en opnieuw A meten kan het verschil tussen de GNSS-referenties onderzoeken. De huidige bronwissel maakt een oude fix echter niet aantoonbaar ongeldig en de parser legt geen volledige RTCM1005/1006-basisreferentie vast. Bovendien kan de maaier zelf GNSS-sprongen compenseren. De walker is daarom nog geen bewezen vervanger van lokale controlepunten. NTRIP-metingen vereisen eveneens een expliciete koppeling naar het tuinframe en een bekende datum/epoch als absolute centimeters worden verlangd.
+Een derde diagnostische opname (`novabot-aruco-source-close.json`) vanaf circa 35 cm camera-afstand gaf marker `(0,140179; -0,055441; 0,081412)` m en yaw `91,3374°`. Ten opzichte van de eerste stand is dat circa 3,03 cm XY, 5,01 cm in 3D en 0,83° yaw. Ook die vergelijking voldoet nog niet aan de positiegrens. Een tweede dichtbij-stand wordt apart gemeten. De latere opnamen melden bovendien `RobotStatus.error_status=8` (LoRa-waarschuwing), terwijl actuele BestPos Fixed en LOC_SUCCESS zijn; de nieuwe handler wijst die gezondheidstoestand momenteel af. De diagnostische opnamen mogen daarom niet als geslaagde productmeting worden gebruikt.
 
-## Bestaande code om te hergebruiken
+## Vervolgprincipes, afzonderlijk van deze wizard
 
-- `dashboard/src/components/map/MowerMap.tsx`: `copyMarkerFromMower` biedt al een fysieke meetknop; uitbreiden naar een begeleide, blijvend bewaarde registratie.
-- `server/src/routes/dashboard.ts`: bestaande measurement- en copyroutes; tijdelijke meet-ID's niet als permanente kalibratie opslaan.
-- `server/src/services/positionTelemetry.ts`: verse kwaliteitsvensters; sensoridentiteit en herhaalde fysieke plaatsingen blijven aanvullende eisen.
-- `server/src/services/zoneCopy.ts`: `transformPoints`, `planZoneCopy` en kanaalcontrole hergebruiken.
-- `server/src/services/dockChannelRepair.ts`: onafhankelijke native docks en kaartvergelijking behouden.
-- `server/src/services/frameValidation.ts`: duurzame frame-identiteit en fysieke verificatie onderscheiden van vluchtige processtatus.
-- `server/src/services/dockPhotoReference.ts`: weergavekalibratie afzonderlijk houden van fysieke navigatie.
+Een blijvend tuinreferentiestelsel met meerdere fysieke meetpunten is een mogelijke vervolgstap, geen eigenschap van de huidige sessie. Gebruik daarvoor reproduceerbare grondpunten verspreid over het maaigebied, afzonderlijke berekenings- en controlepunten, herhaalde plaatsingen en een terugkeer naar het beginpunt. De bestaande .100-kaart kan het numerieke referentieframe leveren; fysieke controlepunten voorkomen dat een latere lokalisatieafwijking stilzwijgend de hele tuin verschuift. Een blijvende registratie vereist eigen opslag, invalidatie en onafhankelijke fysieke validatie voordat zij de verplichte bezoeken zou kunnen vervangen.
 
-## Onderbouwing
+Nieuwe grenzen kunnen zonder foto met de maaier worden opgenomen. Een gewone satellietfoto is een achtergrond of benadering, geen garantie voor enkele centimeters. Een optionele drone-orthofoto mag afzonderlijk aan gecontroleerde grondpunten worden gekoppeld, met onafhankelijke beeldcontrolepunten. Verplaatsen van een weergavepin of vervangen van een foto mag bestaande navigatiepolygonen niet wijzigen. Absolute WGS84-nauwkeurigheid is een afzonderlijke kalibratievraag.
 
-- [Trimble: basiscoördinaten en samenhang tussen meerdere bases](https://help.fieldsystems.trimble.com/trimble-access/2021.10/en/GNSS-base-coordinates.htm). Ongekoppelde basisreferenties vereisen afzonderlijke kalibratie; één gezamenlijke referentie moet worden gemeten.
-- [Trimble: factoren die RTK-nauwkeurigheid beperken](https://receiverhelp.trimble.com/oem-gnss/position-modes-critical-factors-rtk.html). Basispositie, ontvangst en multipath blijven foutbronnen. De genoemde productspecificaties zijn geen specificaties van Novabot.
-- [Pix4D: relatieve en absolute beeldnauwkeurigheid](https://support.pix4d.com/hc/en-us/articles/202558889). Grondresolutie, beeldkwaliteit en referentiepunten begrenzen het resultaat.
-- [Pix4D: grondreferenties en onafhankelijke controlepunten](https://support.pix4d.com/hc/en-us/articles/115000140963). Fit en onafhankelijke toetsing hebben verschillende functies.
+Een gedeelde RTK-basis is geen voorwaarde voor een gemeten lokale koppeling. De maaiers hetzelfde LoRa-paar geven is geen geschikte oplossing: die verbinding draagt ook dockhandshake, status en besturing. Externe meetapparatuur en wijzigingen aan die radiokoppeling vallen buiten deze flow.
 
-De meetopzet en softwarekeuzes hierboven zijn een voorstel voor Novabot op basis van deze principes en de onderzochte lokale code, geen reeds aangetoonde nauwkeurigheidsclaim.
+## Implementatiepunten
+
+- `dashboard/src/components/map/MowerMap.tsx`: verplichte vijfstappenwizard; `dashboard/src/api/client.ts`: alignment-, preview- en copyaanroepen.
+- `server/src/services/copyAlignment.ts`: tijdelijke sessie, vier metingen, herhaalcontrole en omrekening. `server/src/routes/dashboard.ts`: preview/apply accepteren alleen een passende voltooide `alignmentId`, geen clientcoördinaat als alternatief.
+- `research/extended_commands.py`: lokale meetopdracht voor de bestaande ArUco-voorziening; nog niet op de maaiers geplaatst.
+- `server/src/services/zoneCopy.ts` en `dockChannelRepair.ts`: bestaande dock-, geometrie- en kanaalcontroles blijven de gedeelde basis.
+- `server/src/services/frameValidation.ts` en `dockPhotoReference.ts`: navigatieframe en optionele weergavekalibratie blijven afzonderlijk.
+
+## Achtergrond bij optionele verdere kalibratie
+
+- [Trimble: basiscoördinaten en samenhang tussen meerdere bases](https://help.fieldsystems.trimble.com/trimble-access/2021.10/en/GNSS-base-coordinates.htm).
+- [Trimble: factoren die RTK-nauwkeurigheid beperken](https://receiverhelp.trimble.com/oem-gnss/position-modes-critical-factors-rtk.html). Dit zijn geen Novabot-productspecificaties.
+- [Pix4D: relatieve en absolute beeldnauwkeurigheid](https://support.pix4d.com/hc/en-us/articles/202558889).
+- [Pix4D: grondreferenties en onafhankelijke controlepunten](https://support.pix4d.com/hc/en-us/articles/115000140963).
+
+Deze principes ondersteunen de vervolgopzet; de lokale apparaatmetingen bepalen of de concrete Novabot-methode voldoet.

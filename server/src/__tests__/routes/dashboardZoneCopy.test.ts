@@ -16,6 +16,19 @@ vi.mock('../../services/dockChannelRepair.js', () => ({
   })),
 }));
 
+// Marker acquisition/validation is exercised in copyAlignment.test.ts; these
+// route tests verify that no old photo/position request bypasses that service.
+vi.mock('../../services/copyAlignment.js', () => ({
+  beginCopyAlignment: vi.fn(async () => ({ alignmentId: 'verified', phase: 'source_first' })),
+  getCopyAlignment: vi.fn(() => ({ alignmentId: 'verified', phase: 'target_first' })),
+  captureCopyAlignment: vi.fn(async () => ({ alignmentId: 'verified', phase: 'source_second' })),
+  validateCopyAlignment: vi.fn((id: string) => {
+    if (!['verified', 'far'].includes(id)) throw new Error('Unknown alignment');
+    return { dockAtB: id === 'far' ? { x: 50, y: 50 } : { x: 0.1, y: -0.5 } };
+  }),
+  consumeCopyAlignment: vi.fn(),
+}));
+
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
   writeRawPublish: vi.fn().mockReturnValue(false),
@@ -121,6 +134,7 @@ import { mapApplyTiming, PHASE_KEY, ERROR_KEY } from '../../services/mapApplySta
 import { isDeviceOnline } from '../../mqtt/broker.js';
 import { mapRepo } from '../../db/repositories/index.js';
 import { withConfirmedCopyDocks } from '../../services/dockChannelRepair.js';
+import { captureCopyAlignment, consumeCopyAlignment, validateCopyAlignment } from '../../services/copyAlignment.js';
 
 const app = express();
 app.use(express.json());
@@ -167,8 +181,52 @@ describe('zone copy routes', () => {
     addRow(B, 'map0tocharge_unicom', 'unicom', [dockB, { x: 0.3, y: -0.8 }]);
   });
 
+  it('a photo point or legacy position token cannot bypass the marker wizard', async () => {
+    const before = mapRepo.findByMowerSn(B);
+    for (const suffix of ['', '/preview']) for (const extra of [
+      { dockAtB: dockB }, { dockAtB: dockB, alignmentId: 'verified' },
+      { measurementId: 'old-position-token', alignmentId: 'verified' }, { alignmentId: 'unknown' },
+    ]) {
+      const res = await request(server).post(url(suffix)).send({ canonical: 'map0', ...extra });
+      expect(res.status).toBe(409);
+      expect(mapRepo.findByMowerSn(B)).toEqual(before);
+    }
+    expect(publishToExtended).not.toHaveBeenCalled();
+    expect(consumeCopyAlignment).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed copy options before measurement or mutation', async () => {
+    for (const suffix of ['', '/preview']) for (const body of [
+      [], { canonical: ['map0'] }, { canonical: 'map0', name: 42 },
+      { canonical: 'map0', withObstacles: 'false' }, { canonical: 'map0', acceptChannel: 0 },
+    ]) {
+      expect((await request(server).post(url(suffix)).send(body)).status).toBe(400);
+    }
+    expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
+    expect(consumeCopyAlignment).not.toHaveBeenCalled();
+  });
+
+  it('a changed or incomplete alignment is refused before any mutation', async () => {
+    vi.mocked(validateCopyAlignment).mockImplementationOnce(() => { throw new Error('Frame changed'); });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
+    expect(res.status).toBe(409);
+    expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
+    expect(consumeCopyAlignment).not.toHaveBeenCalled();
+    expect(publishToExtended).not.toHaveBeenCalled();
+  });
+
+  it('capture requires physical source-dock confirmation and server chooses the mower', async () => {
+    expect((await request(server).post(url('/alignment')).send({ canonical: 'map0' })).status).toBe(400);
+    expect(captureCopyAlignment).not.toHaveBeenCalled();
+    expect((await request(server).post(url('/alignment')).send({ canonical: 'map0', atSourceDock: true, side: 'target' })).status).toBe(200);
+    expect(captureCopyAlignment).toHaveBeenLastCalledWith('verified', 'source');
+    expect((await request(server).post(url('/alignment')).send({ canonical: 'map0', atSourceDock: true, alignmentId: 'verified' })).status).toBe(200);
+    expect(captureCopyAlignment).toHaveBeenLastCalledWith('verified', 'target');
+    expect(publishToExtended).not.toHaveBeenCalled();
+  });
+
   it('preview: 200 met plan, geen DB-mutatie, geen push', async () => {
-    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.canonical).toBe('map0');
@@ -179,22 +237,22 @@ describe('zone copy routes', () => {
   });
 
   it('preview: refusal komt als 200 met ok:false en leesbare tekst', async () => {
-    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: { x: 50, y: 50 } });
+    const res = await request(server).post(url('/preview')).send({ canonical: 'map0', alignmentId: 'far' });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(false);
     expect(res.body.refusal).toBe('too_far_from_dock');
     expect(typeof res.body.error).toBe('string');
   });
 
-  it('preview zonder dockAtB: 400 bad_dock, niets geschreven', async () => {
+  it('preview zonder verplichte uitlijning: 409, niets geschreven', async () => {
     const res = await request(server).post(url('/preview')).send({ canonical: 'map0' });
-    expect(res.status).toBe(400);
-    expect(res.body.reason).toBe('bad_dock');
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('alignment_required');
     expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
   });
 
   it('copy: na bevestigde preflight rijen opgeslagen; apply controleert dock opnieuw', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.map.canonicalName).toBe('map0');
@@ -203,6 +261,7 @@ describe('zone copy routes', () => {
     expect(res.body.obstacles).toEqual(['map0_0_obstacle']);
     expect(res.body.channels).toEqual(['map0tocharge_unicom']);
     expect(res.body.needsChannel).toBe(false);
+    expect(consumeCopyAlignment).toHaveBeenCalledWith('verified');
     const rows = mapRepo.findByMowerSn(B).map(r => r.canonical_name).sort();
     expect(rows).toEqual(['map0', 'map0_0_obstacle', 'map0tocharge_unicom']);
     await new Promise(r => setTimeout(r, 0));
@@ -211,14 +270,14 @@ describe('zone copy routes', () => {
   });
 
   it('copy: eigen naam wint van de bron-alias', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB, name: 'Achtertuin' });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified', name: 'Achtertuin' });
     expect(res.body.map.mapName).toBe('Achtertuin');
   });
 
   it('copy: an unconfirmed native dock is refused before any DB mutation or push', async () => {
     const before = mapRepo.findByMowerSn(B);
     vi.mocked(withConfirmedCopyDocks).mockRejectedValueOnce(new Error('Dockbestanden spreken elkaar tegen'));
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('dock_unconfirmed');
     expect(mapRepo.findByMowerSn(B)).toEqual(before);
@@ -227,14 +286,14 @@ describe('zone copy routes', () => {
 
   it('copy: 409 offline, niets geschreven', async () => {
     vi.mocked(isDeviceOnline).mockReturnValue(false);
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('offline');
     expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
   });
 
   it('copy: 409 met refusal-reden als het plan weigert', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: { x: 50, y: 50 } });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'far' });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('too_far_from_dock');
     expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
@@ -242,8 +301,8 @@ describe('zone copy routes', () => {
 
   it('stock firmware: 409 unsupported_firmware op beide routes', async () => {
     fw.supported = false;
-    expect((await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: dockB })).body.reason).toBe('unsupported_firmware');
-    expect((await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB })).body.reason).toBe('unsupported_firmware');
+    expect((await request(server).post(url('/preview')).send({ canonical: 'map0', alignmentId: 'verified' })).body.reason).toBe('unsupported_firmware');
+    expect((await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' })).body.reason).toBe('unsupported_firmware');
   });
 });
 
@@ -282,7 +341,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   afterEach(async () => { await new Promise(r => setTimeout(r, 60)); });
 
   it('meldt syncing → regenerating → settling → klaar', async () => {
-    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    const res = await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     expect(res.status).toBe(200);
     await tick();
     expect(phases()).toEqual(['syncing']);
@@ -305,7 +364,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
       }
       queueMicrotask(() => answer({ read_map_files_respond: data }));
     });
-    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     await answer({ sync_map_respond: { result: 0 } });
     await answer({ regenerate_per_map_files_respond: { result: 0 } });
     await tick(); ingestPositionTelemetry(B, { error_status: 0 });
@@ -315,7 +374,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   });
 
   it('keeps navigation locked if sync reports a failed restart despite result zero', async () => {
-    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     await answer({ sync_map_respond: { result: 0, restart: false } });
     await vi.waitFor(() => expect(phases().at(-1)).toBe('failed'));
     expect(isFrameUnvalidated(B)).toBe(true);
@@ -323,8 +382,8 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   });
 
   it('blocks concurrent writes and keeps planner timeout failed with navigation locked', async () => {
-    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB }); await tick();
-    expect((await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB })).status).toBe(409);
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' }); await tick();
+    expect((await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' })).status).toBe(409);
     await answer({ sync_map_respond: { result: 0 } }); await tick();
     await answer({ regenerate_per_map_files_respond: { result: 0 } });
     await new Promise(r => setTimeout(r, 80));
@@ -333,7 +392,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   });
 
   it('een mislukte sync_map laat failed staan met de reden', async () => {
-    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     await tick();
     await answer({ sync_map_respond: { result: 1, error: 'download failed' } });
     await tick();
@@ -343,7 +402,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   });
 
   it('een mislukte regenerate laat failed staan met de reden', async () => {
-    await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+    await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' });
     await tick();
     await answer({ sync_map_respond: { result: 0 } });
     await tick();

@@ -2691,6 +2691,7 @@ _MAP_OPERATION_LOCK = threading.RLock()
 _MAP_OPERATION_COMMANDS = {
     "read_map_files", "write_map_files", "sync_map", "regenerate_per_map_files",
     "reanchor_pos", "set_pos_origin", "restart_mapping", "set_coverage_planner_radius",
+    "measure_dock_marker",
 }
 
 
@@ -2717,6 +2718,291 @@ def run_extended_command(cmd_name, handler, params, respond):
             run()
     else:
         run()
+
+
+def _marker_quaternion(q):
+    values = tuple(float(q[k]) for k in "xyzw")
+    norm = math.sqrt(sum(v * v for v in values))
+    if not all(math.isfinite(v) for v in values) or abs(norm - 1) > .01:
+        raise ValueError("invalid marker/vehicle quaternion")
+    return tuple(v / norm for v in values)
+
+
+def _marker_qmul(a, b):
+    x, y, z, w = a
+    X, Y, Z, W = b
+    return (w * X + x * W + y * Z - z * Y,
+            w * Y - x * Z + y * W + z * X,
+            w * Z + x * Y - y * X + z * W,
+            w * W - x * X - y * Y - z * Z)
+
+
+def _marker_rotate(q, p):
+    return _marker_qmul(_marker_qmul(q, tuple(p) + (0,)),
+                        (-q[0], -q[1], -q[2], q[3]))[:3]
+
+
+def _marker_inverse(transform):
+    p, q = transform
+    qi = (-q[0], -q[1], -q[2], q[3])
+    return _marker_rotate(qi, tuple(-v for v in p)), qi
+
+
+def _marker_compose(a, b):
+    p, q = a
+    r, s = b
+    return tuple(x + y for x, y in zip(p, _marker_rotate(q, r))), _marker_qmul(q, s)
+
+
+def _marker_pose(pose):
+    p = tuple(float(pose["position"][k]) for k in "xyz")
+    if not all(math.isfinite(v) for v in p):
+        raise ValueError("non-finite marker/vehicle position")
+    return p, _marker_quaternion(pose["orientation"])
+
+
+def _marker_yaw(q):
+    x, y, z, w = q
+    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+
+def _marker_angle_delta(a, b):
+    return math.atan2(math.sin(a - b), math.cos(a - b))
+
+
+def _marker_stamp(msg):
+    stamp = msg["header"]["stamp"]
+    return float(stamp["sec"]) + float(stamp["nanosec"]) * 1e-9
+
+
+def _marker_frame_fingerprint(home="home0"):
+    """Only immutable frame values, encoded exactly like the server's float64 hash."""
+    import hashlib
+    with open(MAP_POS_FILE) as fh:
+        origin = json.load(fh)["utm_origin"]
+    with open(os.path.join(_map_home(home), "csv_file", "map_info.json")) as fh:
+        dock = json.load(fh)["charging_pose"]
+    values = [float(origin[k]) for k in ("x", "y", "z", "utm_zone")]
+    pose = [float(dock[k]) for k in ("x", "y", "orientation")]
+    if not all(math.isfinite(v) for v in values + pose) or not 1 <= values[3] <= 60 or values[3] % 1:
+        raise ValueError("invalid native map frame")
+    with open(MAP_CHARGING_STATION_FILE) as fh:
+        match = re.search(r"^\s*charging_pose:\s*\[([^\]]+)\]", fh.read(), re.M)
+    if not match:
+        raise ValueError("native charging pose YAML missing")
+    yaml_pose = json.loads("[" + match.group(1) + "]")
+    if len(yaml_pose) != 3 or not all(math.isfinite(float(v)) for v in yaml_pose):
+        raise ValueError("invalid native charging pose YAML")
+    if (math.hypot(pose[0] - yaml_pose[0], pose[1] - yaml_pose[1]) > .02 or
+            abs(_marker_angle_delta(pose[2], yaml_pose[2])) > .02):
+        raise ValueError("native dock metadata disagree")
+    body = {"origin": [struct.pack(">d", v).hex() for v in values],
+            "dock": [struct.pack(">d", v).hex() for v in pose]}
+    return hashlib.sha256(json.dumps(body, separators=(",", ":")).encode()).hexdigest()
+
+
+def _marker_robot_idle(msg):
+    # Explicit stock merged states FREE, CHARGING, STOP; never infer idle from no data.
+    return int(msg["merged_work_status"]) in (0, 4, 5) and int(msg["error_status"]) == 0
+
+
+def _marker_measurement_result(samples, start_wall, end_wall):
+    """Validate a finite observation window; pure so recorded captures can be replayed."""
+    image_rows = samples.get("/aruco/pose", [])
+    odom_rows = samples.get("/robot_combination_localization/odom", [])
+    map_rows = samples.get("/robot_decision/map_position", [])
+    static = samples.get("/tf_static", {}).get("gps_link")
+    if not static or static["header"]["frame_id"] != "base_link":
+        raise ValueError("base_link to gps_link static transform missing")
+    t = static["transform"]
+    base_gps = _marker_pose({"position": t["translation"], "orientation": t["rotation"]})
+    unique = {}
+    for row in image_rows:
+        stamp = _marker_stamp(row["data"])
+        if start_wall <= stamp <= end_wall:
+            if not 0 <= row["received"] - stamp <= 1.5:
+                raise ValueError("stale camera observation")
+            unique[stamp] = row["data"]
+    if len(unique) < 20:
+        raise ValueError("at least 20 fresh distinct marker images required")
+    first, last = min(unique), max(unique)
+    if last - first < 5 or last - first > 15:
+        raise ValueError("marker window must span 5 to 15 seconds")
+    health_topics = (
+        ("/bestpos_parsed_data", lambda d: int(d["qual"]) == 4),
+        ("/robot_combination_localization/combination_status", lambda d: int(d["status"]) == 200),
+        ("/robot_decision/robot_status", _marker_robot_idle),
+    )
+    for topic, valid in health_topics:
+        rows = [r for r in samples.get(topic, []) if first - 1.5 <= r["received"] <= last + .5]
+        if not rows or any(not valid(r["data"]) for r in rows):
+            raise ValueError("measurement requires stationary idle robot, RTK Fixed and LOC_SUCCESS: " + topic)
+        times = sorted(r["received"] for r in rows)
+        if times[0] > first or times[-1] < last - 1.5 or any(b - a > 1.5 for a, b in zip(times, times[1:])):
+            raise ValueError("health telemetry stale: " + topic)
+        if topic == "/bestpos_parsed_data":
+            receiver_times = sorted({_marker_stamp(r["data"]) for r in rows})
+            if (len(receiver_times) < 5 or receiver_times[0] > first or
+                    receiver_times[-1] < last - 1.5 or
+                    any(b - a > 1.5 for a, b in zip(receiver_times, receiver_times[1:])) or
+                    any(not 0 <= r["received"] - _marker_stamp(r["data"]) <= 1.5 for r in rows)):
+                raise ValueError("fresh distinct RTK receiver samples required")
+    if not odom_rows or not map_rows:
+        raise ValueError("localization/map pose missing")
+    markers, bases, pair_deltas = [], [], []
+    for stamp, msg in sorted(unique.items()):
+        if msg["header"]["frame_id"] != "aruco_tag":
+            raise ValueError("unexpected marker reference frame")
+        odom_row = min(odom_rows, key=lambda row: abs(_marker_stamp(row["data"]) - stamp))
+        odom = odom_row["data"]
+        pair_dt = abs(_marker_stamp(odom) - stamp)
+        if pair_dt > .12 or odom["header"]["frame_id"] != "map" or odom["child_frame_id"] != "gps_link":
+            raise ValueError("marker and map odometry cannot be paired")
+        if not 0 <= odom_row["received"] - _marker_stamp(odom) <= 1.5:
+            raise ValueError("stale localization odometry")
+        for part in ("linear", "angular"):
+            velocity = [float(odom["twist"]["twist"][part][k]) for k in "xyz"]
+            if any(not math.isfinite(v) or abs(v) > .03 for v in velocity):
+                raise ValueError("mower moving during marker capture")
+        map_base = _marker_compose(_marker_pose(odom["pose"]["pose"]), _marker_inverse(base_gps))
+        tag_base = _marker_pose(msg["pose"])
+        if math.sqrt(sum(v * v for v in tag_base[0])) > 1.5:
+            raise ValueError("dock marker more than 1.5 m from vehicle reference")
+        # Stock topic is BASE IN TAG, not tag in base. Its camera extrinsics are already applied.
+        map_tag = _marker_compose(map_base, _marker_inverse(tag_base))
+        map_row = min(map_rows, key=lambda row: abs(row["received"] - stamp))
+        map_pose = _marker_pose(map_row["data"])
+        if (abs(map_row["received"] - stamp) > .65 or
+                math.hypot(map_pose[0][0] - map_base[0][0], map_pose[0][1] - map_base[0][1]) > .05 or
+                abs(_marker_angle_delta(_marker_yaw(map_pose[1]), _marker_yaw(map_base[1]))) > .05):
+            raise ValueError("map_position disagrees with localization vehicle pose")
+        markers.append(map_tag)
+        bases.append(map_base)
+        pair_deltas.append(pair_dt)
+
+    def summarize(poses):
+        mean = [sum(p[0][i] for p in poses) / len(poses) for i in range(3)]
+        angles = [_marker_yaw(p[1]) for p in poses]
+        yaw = math.atan2(sum(math.sin(a) for a in angles), sum(math.cos(a) for a in angles))
+        radius = max(math.hypot(p[0][0] - mean[0], p[0][1] - mean[1]) for p in poses)
+        yaw_radius = max(abs(_marker_angle_delta(a, yaw)) for a in angles)
+        return dict(zip(("x", "y", "z", "yaw"), mean + [yaw])), radius, yaw_radius
+
+    marker, spread, yaw_spread = summarize(markers)
+    base, base_spread, base_yaw_spread = summarize(bases)
+    if spread > .03 or base_spread > .03 or base_yaw_spread > .03:
+        raise ValueError("mower or marker position unstable during capture")
+    return {"result": 0, "protocol": "aruco-map-marker-v1", "marker": marker, "base": base,
+            "sample_count": len(markers), "unique_stamps": len(unique), "spread_m": spread,
+            "yaw_spread_rad": yaw_spread, "max_pair_dt_s": max(pair_deltas),
+            "capture_started": first, "capture_finished": last}
+
+
+def _capture_dock_marker():
+    """Detector-only ROS session. Separate context leaves the telemetry executor untouched."""
+    import rclpy
+    from rclpy.context import Context
+    from rclpy.executors import SingleThreadedExecutor
+    from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+    from rosidl_runtime_py.utilities import get_message
+    from rosidl_runtime_py.convert import message_to_ordereddict
+    from std_srvs.srv import SetBool
+
+    context = Context()
+    rclpy.init(context=context)
+    node = rclpy.create_node("opennova_marker_measurement", context=context)
+    executor = SingleThreadedExecutor(context=context)
+    executor.add_node(node)
+    samples = {}
+    client = node.create_client(SetBool, "/enable_aruco_localization")
+    toggle_attempted = False
+
+    def toggle(value):
+        if not client.wait_for_service(timeout_sec=2):
+            raise ValueError("ArUco detector service unavailable")
+        request = SetBool.Request()
+        request.data = value
+        future = client.call_async(request)
+        executor.spin_until_future_complete(future, timeout_sec=3)
+        if not future.done() or future.result() is None or not future.result().success:
+            raise ValueError("ArUco detector " + ("enable" if value else "disable") + " not acknowledged")
+
+    def record(topic, msg):
+        rows = samples.setdefault(topic, [])
+        if len(rows) >= 2500:
+            raise ValueError("unexpected marker telemetry rate")
+        rows.append({"received": time.time(), "data": message_to_ordereddict(msg)})
+
+    def record_static(msg):
+        for transform in msg.transforms:
+            if transform.child_frame_id == "gps_link":
+                value = message_to_ordereddict(transform)
+                old = samples.setdefault("/tf_static", {}).get("gps_link")
+                if old and old["transform"] != value["transform"]:
+                    raise ValueError("vehicle antenna transform changed during capture")
+                samples["/tf_static"]["gps_link"] = value
+
+    def health_ready():
+        required = (("/bestpos_parsed_data", lambda d: int(d["qual"]) == 4),
+                    ("/robot_combination_localization/combination_status", lambda d: int(d["status"]) == 200),
+                    ("/robot_decision/robot_status", _marker_robot_idle))
+        return all(samples.get(t) and time.time() - samples[t][-1]["received"] < 1.5 and
+                   check(samples[t][-1]["data"]) for t, check in required)
+
+    try:
+        qos = QoSProfile(depth=30, reliability=ReliabilityPolicy.BEST_EFFORT)
+        for topic, kind in (("/aruco/pose", "geometry_msgs/msg/PoseStamped"),
+                            ("/robot_combination_localization/odom", "nav_msgs/msg/Odometry"),
+                            ("/robot_decision/map_position", "geometry_msgs/msg/Pose"),
+                            ("/bestpos_parsed_data", "novabot_msgs/msg/BestPos"),
+                            ("/robot_combination_localization/combination_status", "localization_msgs/msg/CombinationStatus"),
+                            ("/robot_decision/robot_status", "decision_msgs/msg/RobotStatus")):
+            node.create_subscription(get_message(kind), topic, lambda m, t=topic: record(t, m), qos)
+        node.create_subscription(get_message("tf2_msgs/msg/TFMessage"), "/tf_static", record_static,
+                                 QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
+                                            durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        deadline = time.monotonic() + 5
+        while not health_ready() and time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=.1)
+        if not health_ready():
+            raise ValueError("fresh idle robot, RTK Fixed and LOC_SUCCESS required")
+        toggle_attempted = True
+        toggle(True)
+        start_wall = time.time()
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=.1)
+            if not health_ready():
+                raise ValueError("localization or idle state lost during marker capture")
+        end_wall = time.time()
+        # Receive odometry that may arrive after the last camera frame.
+        deadline = time.monotonic() + .3
+        while time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=.05)
+        return _marker_measurement_result(samples, start_wall, end_wall)
+    finally:
+        try:
+            if toggle_attempted:
+                toggle(False)
+        finally:
+            executor.remove_node(node)
+            node.destroy_node()
+            executor.shutdown()
+            context.shutdown()
+
+
+def handle_measure_dock_marker(params, respond):
+    """Read-only registration measurement; never dock, drive, reload or write map data."""
+    try:
+        home = (params or {}).get("home", "home0")
+        before = _marker_frame_fingerprint(home)
+        result = _capture_dock_marker()
+        if _marker_frame_fingerprint(home) != before:
+            raise ValueError("native coordinate frame changed during marker capture")
+        result["frame_fingerprint"] = before
+        respond("measure_dock_marker_respond", result)
+    except Exception as error:
+        respond("measure_dock_marker_respond", {"result": 1, "error": str(error)})
 
 
 def handle_read_map_files(params, respond):
@@ -4944,6 +5230,7 @@ def handle_restart_mapping(params, respond):
 COMMANDS = {
     "is_opennova": handle_is_opennova,
     "mapping_preflight": handle_mapping_preflight,
+    "measure_dock_marker": handle_measure_dock_marker,
     "reanchor_pos": handle_reanchor_pos,
     "set_robot_reboot": handle_reboot,
     "soft_restart": handle_soft_restart,

@@ -63,8 +63,14 @@ describe('mower map operations', () => {
       expect(isMapOperationCommandBlocked('A', mqtt.sent[0].body)).toBe(false);
       expect(isMapOperationCommandBlocked('A', { write_map_files: {} })).toBe(true);
       expect(isMapOperationCommandBlocked('A', { start_navigation: {} })).toBe(true);
+      expect(isMapOperationCommandBlocked('A', { measure_dock_marker: {} })).toBe(true);
       reply('A', mqtt.sent[0].body.write_map_files.operation_id);
       await write;
+      const measure = operation.command('measure_dock_marker', {}, 1000);
+      await vi.waitFor(() => expect(mqtt.sent).toHaveLength(2));
+      expect(isMapOperationCommandBlocked('A', mqtt.sent[1].body)).toBe(false);
+      for (const handler of mqtt.handlers.get('A') ?? []) handler({ measure_dock_marker_respond: { result: 0, operation_id: mqtt.sent[1].body.measure_dock_marker.operation_id } });
+      await measure;
       expect(isMapOperationCommandBlocked('A', mqtt.sent[0].body)).toBe(true);
     });
   });

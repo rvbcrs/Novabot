@@ -70,6 +70,7 @@ import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot } 
 import { positionTelemetry, freshPositionState, stablePosition, POSITION_MAX_AGE_MS } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, persistZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
+import { beginCopyAlignment, captureCopyAlignment, getCopyAlignment, validateCopyAlignment, consumeCopyAlignment } from '../services/copyAlignment.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
@@ -1934,9 +1935,8 @@ dashboardRouter.post('/maps/:sn/repair-dock-channel', async (req: Request, res: 
 // De kopie is een getekende zone met voorgevulde geometrie: zelfde rijen,
 // zelfde push (autoPushMapsInBackground), zelfde kanaal-prompt in het dashboard.
 interface ZoneCopyBody {
-  measurementId?: string;
+  alignmentId?: string;
   canonical?: string;
-  dockAtB?: { x?: unknown; y?: unknown };
   withObstacles?: boolean;
   name?: string;
   acceptChannel?: boolean;
@@ -1971,10 +1971,36 @@ dashboardRouter.get('/maps/:sn/measurement', (req: Request, res: Response) => {
   res.json({ ok: true, ...sample, measurementId });
 });
 
-function measurementMatches(sn: string, body: ZoneCopyBody): boolean {
-  if (body.measurementId === undefined) return true; // Explicit image placement has no survey claim.
-  const sample = mapMeasurements.get(body.measurementId);
-  return !!sample && sample.sn === sn && Date.now() - sample.at <= 300_000 && !isFrameUnvalidated(sn) && sample.revision === getFrameRevision(sn) && sample.signature === mapSignature(sn) && body.dockAtB?.x === sample.x && body.dockAtB?.y === sample.y;
+dashboardRouter.post('/maps/:sn/copy-from/:source/alignment', async (req: Request, res: Response) => {
+  const { sn, source } = req.params;
+  if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
+  const { canonical, alignmentId, atSourceDock } = req.body ?? {};
+  if (typeof canonical !== 'string' || atSourceDock !== true || (alignmentId !== undefined && typeof alignmentId !== 'string')) {
+    res.status(400).json({ ok: false, reason: 'source_dock_confirmation_required', error: 'Bevestig dat de te meten maaier stilstaat voor het gekozen bronlaadstation.' }); return;
+  }
+  try {
+    const session = alignmentId === undefined ? await beginCopyAlignment(sn, source, canonical) : getCopyAlignment(alignmentId, sn, source, canonical);
+    if (session.phase === 'ready') { res.json(session); return; }
+    const side = session.phase.startsWith('source') ? 'source' : 'target';
+    res.json(await captureCopyAlignment(session.alignmentId, side));
+  } catch (error) {
+    res.status(409).json({ ok: false, reason: 'alignment_unconfirmed', error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+function requiresCopyAlignment(body: unknown, res: Response): body is ZoneCopyBody & { alignmentId: string } {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    res.status(400).json({ ok: false, reason: 'invalid_body', error: 'Een kopieerverzoek moet een JSON-object zijn.' }); return false;
+  }
+  const value = body as Record<string, unknown>;
+  if (typeof value.canonical !== 'string' || !/^map[0-4]$/.test(value.canonical) ||
+    (value.name !== undefined && typeof value.name !== 'string') ||
+    ['withObstacles', 'acceptChannel'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')) {
+    res.status(400).json({ ok: false, reason: 'invalid_body', error: 'Ongeldige zone of kopieeropties.' }); return false;
+  }
+  if (typeof value.alignmentId === 'string' && value.alignmentId.length > 0 && !('dockAtB' in body) && !('measurementId' in body)) return true;
+  res.status(409).json({ ok: false, reason: 'alignment_required', error: 'Doorloop eerst de verplichte metingen bij het bronlaadstation. Een fotopunt of losse positiemeting kan deze stap niet vervangen.' });
+  return false;
 }
 
 dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request, res: Response) => {
@@ -1982,13 +2008,14 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request,
   const { sn, source } = req.params;
   if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
   const body = (req.body ?? {}) as ZoneCopyBody;
-  if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source) || !measurementMatches(sn, body)) {
+  if (!requiresCopyAlignment(body, res)) return;
+  if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source)) {
     res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
   }
   try {
     await withConfirmedCopyDocks(sn, source, docks => {
-      if (!measurementMatches(sn, body)) { res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Meting verlopen of kaart gewijzigd; meet opnieuw.' }); return; }
-      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
+      const alignment = validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks });
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       res.json({
         ...r.plan,
@@ -2011,14 +2038,15 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
     return;
   }
   const body = (req.body ?? {}) as ZoneCopyBody;
-  if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source) || !measurementMatches(sn, body)) {
+  if (!requiresCopyAlignment(body, res)) return;
+  if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source)) {
     res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
   }
   // Altijd server-side herberekenen: de client stuurt alleen de correspondentie, nooit geometrie.
   try {
     const copied = await withConfirmedCopyDocks(sn, source, docks => {
-      if (!measurementMatches(sn, body)) { res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Meting verlopen of kaart gewijzigd; meet opnieuw.' }); return; }
-      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), body.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
+      const alignment = validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks });
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       if (!r.plan.ok) {
         res.status(409).json({ ok: false, reason: r.plan.refusal, error: zoneCopyRefusalText(r.plan.refusal!, T) });
@@ -2028,6 +2056,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
       const alias = typedName || (r.sourceAlias ? `${r.sourceAlias} (${T`kopie`})` : null);
       const acceptChannel = body.acceptChannel !== false;
       const saved = persistZoneCopy(sn, r.plan, { alias, acceptChannel, dockOrientation: docks.target.orientation });
+      consumeCopyAlignment(body.alignmentId);
       res.json({
         ok: true,
         map: {
