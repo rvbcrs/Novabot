@@ -768,24 +768,25 @@
     "bannerTitle": "Réancrage requis",
     "bannerBody": "Le cadre de carte doit être réancré sur la station.",
     "bannerCta": "Ouvrir",
-    "idleIntro": "Après une restauration, le cadre de carte doit être réancré sur la station. Un bouton exécute toute la séquence.",
+    "idleIntro": "Placez la tondeuse sur sa station non déplacée et attendez RTK Fixed. Lancez le réancrage et suivez les étapes au joystick en restant près de la tondeuse.",
     "ready": "Prêt à démarrer",
     "needDock": "Amarrez d'abord le robot (en charge).",
     "needFix": "Attendez RTK Fixed.",
     "onDock": "Sur la station",
     "offDock": "Hors de la station",
     "busy": "En cours...",
-    "runningHint": "Le robot se déplace seul ; gardez un œil dessus.",
-    "needsDriveHint": "Reculez d'environ 1 m avec le joystick ; cela continue automatiquement dès que la localisation se verrouille.",
+    "runningHint": "L’origine est vérifiée et rétablie. Ne conduisez que lorsque l’assistant le demande.",
+    "needsDriveHint": "Reculez en ligne droite au joystick sous surveillance jusqu’à la confirmation d’une nouvelle localisation. Restez à distance des obstacles.",
     "needsPositionHint": "Placez le robot à ~50 cm droit devant la station, puis appuyez sur \"Démarrer l'amarrage\".",
-    "manualBackupHint": "Amarrez le robot manuellement avec le joystick et appuyez sur Vérifier.",
+    "manualBackupHint": "Après confirmation de la localisation, revenez sur la station au joystick jusqu’à la charge, puis appuyez sur Vérifier.",
     "btnStart": "Démarrer le réancrage",
     "btnDock": "Démarrer l'amarrage",
     "btnVerify": "Vérifier",
-    "btnRetryAuto": "Réessayer automatiquement",
+    "btnRetryAuto": "Réessayer",
     "btnLater": "Plus tard",
     "startFailed": "Échec du démarrage",
-    "verifyFailed": "Échec de la vérification"
+    "verifyFailed": "Échec de la vérification",
+    "returnToDockHint": "Revenez sur la station au joystick et appuyez sur Vérifier."
   },
   "sensors": {
     "connectivity": "Connectivité",
@@ -1684,6 +1685,5 @@
       "body": "Transformez votre jardin en rendu 3D, vu de dessus ou en perspective, de jour comme en soirée. Vos zones, obstacles et la tondeuse y apparaissent en direct. Choisissez-le sous Fond de carte dans la barre de la carte. Remarque : le rendu est dessiné par une IA à partir de la photo aérienne. Il ressemble à votre jardin, mais ne correspond pas à la réalité dans chaque détail."
     },
     "button": "Nouveautés"
-  },
-  "reanchor.returnToDockHint": "Ramenez la tondeuse sur la station avec le joystick, puis appuyez sur Vérifier."
+  }
 }

@@ -23,12 +23,12 @@ import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
-import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked, FRAME_TOLERANCE_M } from '../services/frameValidation.js';
+import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, FRAME_TOLERANCE_M } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { gpsSpreadMeters, medianGps, type LatLng } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
-import { areaFileName, generateMapZipFromDb, gridGpsToLocal, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
+import { areaFileName, generateMapZipFromDb, gridGpsToLocal, gridLocalToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { isDemoMode, setDemoMode as setDemo, getDemoStatus } from '../services/demoSimulator.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
@@ -36,7 +36,6 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
-import unzipper from 'unzipper';
 import { tgm1ToDisplayTgr1, mergeIntoTgm1, tgmoToDisplayTgo1 } from '../services/terrainGrid.js';
 import { loadMergedTgmo, runRecognition } from '../services/terrainRecognition.js';
 import { groupClusters, groupKeysFor } from '../services/terrainClusterGroups.js';
@@ -65,11 +64,11 @@ import {
 import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
 import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from '../services/anchor.js';
-import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot, awaitExtended, type MowerMapOperation } from '../services/mowerMapOperation.js';
+import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
 import { positionTelemetry, freshPositionState, stablePosition, POSITION_MAX_AGE_MS } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, persistZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
-import { beginMapApply, waitForPlannerBack } from '../services/mapApplyStatus.js';
+import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
@@ -1838,7 +1837,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     }
     const anchor = getPolygonAnchor(sn);
     if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
-    localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); return { x: point.x + anchor.x, y: point.y + anchor.y }; });
+    localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); const offset = mapRepo.getPolygonOffset(sn); return { x: point.x + anchor.x - offset.x, y: point.y + anchor.y - offset.y }; });
   }
 
   const bounds = {
@@ -2059,7 +2058,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
       }
       const anchor = getPolygonAnchor(sn);
     if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
-    localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); return { x: point.x + anchor.x, y: point.y + anchor.y }; });
+    localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); const offset = mapRepo.getPolygonOffset(sn); return { x: point.x + anchor.x - offset.x, y: point.y + anchor.y - offset.y }; });
     }
 
     const bounds = {
@@ -2688,103 +2687,22 @@ function refreshLatestZip(sn: string): void {
   }
 }
 
-// The mower unzips, restarts its mapping node and rasterises every slot; on a
-// big garden that is tens of seconds.
-const REGENERATE_TIMEOUT_MS = 120_000;
-
-const syncSnapshots = new Map<string, { sn: string; bytes: Buffer }>();
 dashboardRouter.get('/maps/:sn/sync-operation/:id', (req: Request, res: Response) => {
-  const snapshot = syncSnapshots.get(req.params.id);
+  const snapshot = getMapApplySnapshot(req.params.id);
   if (!snapshot || snapshot.sn !== req.params.sn) { res.sendStatus(404); return; }
   res.type('application/zip').send(snapshot.bytes);
 });
 
-async function autoPushMapsInBackground(sn: string): Promise<void> {
-  // Taking the lease is synchronous, before any awaited work or further edits.
-  let apply: ReturnType<typeof beginMapApply> | undefined;
-  try {
-    await withMowerMapOperation(sn, async operation => {
-      apply = beginMapApply(sn);
-      apply.phase('syncing');
-      const anchor = getPolygonAnchor(sn);
-      if (!isDeviceOnline(sn) || !freshPositionState(sn).docked || isFrameUnvalidated(sn) || !anchor) { apply.fail('sync_failed'); return; }
-      const before = await readMowerMapSnapshot(sn, operation);
-      if (!before || !snapshotAnchorMatches(before, anchor)) { apply.fail('sync_failed'); return; }
-      refreshLatestZip(sn);
-      const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
-      const zipPath = regenerateLatestZipFromBackup(sn);
-      if (!zipPath) { apply.fail('sync_failed'); return; }
-      const bytes = readFileSync(zipPath);
-      const zip = await unzipper.Open.buffer(bytes);
-      const expectedCsv = new Map<string, string>();
-      for (const file of zip.files) if (file.type === 'File' && /^csv_file\/[^/]+$/.test(file.path)) expectedCsv.set(file.path.slice(9), (await file.buffer()).toString('utf8'));
-      if (!expectedCsv.size) { apply.fail('sync_failed'); return; }
-      markFrameUnvalidated(sn); // survives server failure while the device is replacing files
-      syncSnapshots.set(operation.id, { sn, bytes });
-      try {
-        const sync = await operation.command('sync_map', {
-          zip_url: `/api/dashboard/maps/${encodeURIComponent(sn)}/sync-operation/${operation.id}`,
-          expected_md5: crypto.createHash('md5').update(bytes).digest('hex'),
-        }, SYNC_MAP_TIMEOUT_MS);
-        if (!sync || sync.result !== 0) { markFrameUnvalidated(sn); apply.fail(sync ? 'sync_failed' : 'sync_timeout'); return; }
-        apply.phase('regenerating');
-        const regen = await regeneratePerMapFiles(sn, operation);
-        if (regen !== 'ok') { markFrameUnvalidated(sn); apply.fail(regen); return; }
-        apply.phase('settling');
-        if (await waitForPlannerBack(sn) === 'timeout') { apply.fail('planner_timeout'); return; }
-        const after = await readMowerMapSnapshot(sn, operation);
-        const actualCsv = after?.csv_files as Record<string, string> | undefined;
-        if (!after || !actualCsv || !snapshotAnchorMatches(after, anchor) || after.pos_json !== before.pos_json || after.charging_station_yaml !== before.charging_station_yaml || Object.keys(actualCsv).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualCsv[name] !== contents)) { apply.fail('sync_failed'); return; }
-        // This operation did not change the origin or dock pose. A verified
-        // readback permits restoring its pre-operation validated frame state.
-        clearFrameUnvalidated(sn);
-        apply.done();
-      } finally { syncSnapshots.delete(operation.id); }
-    });
-  } catch (error) {
-    console.warn(`[AUTO-PUSH] ${sn}:`, error);
-    // A competing request must not replace the status of the operation owning the lease.
-    if (apply) apply.fail('sync_failed');
-  }
-}
-
-// The mower downloads the ZIP, unpacks it and restarts its mapping node.
-const SYNC_MAP_TIMEOUT_MS = 120_000;
-
-/**
- * Ask the mower to rebuild its per-slot grids after a map push, and wait for
- * the answer so the log tells us whether the shared raster had to grow.
- */
-async function regeneratePerMapFiles(sn: string, operation: MowerMapOperation): Promise<'ok' | 'regenerate_timeout' | 'regenerate_failed'> {
-  try {
-    const result = await operation.command('regenerate_per_map_files', {}, REGENERATE_TIMEOUT_MS);
-    if (!result) {
-      console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op regenerate_per_map_files`);
-      return 'regenerate_timeout';
-    }
-    if (result.result !== undefined && result.result !== 0) {
-      console.warn(`[AUTO-PUSH] ${sn}: regenerate_per_map_files faalde: ${String(result.error ?? '')}`);
-      return 'regenerate_failed';
-    }
-    const grown = result.canvas_grown as { from?: string; to?: string } | null | undefined;
-    console.log(`[AUTO-PUSH] ${sn}: per-slot grids herbouwd${grown ? ` (raster ${grown.from} → ${grown.to})` : ''}`);
-    return 'ok';
-  } catch (err) {
-    console.warn(`[AUTO-PUSH] regenerate_per_map_files fout voor ${sn}:`, err);
-    return 'regenerate_failed';
-  }
-}
-
 // ── Polygon-offset calibratie ───────────────────────────────────────────────
 // Verhuisd van adminStatus.ts (POST /api/admin-status/maps/:sn/apply-polygon-offset)
 // zodat de dashboard-nudge-UI (dashboard-auth, geen admin-auth) hem kan
-// aanroepen. Logica ongewijzigd — alleen router + pad zijn anders.
+// aanroepen. Toepassen loopt via dezelfde bevestigde kaartprocedure.
 const MAX_OFFSET_M = 1.0;
 
 /** Pure validatie van de request body — apart geëxporteerd zodat de route
  *  zonder MQTT/DB-mocks getest kan worden. */
 export function validateOffsetBody(body: unknown): { ok: true; dx: number; dy: number } | { ok: false } {
-  const b = body as { dx_m?: unknown; dy_m?: unknown };
+  const b = (body ?? {}) as { dx_m?: unknown; dy_m?: unknown };
   const dx = typeof b.dx_m === 'number' ? b.dx_m : NaN;
   const dy = typeof b.dy_m === 'number' ? b.dy_m : NaN;
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return { ok: false };
@@ -2808,77 +2726,8 @@ dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Respons
 
   if (rejectUnlessOpenNova(sn, req, res, M`De kaart verschuiven`)) return;
 
-  // 1. Persist (idempotent — even when downstream fails the operator can retry).
-  mapRepo.setPolygonOffset(sn, dx, dy);
-
-  // 2. Regenerate ZIP with the new offset baked in.
-  const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
-  const regenPath = regenerateLatestZipFromBackup(sn);
-  if (!regenPath) {
-    res.status(400).json({ ok: false, error: T`Geen kaartgegevens gevonden voor deze maaier: breng het gebied eerst in kaart.`, dx_m: dx, dy_m: dy });
-    return;
-  }
-
-  // 3. Online check.
-  if (!isDeviceOnline(sn)) {
-    res.status(404).json({
-      ok: false,
-      partial: true,
-      error: T`Maaier offline: sync_map niet verstuurd; de maaier neemt de verschuiving over bij de volgende verbinding`,
-      dx_m: dx, dy_m: dy,
-    });
-    return;
-  }
-
-  // 4. Fire sync_map and wait up to 8s for ack — same pattern as restore-and-realign.
-  const syncResult = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const respond = data.sync_map_respond as Record<string, unknown> | undefined;
-      if (!respond) return;
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: respond.result === 0, respond });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { sync_map: {} });
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: false, timeout: true });
-    }, 30000);
-  });
-
-  if (syncResult.timeout) {
-    res.status(504).json({
-      ok: false,
-      partial: true,
-      error: T`De maaier antwoordde niet binnen 30 s; de synchronisatie kan op de achtergrond nog afronden`,
-      dx_m: dx, dy_m: dy,
-    });
-    return;
-  }
-
-  // 5. After sync_map applied the CSVs, ask the mower to render
-  // map.yaml/.pgm/.png from those CSVs by triggering save_map type:1.
-  // The DB-only recovery path was leaving these render artifacts missing,
-  // so navigation/coverage planners hit Errors 107/118 even though the
-  // polygons were correctly written. Fire-and-forget — the mower processes
-  // it asynchronously and the response isn't needed for the caller.
-  if (syncResult.ok) {
-    publishToDevice(sn, { save_map: { type: 1, mapName: 'map', totalArea: 0 } });
-    console.log(`[apply-offset] ${sn}: post-sync save_map type:1 dispatched to render map.yaml/pgm`);
-    // See restore-and-realign for the per-map-mirror rationale.
-    setTimeout(() => {
-      publishToExtended(sn, { regenerate_per_map_files: {} });
-      console.log(`[apply-offset] ${sn}: regenerate_per_map_files dispatched`);
-    }, 3000);
-  }
-
-  console.log(`[apply-offset] ${sn}: dx=${dx} dy=${dy} syncOk=${syncResult.ok}`);
-  res.json({ ok: syncResult.ok, dx_m: dx, dy_m: dy, syncResult: syncResult.respond ?? null });
+  const ok = await autoPushMapsInBackground(sn, { x: dx, y: dy });
+  res.status(ok ? 200 : 409).json({ ok, reason: ok ? null : 'map_apply_failed', dx_m: dx, dy_m: dy });
 });
 
 // POST /api/dashboard/maps/:sn/dock-and-save — stuur maaier naar station (go_to_charge + ArUco)
@@ -3293,11 +3142,11 @@ dashboardRouter.post('/maps/convert', (req: Request, res: Response) => {
   }
 
   if (body.direction === 'gps-to-local') {
-    const result = (body.points as GpsPoint[]).map(p => gpsToLocal(p, body.origin));
+    const result = (body.points as GpsPoint[]).map(p => gridGpsToLocal(p, body.origin));
     res.json({ points: result });
   } else {
     const result = (body.points as Array<{ x: number; y: number }>).map(p =>
-      localToGps(p, body.origin)
+      gridLocalToGps(p, body.origin)
     );
     res.json({ points: result });
   }

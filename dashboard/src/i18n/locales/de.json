@@ -768,24 +768,25 @@
     "bannerTitle": "Neuverankerung erforderlich",
     "bannerBody": "Der Kartenrahmen muss an der Ladestation neu verankert werden.",
     "bannerCta": "Öffnen",
-    "idleIntro": "Nach einer Wiederherstellung muss der Kartenrahmen an der Ladestation neu verankert werden. Eine Taste führt die ganze Sequenz aus.",
+    "idleIntro": "Stellen Sie den Mäher auf seine unveränderte Ladestation und warten Sie auf RTK Fixed. Starten Sie die Neuverankerung und folgen Sie den Joystick-Schritten direkt beim Mäher.",
     "ready": "Bereit zum Starten",
     "needDock": "Mäher zuerst andocken (laden).",
     "needFix": "Auf RTK Fixed warten.",
     "onDock": "An der Station",
     "offDock": "Nicht an der Station",
     "busy": "Läuft...",
-    "runningHint": "Der Mäher fährt selbst; behalten Sie ihn im Auge.",
-    "needsDriveHint": "Fahren Sie mit dem Joystick ~1 m gerade zurück; es geht automatisch weiter, sobald die Lokalisierung einrastet.",
+    "runningHint": "Der Ursprung wird geprüft und wiederhergestellt. Fahren Sie erst, wenn der Assistent dazu auffordert.",
+    "needsDriveHint": "Fahren Sie unter Aufsicht mit dem Joystick gerade rückwärts, bis der Assistent die neue Lokalisierung bestätigt. Halten Sie Abstand zu Hindernissen.",
     "needsPositionHint": "Fahren Sie den Mäher ~50 cm gerade vor die Station und drücken Sie \"Andocken starten\".",
-    "manualBackupHint": "Docken Sie den Mäher manuell mit dem Joystick an und drücken Sie Überprüfen.",
+    "manualBackupHint": "Nach bestätigter Lokalisierung fahren Sie mit dem Joystick auf die Ladestation, bis der Mäher lädt. Drücken Sie dann Überprüfen.",
     "btnStart": "Verankern starten",
     "btnDock": "Andocken starten",
     "btnVerify": "Überprüfen",
-    "btnRetryAuto": "Automatisch wiederholen",
+    "btnRetryAuto": "Erneut versuchen",
     "btnLater": "Später",
     "startFailed": "Start fehlgeschlagen",
-    "verifyFailed": "Überprüfung fehlgeschlagen"
+    "verifyFailed": "Überprüfung fehlgeschlagen",
+    "returnToDockHint": "Fahren Sie mit dem Joystick auf die Ladestation und drücken Sie Überprüfen."
   },
   "sensors": {
     "connectivity": "Konnektivität",
@@ -1684,6 +1685,5 @@
       "body": "Verwandeln Sie Ihren Garten in einen 3D-Render, von oben oder schräg, bei Tag oder am Abend. Ihre Zonen, Hindernisse und der Mäher erscheinen live darauf. Wählen Sie ihn unter Hintergrund in der Kartenleiste. Hinweis: Der Render wird von einer KI anhand des Luftbilds gezeichnet. Er ähnelt Ihrem Garten, stimmt aber nicht in jedem Detail mit der Wirklichkeit überein."
     },
     "button": "Neu"
-  },
-  "reanchor.returnToDockHint": "Fahren Sie mit dem Joystick auf die Ladestation zurück und drücken Sie Prüfen."
+  }
 }

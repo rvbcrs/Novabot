@@ -20,6 +20,7 @@ import { readMowerMapSnapshot } from './mowerMapOperation.js';
 import { synthesizeMowerFiles } from '../maps/synthMowerFiles.js';
 import { mapRepo } from '../db/repositories/maps.js';
 import { getPolygonAnchor } from './anchor.js';
+import { freshPositionState } from './positionTelemetry.js';
 import { getDockPose, deviceCache } from '../mqtt/sensorData.js';
 import { readLatestZipChargingPose } from '../mqtt/mapSync.js';
 
@@ -342,14 +343,9 @@ export async function createBundleFromDb(sn: string, reason: string): Promise<Ba
 
 /** Capture one stable file set. A DB edit can change labels, never the backed-up geometry. */
 export async function capturePortableBundle(sn: string): Promise<Buffer> {
-  const sensors = deviceCache.get(sn);
-  const battery = (sensors?.get('battery_state') ?? '').toUpperCase();
-  const recharge = sensors?.get('recharge_status') ?? '';
-  if (battery !== 'CHARGING' && recharge !== '9' && recharge !== '1' && !recharge.startsWith('Charging')) {
-    throw new Error('Snapshot requires the mower to be docked and idle');
-  }
+  if (!freshPositionState(sn).docked) throw new Error('Snapshot requires the mower to be docked and idle');
   const raw = await readMowerMapSnapshot(sn);
-  if (!raw || raw.result !== 0 || raw.snapshot_consistent !== true) {
+  if (!freshPositionState(sn).docked || !raw || raw.result !== 0 || raw.snapshot_consistent !== true) {
     throw new Error('A consistent snapshot requires supported firmware and a correlated file response');
   }
   const strings = (value: unknown, label: string): Record<string, string> => {

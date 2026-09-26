@@ -849,24 +849,25 @@
     "bannerTitle": "Re-anchor required",
     "bannerBody": "The map frame must be re-anchored on the dock.",
     "bannerCta": "Open",
-    "idleIntro": "After a restore the map frame must be re-anchored on the dock. One button runs the whole sequence.",
+    "idleIntro": "Place the mower on its unmoved dock and wait for RTK Fixed. Start re-anchoring and follow the joystick steps while standing by the mower.",
     "ready": "Ready to start",
     "needDock": "Dock the mower first (charging).",
     "needFix": "Wait for RTK Fixed.",
     "onDock": "On the dock",
     "offDock": "Off the dock",
     "busy": "Working...",
-    "runningHint": "The mower drives itself; keep an eye on it.",
-    "needsDriveHint": "Drive ~1 m straight back with the joystick; it continues automatically once localization locks.",
+    "runningHint": "The origin is being checked and restored. Drive only when the wizard asks you to.",
+    "needsDriveHint": "Use the joystick under supervision to reverse straight until the wizard confirms a new localization. Keep clear of obstacles.",
     "needsPositionHint": "Drive the mower ~50 cm straight in front of the dock, then press \"Start docking\".",
-    "manualBackupHint": "Dock the mower manually with the joystick and press Verify.",
+    "manualBackupHint": "After localization is confirmed, use the joystick to return onto the dock until charging, then press Verify.",
     "btnStart": "Start re-anchor",
     "btnDock": "Start docking",
     "btnVerify": "Verify",
-    "btnRetryAuto": "Retry automatically",
+    "btnRetryAuto": "Try again",
     "btnLater": "Later",
     "startFailed": "Start failed",
-    "verifyFailed": "Verify failed"
+    "verifyFailed": "Verify failed",
+    "returnToDockHint": "Use the joystick to return onto the dock, then press Verify."
   },
   "sensors": {
     "connectivity": "Connectivity",
@@ -1684,6 +1685,5 @@
       "body": "Turn your garden into a 3D render, top-down or angled, by day or in the evening. Your zones, obstacles and the mower appear on it live. Pick it under Base layer in the map toolbar. Note: the render is drawn by AI from the aerial photo, so it looks like your garden but does not match reality in every detail."
     },
     "button": "What's new"
-  },
-  "reanchor.returnToDockHint": "Use the joystick to return onto the dock, then press Verify."
+  }
 }

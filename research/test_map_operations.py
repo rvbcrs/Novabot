@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -13,6 +14,18 @@ import extended_commands as ext
 
 
 class MapOperationTest(unittest.TestCase):
+    def test_receiver_samples_carry_original_stamp_and_valid_coordinates(self):
+        msg = SimpleNamespace(header=SimpleNamespace(stamp=SimpleNamespace(sec=123, nanosec=42)),
+                              latitude=52.1, longitude=6.2, qual=4, svs=30)
+        payload = ext.rtk_sample_payload(msg)
+        self.assertEqual(payload['rtk_sample_id'], '123:42')
+        self.assertEqual(payload['rtk_latitude'], 52.1)
+        msg.latitude = float('nan')
+        self.assertIsNone(ext.rtk_sample_payload(msg))
+        msg.latitude = 52.1
+        msg.header.stamp = SimpleNamespace(sec=0, nanosec=0)
+        self.assertIsNone(ext.rtk_sample_payload(msg))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

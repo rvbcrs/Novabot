@@ -46,10 +46,17 @@ export function geometryFromMowerFiles(files: MowerFiles, aliases: Record<string
   // contradictory nonempty copies cannot define one canonical server geometry.
   for (const [name, data] of Object.entries(files.x3CsvFiles ?? {})) {
     if (classifyCsv(name)?.category !== 'unicom') continue;
-    if (!csv[name]?.trim()) csv[name] = data;
-    else if (data.trim() && JSON.stringify(parseMapCsv(data, name)) !== JSON.stringify(parseMapCsv(csv[name], name))) {
-      throw new Error(`Conflicting connector copies: ${name}`);
+    if (!(name in csv)) csv[name] = data;
+    if (!data.trim()) continue;
+    const full = parseMapCsv(data, name);
+    const filtered = parseMapCsv(csv[name] ?? '', name);
+    let cursor = 0;
+    for (const point of full) {
+      if (cursor < filtered.length && point.x === filtered[cursor].x && point.y === filtered[cursor].y) cursor++;
     }
+    // Stock csv_file omits points inside work areas; x3 retains the full path.
+    if (cursor !== filtered.length) throw new Error(`Conflicting connector copies: ${name}`);
+    csv[name] = data;
   }
   for (const [name, text] of Object.entries(csv)) {
     const entry = classifyCsv(name);

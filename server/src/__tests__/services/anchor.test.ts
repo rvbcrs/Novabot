@@ -8,7 +8,7 @@ vi.mock('../../db/repositories/maps.js', () => ({
 }));
 
 import {
-  getPolygonAnchor,
+  getPolygonAnchor, snapshotAnchorMatches,
   isLocalizationHealthy,
   resolveOrientation,
   resolveSavedOrientation,
@@ -255,5 +255,25 @@ describe('getPolygonAnchor with saved theta', () => {
     const a = getPolygonAnchor(SN, sensors);
     expect(a!.orientation).toBeCloseTo(1.4979550142618929);
     expect(a!.orientationSource).toBe('saved');
+  });
+});
+
+describe('persisted dock consistency', () => {
+  it('does not pick one of several conflicting canonical dock channels', () => {
+    vi.mocked(mapRepo.findAllByMowerSnAndType).mockReturnValue([
+      unicomRow('map1tocharge_unicom', [{ x: 0.03, y: 0.73 }]),
+      unicomRow('map2tocharge_unicom', [{ x: -1.67, y: 1.19 }]),
+    ]);
+    expect(getPolygonAnchor(SN)).toBeNull();
+  });
+  it('compares channel, JSON and YAML including heading before a writer can use them', () => {
+    const anchor = { x: 0.03, y: 0.73 };
+    const snapshot = { result: 0, snapshot_consistent: true, csv_files: {
+      'map1tocharge_unicom.csv': '0.03,0.73\n0,1',
+      'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: 1.5 } }),
+    }, charging_station_yaml: 'charging_pose: [0.03,0.73,1.5]' };
+    expect(snapshotAnchorMatches(snapshot, anchor)).toBe(true);
+    expect(snapshotAnchorMatches({ ...snapshot, charging_station_yaml: 'charging_pose: [-1.67,1.19,1.5]' }, anchor)).toBe(false);
+    expect(snapshotAnchorMatches({ ...snapshot, charging_station_yaml: 'charging_pose: [0.03,0.73,-1.5]' }, anchor)).toBe(false);
   });
 });

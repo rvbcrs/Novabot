@@ -716,7 +716,7 @@ describe.skip('POST /cancel and GET /active', () => {
 describe('confirmed restore transaction and recovery', () => {
   let sequence = 0;
   let sn: string;
-  const validation = { ok: true, hardFailures: [], warnings: [] };
+  const validation = { ok: true, hardFailures: [], warnings: [], stats: {} };
   beforeEach(() => {
     sn = `LFIN_CONFIRMED_${++sequence}`;
     equipmentRepo.create({ equipment_id: `eq-${sn}`, mower_sn: sn, charger_sn: `LFIC_C_${sequence}`, mower_version: 'v6.0.2-custom-45' });

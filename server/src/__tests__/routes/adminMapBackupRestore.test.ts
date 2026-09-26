@@ -342,126 +342,16 @@ describe('POST /map-backups/:sn/:filename/restore', () => {
 
 // ── POST /map-backups/:sn/:filename/restore-and-realign (Novabot-uvf) ─────────
 
-describe('POST /map-backups/:sn/:filename/restore-and-realign', () => {
-  beforeEach(() => {
-    existsSpy.mockReturnValue(true);
-    deviceCache.clear();
-    vi.mocked(anchor.getPolygonAnchor).mockReset().mockReturnValue(null);
-    vi.mocked(broker.isDeviceOnline).mockReset().mockReturnValue(false);
-    vi.mocked(mapSync.publishToExtended).mockReset();
-    vi.mocked(mapSync.onExtendedResponse).mockReset();
-    vi.mocked(mapSync.offExtendedResponse).mockReset();
-    vi.mocked(mapBackupModule.regenerateLatestZipFromBackup)
-      .mockReset()
-      .mockReturnValue('/fake/_latest.zip');
-  });
-
-  function setupGoodBackup() {
-    const area = makeWorkArea(0);
-    mockParseMapZip.mockReturnValueOnce({ areas: [area], chargingPose: { x: 0, y: 0, orientation: 0 } });
-  }
-
-  function setupGps(sn: string, lat = 52.14, lng = 6.23) {
-    const sensors = new Map<string, string>();
-    sensors.set('gps_latitude', String(lat));
-    sensors.set('gps_longitude', String(lng));
-    deviceCache.set(sn, sensors);
-  }
-
-  it('returns 400 when backup has no unicom (cannot anchor)', async () => {
-    setupGoodBackup();
-    vi.mocked(anchor.getPolygonAnchor).mockReturnValue(null);
-
-    const res = await request(server)
-      .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain('cannot anchor');
-  });
-
-  it('returns 400 when mower GPS is not reported', async () => {
-    setupGoodBackup();
-    vi.mocked(anchor.getPolygonAnchor).mockReturnValue({
-      x: -1.21, y: 0.48, orientation: 1.5, orientationSource: 'default',
-    });
-    // No sensors set in deviceCache
-
-    const res = await request(server)
-      .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain('GPS not reported');
-  });
-
-  it('returns 404 when mower offline', async () => {
-    setupGoodBackup();
-    vi.mocked(anchor.getPolygonAnchor).mockReturnValue({
-      x: -1.21, y: 0.48, orientation: 1.5, orientationSource: 'default',
-    });
-    setupGps(SN);
-    vi.mocked(broker.isDeviceOnline).mockReturnValue(false);
-
-    const res = await request(server)
-      .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
-
-    expect(res.status).toBe(404);
-    expect(res.body.error).toContain('Mower offline');
-    expect(res.body.anchor).toEqual(expect.objectContaining({ x: -1.21, y: 0.48 }));
-  });
-
-  it(
-    'happy path: returns 200 with anchor + gps when sync_map respond ok=0',
-    async () => {
-      setupGoodBackup();
-      vi.mocked(anchor.getPolygonAnchor).mockReturnValue({
-        x: -1.21, y: 0.48, orientation: 1.5, orientationSource: 'default',
-      });
-      setupGps(SN, 52.14088864656, 6.23103579689);
-      vi.mocked(broker.isDeviceOnline).mockReturnValue(true);
-
-      // The endpoint registers an onExtendedResponse handler then calls
-      // publishToExtended. We fire the simulated mower respond from inside the
-      // publishToExtended mock — by then the handler is already in place.
-      let registeredHandler: ((data: Record<string, unknown>) => void) | null = null;
-      vi.mocked(mapSync.onExtendedResponse).mockImplementation((_sn: string, fn) => {
-        registeredHandler = fn as (data: Record<string, unknown>) => void;
-      });
-      vi.mocked(mapSync.publishToExtended).mockImplementation(() => {
-        // Microtask ensures the resolve fires inside the same tick as the
-        // request handler's await — keeps the test under default 5s timeout.
-        queueMicrotask(() => {
-          registeredHandler?.({ sync_map_respond: { result: 0, md5: 'deadbeef' } });
-        });
-      });
-
-      const res = await request(server)
-        .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.ok).toBe(true);
-      expect(res.body.anchor.x).toBeCloseTo(-1.21);
-      expect(res.body.anchor.y).toBeCloseTo(0.48);
-      expect(res.body.gps).toEqual({ lat: 52.14088864656, lng: 6.23103579689 });
-      // The pin now holds the docked mower's own GPS, so this push may write
-      // pos.json from it; ordinary pushes may not (services/posJsonGate.ts).
-      expect(posJsonRequested(SN)).toBe(true);
-    },
-  );
-
-  it('returns 500 when regenerateLatestZipFromBackup fails', async () => {
-    setupGoodBackup();
-    vi.mocked(anchor.getPolygonAnchor).mockReturnValue({
-      x: -1.21, y: 0.48, orientation: 1.5, orientationSource: 'default',
-    });
-    setupGps(SN);
-    vi.mocked(broker.isDeviceOnline).mockReturnValue(true);
-    vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue(null);
-
-    const res = await request(server)
-      .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
-
-    expect(res.status).toBe(500);
-    expect(res.body.error).toContain('regenerate');
+describe('retired restore-and-realign', () => {
+  it('returns 410 without reading a backup, writing the DB or sending a command', async () => {
+    vi.mocked(mapSync.publishToExtended).mockClear();
+    mockParseMapZip.mockReset();
+    const before = mapRepo.findByMowerSn(SN);
+    const res = await request(server).post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
+    expect(res.status).toBe(410);
+    expect(mockParseMapZip).not.toHaveBeenCalled();
+    expect(mapSync.publishToExtended).not.toHaveBeenCalled();
+    expect(mapRepo.findByMowerSn(SN)).toEqual(before);
   });
 });
 

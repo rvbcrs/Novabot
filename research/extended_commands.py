@@ -29,6 +29,19 @@ import sys
 import threading
 import time
 
+def rtk_sample_payload(msg):
+    """Only actual receiver samples carry coordinates; heartbeats never do."""
+    stamp = msg.header.stamp
+    lat, lng = float(msg.latitude), float(msg.longitude)
+    if not (math.isfinite(lat) and math.isfinite(lng) and -90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    if (lat == 0 and lng == 0) or (stamp.sec == 0 and stamp.nanosec == 0):
+        return None
+    return {'rtk_fix_quality': int(msg.qual), 'rtk_sat': int(msg.svs),
+            'rtk_sample_id': f'{stamp.sec}:{stamp.nanosec}',
+            'rtk_latitude': lat, 'rtk_longitude': lng}
+
+
 # ── Configuratie ────────────────────────────────────────────────────────────
 MQTT_RECONNECT_INTERVAL = 5
 MQTT_KEEPALIVE = 60
@@ -6219,13 +6232,13 @@ def start_rtk_telemetry_relay(sn, mqtt_ref):
                         log(f"[RtkRelay] publish failed: {ex}")
 
                 def _on_bestpos(self, msg):
-                    q = int(msg.qual)
-                    sat = int(msg.svs)
-                    if q == self._last_qual and sat == self._last_sat:
+                    payload = rtk_sample_payload(msg)
+                    if not payload or payload['rtk_sample_id'] == getattr(self, '_last_sample_id', None):
                         return
-                    self._last_qual = q
-                    self._last_sat = sat
-                    self._pub({'rtk_fix_quality': q, 'rtk_sat': sat})
+                    self._last_sample_id = payload['rtk_sample_id']
+                    self._last_qual = payload['rtk_fix_quality']
+                    self._last_sat = payload['rtk_sat']
+                    self._pub(payload)
 
                 def _on_odom(self, msg):
                     yaw = _yaw_deg(msg.pose.pose.orientation)
@@ -6245,9 +6258,6 @@ def start_rtk_telemetry_relay(sn, mqtt_ref):
 
                 def _heartbeat(self):
                     payload = {}
-                    if self._last_qual is not None:
-                        payload['rtk_fix_quality'] = self._last_qual
-                        payload['rtk_sat'] = self._last_sat
                     if self._last_heading is not None:
                         payload['heading_deg'] = self._last_heading
                     if self._last_track is not None:

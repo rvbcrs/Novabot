@@ -127,7 +127,7 @@ const server = app.listen(0);
 afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
 
 const SN = 'LFIN_REANCHOR_TEST';
-const data = { battery_state: 'CHARGING', recharge_status: 9, rtk_fix_quality: 4, latitude: 52.1234567, longitude: 4.7654321, map_position_x: 0.13, map_position_y: -0.52, localization_state: 'RUNNING' };
+const data = { battery_state: 'CHARGING', recharge_status: 9, rtk_fix_quality: 4, rtk_latitude: 52.1234567, rtk_longitude: 4.7654321, map_position_x: 0.13, map_position_y: -0.52, localization_state: 'RUNNING' };
 const anchor = { x: 0.13, y: -0.52 };
 const handlers = new Set<(data: Record<string, unknown>) => void>();
 let loadedOrigin: unknown;
@@ -136,10 +136,10 @@ let requestCount = 0;
 function snapshot() {
   return { result: 0, snapshot_consistent: true, csv_files: {
     'map0tocharge_unicom.csv': '0.13,-0.52\n0.2,-0.4\n',
-    'map_info.json': JSON.stringify({ charging_pose: anchor }),
+    'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: 1.5 } }),
   }, charging_station_yaml: `charging_pose: [${snapshotConflict ? 2 : anchor.x}, ${anchor.y}, 1.5]`, pos_json: JSON.stringify({ utm_origin: loadedOrigin }) };
 }
-function feed(fields = {}) { ingestPositionTelemetry(SN, { ...data, ...fields }); }
+function feed(fields = {}) { ingestPositionTelemetry(SN, { ...data, rtk_sample_id: String(Date.now()), ...fields }); }
 async function tick(ms = 1000) { await vi.advanceTimersByTimeAsync(ms); }
 async function status() { return (await request(server).get(`/api/dashboard/reanchor/${SN}/status`)).body.status; }
 const action = (value: string) => request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: value });
@@ -158,7 +158,7 @@ beforeEach(() => {
       requestCount++;
       expect(params.anchor_x).toBe(anchor.x); expect(params.anchor_y).toBe(anchor.y);
       // Independent PROJ reference for the fixture's latitude/longitude (UTM 31N), minus anchor.
-      loadedOrigin = { x: 620862.1169197598 - anchor.x, y: 5776193.693624765 - anchor.y, utm_zone: 31 };
+      loadedOrigin = { x: 620859.4976856122 - anchor.x, y: 5776239.508624249 - anchor.y, utm_zone: 31 };
       result = { result: 0, anchor, utm_origin: loadedOrigin };
     }
     for (const h of [...handlers]) h({ [`${command}_respond`]: { ...result, operation_id: params.operation_id } });

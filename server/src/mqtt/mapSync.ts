@@ -1,3 +1,5 @@
+import { snapshotAnchorMatches } from '../services/anchor.js';
+import { freshPositionState } from '../services/positionTelemetry.js';
 /**
  * Map Sync — haalt kaarten op van de maaier via MQTT en slaat ze op in de database.
  *
@@ -208,10 +210,7 @@ export function publishToDevice(
   // successful re-dock), go_to_charge / start_navigation navigate the wrong
   // frame and can drive the mower anywhere. Block them at this single choke
   // point so the app, the rain monitor, and admin tools are all covered.
-  // EXCEPTION: the re-anchor dock-cycle (refresh-dock-anchor / reanchor
-  // endpoint) issues go_to_charge deliberately from the dock to trigger the
-  // ArUco snap that realigns the frame — it passes bypassFrameGuard.
-  if (!opts?.bypassFrameGuard && isFrameNavBlocked(sn, command)) {
+  if (isFrameNavBlocked(sn, command)) {
     console.warn(`${TAG} BLOCKED ${Object.keys(command)[0]} for ${sn}: frame unvalidated (post-restore). Re-anchor via the dock-cycle first.`);
     return;
   }
@@ -709,6 +708,12 @@ function validateVerbatimFiles(files: VerbatimMowerFiles): BundleValidation {
     const validPath = imageName && (imageLine === imageName || imageLine === `./${imageName}` || imageLine === `/userdata/lfi/maps/home0/${imageName}`);
     if (!validPath || !files.mapFilesB64?.[imageName]) validation.hardFailures.push(`invalid_raster_reference: ${name}`);
   }
+  let anchor;
+  try { anchor = JSON.parse(files.csvFiles['map_info.json']).charging_pose; } catch { /* rejected below */ }
+  if (!anchor || !snapshotAnchorMatches({ result: 0, snapshot_consistent: true,
+    csv_files: files.csvFiles, charging_station_yaml: files.chargingStationYaml }, anchor)) {
+    validation.hardFailures.push('inconsistent_dock_anchor');
+  }
   if (!slots.length) validation.hardFailures.push('incomplete_bundle: no work CSV');
   validation.ok = validation.hardFailures.length === 0;
   return validation;
@@ -755,14 +760,12 @@ export async function applyVerbatimToMower(
   const fail = (error: string, uncertain = false): ApplyVerbatimResult => ({ pushed: false, validation, error, uncertain, operationId: operation.id });
   if (!validation.ok) return fail('map_validation_failed');
   if (!isDeviceOnline(sn)) return fail('mower_offline');
-  const sensors = deviceCache.get(sn);
-  const battery = (sensors?.get('battery_state') ?? '').toUpperCase();
-  const recharge = sensors?.get('recharge_status') ?? '';
-  if (battery !== 'CHARGING' && recharge !== '9' && recharge !== '1' && !recharge.startsWith('Charging')) return fail('mower_not_docked');
+  if (!freshPositionState(sn).docked) return fail('mower_not_docked');
 
   // Correlated read proves firmware capability BEFORE the destructive write.
   const before = await readMowerMapSnapshot(sn, operation);
   if (!before || before.result !== 0 || before.snapshot_consistent !== true) return fail('snapshot_unavailable');
+  if (!isDeviceOnline(sn) || !freshPositionState(sn).docked) return fail('mower_not_docked');
   markFrameUnvalidated(sn);
   const written = await operation.command('write_map_files', {
     csv_files: files.csvFiles,

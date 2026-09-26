@@ -18,8 +18,7 @@
  *     in the ZIP's map_info.json so dashboard renders + mower realign work.
  *   - /api/dashboard/maps/:sn/sync-info (Novabot-aev) — return canonical
  *     `charging_pose` for mower's extended sync_map handler to write into yaml.
- *   - /api/admin-status/map-backups/:sn/:filename/restore-and-realign
- *     (Novabot-uvf) — full one-click restore endpoint.
+ *   - Verified map apply and reanchor preflight compare all stored dock references.
  *
  * Spec: docs/superpowers/specs/2026-05-03-restore-and-realign-mower-from-zip.md
  */
@@ -155,9 +154,9 @@ export function snapshotAnchorMatches(snapshot: Record<string, unknown>, anchor:
   try {
     const info = JSON.parse(csv['map_info.json']);
     const pose = info.charging_pose;
-    if (!pose || !matches(Number(pose.x), Number(pose.y))) return false;
+    if (!pose || pose.x == null || pose.y == null || pose.orientation == null || !matches(Number(pose.x), Number(pose.y)) || !Number.isFinite(Number(pose.orientation))) return false;
     const yaml = String(snapshot.charging_station_yaml ?? '').match(/charging_pose:\s*\[([^\]]+)\]/);
     const values = yaml?.[1].split(',').map(Number);
-    return !!values && matches(values[0], values[1]) && Number.isFinite(values[2]);
+    return !!values && matches(values[0], values[1]) && Number.isFinite(values[2]) && Math.abs(Math.atan2(Math.sin(values[2] - Number(pose.orientation)), Math.cos(values[2] - Number(pose.orientation)))) <= 0.02;
   } catch { return false; }
 }

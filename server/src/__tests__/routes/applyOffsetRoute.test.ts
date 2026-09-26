@@ -22,6 +22,8 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
   UNSUPPORTED_FIRMWARE_REASON: 'unsupported_firmware',
   UNSUPPORTED_FIRMWARE_MSG_KEY: 'requiresOpenNovaFirmware',
 }));
+vi.mock('../../services/mowerMapApply.js', () => ({ applyMapsToMower: vi.fn(), getMapApplySnapshot: vi.fn() }));
+import { applyMapsToMower } from '../../services/mowerMapApply.js';
 import request from 'supertest';
 import express from 'express';
 
@@ -131,67 +133,25 @@ describe('validateOffsetBody (pure)', () => {
 });
 
 describe('POST /api/dashboard/maps/:sn/apply-offset', () => {
-  beforeEach(() => {
-    mapRepo.setPolygonOffset(SN, 0, 0);
-    vi.mocked(broker.isDeviceOnline).mockReturnValue(true);
-    vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue('/fake/_latest.zip');
-    // Mock onExtendedResponse to immediately fire a successful sync_map_respond.
-    vi.mocked(mapSync.onExtendedResponse).mockImplementation((_sn, handler) => {
-      queueMicrotask(() => handler({ sync_map_respond: { result: 0 } } as any));
-    });
-    vi.mocked(mapSync.offExtendedResponse).mockImplementation(() => {});
-  });
-
-  it('persists offset, regenerates, and pushes sync_map on happy path', async () => {
-    const r = await request(server)
-      .post(`/api/dashboard/maps/${SN}/apply-offset`)
-      .send({ dx_m: 0.05, dy_m: -0.03 });
+  it('uses the confirmed shared apply pipeline', async () => {
+    vi.mocked(applyMapsToMower).mockResolvedValue(true);
+    const r = await request(server).post(`/api/dashboard/maps/${SN}/apply-offset`).send({ dx_m: 0.05, dy_m: -0.03 });
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
-    expect(r.body.dx_m).toBeCloseTo(0.05);
-    expect(r.body.dy_m).toBeCloseTo(-0.03);
-    expect(mapRepo.getPolygonOffset(SN).x).toBeCloseTo(0.05);
-    expect(mapRepo.getPolygonOffset(SN).y).toBeCloseTo(-0.03);
-    expect(mapBackupModule.regenerateLatestZipFromBackup).toHaveBeenCalledWith(SN);
-    expect(mapSync.publishToExtended).toHaveBeenCalledWith(SN, expect.objectContaining({ sync_map: expect.anything() }));
+    expect(applyMapsToMower).toHaveBeenCalledWith(SN, { x: 0.05, y: -0.03 });
+    expect(mapSync.publishToExtended).not.toHaveBeenCalled();
   });
-
-  it('rejects non-finite dx with 400 and does not write DB', async () => {
-    const r = await request(server)
-      .post(`/api/dashboard/maps/${SN}/apply-offset`)
-      .send({ dx_m: 'banana', dy_m: 0 });
+  it.each([{ dx_m: 'banana', dy_m: 0 }, { dx_m: 1.5, dy_m: 0 }])('rejects invalid offsets before applying', async body => {
+    const r = await request(server).post(`/api/dashboard/maps/${SN}/apply-offset`).send(body);
     expect(r.status).toBe(400);
-    expect(mapRepo.getPolygonOffset(SN)).toEqual({ x: 0, y: 0 });
-    expect(mapBackupModule.regenerateLatestZipFromBackup).not.toHaveBeenCalled();
-  });
-
-  it('rejects |dx| > 1.0 with 400 and does not write DB', async () => {
-    const r = await request(server)
-      .post(`/api/dashboard/maps/${SN}/apply-offset`)
-      .send({ dx_m: 1.5, dy_m: 0 });
-    expect(r.status).toBe(400);
+    expect(applyMapsToMower).not.toHaveBeenCalled();
     expect(mapRepo.getPolygonOffset(SN)).toEqual({ x: 0, y: 0 });
   });
-
-  it('returns 404 with partial flag when mower offline (DB still updated)', async () => {
-    vi.mocked(broker.isDeviceOnline).mockReturnValue(false);
-    const r = await request(server)
-      .post(`/api/dashboard/maps/${SN}/apply-offset`)
-      .send({ dx_m: 0.02, dy_m: 0 });
-    expect(r.status).toBe(404);
+  it('does not report success when the confirmed pipeline fails', async () => {
+    vi.mocked(applyMapsToMower).mockResolvedValue(false);
+    const r = await request(server).post(`/api/dashboard/maps/${SN}/apply-offset`).send({ dx_m: 0.02, dy_m: 0 });
+    expect(r.status).toBe(409);
     expect(r.body.ok).toBe(false);
-    expect(r.body.partial).toBe(true);
-    expect(mapRepo.getPolygonOffset(SN).x).toBeCloseTo(0.02);
-  });
-
-  it('returns 400 when no map data found (DB still updated)', async () => {
-    vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue(null);
-    const r = await request(server)
-      .post(`/api/dashboard/maps/${SN}/apply-offset`)
-      .send({ dx_m: 0.02, dy_m: 0 });
-    expect(r.status).toBe(400);
-    expect(r.body.ok).toBe(false);
-    expect(r.body.error).toMatch(/map the area first/i);
-    expect(mapRepo.getPolygonOffset(SN).x).toBeCloseTo(0.02);
+    expect(mapSync.publishToExtended).not.toHaveBeenCalled();
   });
 });

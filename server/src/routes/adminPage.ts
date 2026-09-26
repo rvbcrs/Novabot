@@ -5253,9 +5253,7 @@ function updateConflictHelpersVisibility() {
   helpers.style.display = visiblePairs > 0 ? 'flex' : 'none';
 }
 
-/** Single restore entry point — branches on the "Also push to mower" checkbox.
- *  Checked = full restore-and-realign (DB + sync_map MQTT push + GPS update).
- *  Unchecked = DB-only restore. */
+/** Legacy ZIP selection restores server records only. Full mower restore uses the portable bundle flow. */
 async function restoreBackup() { return restoreSelection(); }
 
 async function restoreSelection() {

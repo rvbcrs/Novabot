@@ -1,3 +1,4 @@
+import { clearPositionTelemetry, ingestPositionTelemetry } from '../../services/positionTelemetry.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../mqtt/mapSync.js', () => ({ readLatestZipChargingPose: vi.fn() }));
 vi.mock('../../services/mowerMapOperation.js', () => ({ readMowerMapSnapshot: vi.fn() }));
@@ -25,6 +26,7 @@ const raw = () => ({ result: 0, snapshot_consistent: true, captured_at: new Date
   map_files_text: files.mapFilesText, map_files_b64: files.mapFilesB64 });
 
 beforeEach(() => {
+  clearPositionTelemetry('A'); ingestPositionTelemetry('A', { battery_state: 'CHARGING' });
   deviceCache.set('A', new Map([['battery_state', 'CHARGING']]));
   vi.mocked(readMowerMapSnapshot).mockResolvedValue(raw());
 });
@@ -49,6 +51,12 @@ describe('consistent live portable snapshot', () => {
     const incomplete = { ...files, posJson: null };
     vi.mocked(readMowerMapSnapshot).mockResolvedValueOnce({ ...raw(), pos_json: null, snapshot_manifest: mowerFilesManifest(incomplete) });
     await expect(capturePortableBundle('A')).rejects.toThrow('Incomplete live snapshot');
+  });
+  it('uses the complete x3 connector when csv_file is its filtered subsequence', () => {
+    const csvFiles = { ...files.csvFiles, 'map0tomap1_0_unicom.csv': '2,2\n3,3\n' };
+    const x3CsvFiles = { 'map0tomap1_0_unicom.csv': '1,1\n2,2\n3,3\n4,4\n' };
+    const geometry = geometryFromMowerFiles({ ...files, csvFiles, x3CsvFiles });
+    expect(geometry.unicom.find(p => p.canonical === 'map0tomap1_0_unicom')?.points).toEqual([{x:1,y:1},{x:2,y:2},{x:3,y:3},{x:4,y:4}]);
   });
   it('rejects malformed coordinates and disagreeing connector copies', () => {
     expect(() => geometryFromMowerFiles({ ...files, x3CsvFiles: { 'map0tocharge_unicom.csv': '20,20\n21,21' } })).toThrow('Conflicting');

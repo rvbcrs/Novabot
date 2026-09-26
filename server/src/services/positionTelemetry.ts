@@ -4,7 +4,7 @@ export type PositionSample = { x: number; y: number; at: number; fixed: boolean;
 export type GpsSample = { lat: number; lng: number; at: number; fixed: boolean; docked: boolean };
 type Telemetry = {
   quality?: Reading<boolean>; running?: Reading<boolean>; docked?: Reading<boolean>;
-  error?: Reading<number>; poses: PositionSample[]; gps: GpsSample[];
+  error?: Reading<number>; gpsIds?: string[]; poses: PositionSample[]; gps: GpsSample[];
 };
 const telemetry = new Map<string, Telemetry>();
 export const POSITION_MAX_AGE_MS = 10_000;
@@ -49,10 +49,11 @@ export function ingestPositionTelemetry(sn: string, data: Record<string, unknown
       t.poses = t.poses.slice(-64);
     } else t.poses = [];
   }
-  const gps = object(loc.gps_position);
-  const lat = number(gps.latitude ?? data.gps_latitude ?? data.latitude);
-  const lng = number(gps.longitude ?? data.gps_longitude ?? data.longitude);
-  if (['latitude', 'gps_latitude', 'longitude', 'gps_longitude'].some(k => k in data) || Object.keys(gps).length) {
+  // Stock server reports may replay cached GPS. Only receiver-stamped relay
+  // messages count towards the eight independent reanchor samples.
+  if (typeof data.rtk_sample_id === 'string' && !t.gpsIds?.includes(data.rtk_sample_id)) {
+    t.gpsIds = [...(t.gpsIds ?? []), data.rtk_sample_id].slice(-64);
+    const lat = number(data.rtk_latitude), lng = number(data.rtk_longitude);
     if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && (lat !== 0 || lng !== 0)) {
       t.gps.push({ lat, lng, at, fixed: state.fixed, docked: state.docked });
       t.gps = t.gps.slice(-64);

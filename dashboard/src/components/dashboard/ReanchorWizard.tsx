@@ -183,12 +183,12 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
           {StatusBlock}
           <ManualControlPanel sn={sn} online={online} sensors={sensors} />
           <WizardButton label={t('reanchor.btnVerify', 'Verifieer')} onClick={verifyManual} disabled={!canVerify} />
-          <WizardButton label={t('reanchor.btnRetryAuto', 'Opnieuw automatisch')} onClick={startAuto} disabled={!canStart} secondary />
+          <WizardButton label={t('reanchor.btnRetryAuto', 'Opnieuw proberen')} onClick={startAuto} disabled={!canStart} secondary />
           <WizardButton label={t('reanchor.btnLater', 'Later')} onClick={onClose} secondary />
         </>
       ) : (
         <>
-          <p className="text-sm text-gray-300">{t('reanchor.idleIntro', 'Na een restore moet het kaartframe opnieuw worden verankerd op de dock. Eén knop doet de hele reeks.')}</p>
+          <p className="text-sm text-gray-300">{t('reanchor.idleIntro', 'Zet de maaier op het onverplaatste dock en wacht op RTK Fixed. Start het herankeren en volg de stappen met de joystick, terwijl je bij de maaier staat.')}</p>
           {StatusBlock}
           {err && <span className="text-xs text-red-400 font-semibold">{err}</span>}
           {canStart ? (

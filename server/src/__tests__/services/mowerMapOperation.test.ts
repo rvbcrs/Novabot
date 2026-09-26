@@ -54,6 +54,9 @@ describe('mower map operations', () => {
   });
 
   it('allows only the lease owner to publish a map mutation while blocking autonomous navigation', async () => {
+    expect(isMapOperationCommandBlocked('A', { write_map_files: {} })).toBe(true);
+    expect(isMapOperationCommandBlocked('A', { sync_map: {} })).toBe(true);
+    expect(isMapOperationCommandBlocked('A', { save_map: {} })).toBe(false);
     await withMowerMapOperation('A', async operation => {
       const write = operation.command('write_map_files', {}, 1000);
       await vi.waitFor(() => expect(mqtt.sent).toHaveLength(1));

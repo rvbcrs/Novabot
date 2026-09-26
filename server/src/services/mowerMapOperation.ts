@@ -13,17 +13,18 @@ export interface MowerMapOperation {
 
 const active = new Map<string, MowerMapOperation>();
 const ownedCommands = new Map<string, Set<string>>();
-const NAVIGATION_COMMANDS = new Set(['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone', 'auto_recharge', 'go_pile']);
+const NAVIGATION_COMMANDS = new Set(['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone', 'auto_recharge', 'go_pile', 'nav_to_point', 'follow_unicom', 'return_to_dock', 'calibration_drive']);
+const MANAGED_WRITES = new Set(['write_map_files', 'sync_map', 'regenerate_per_map_files', 'reanchor_pos', 'set_pos_origin']);
 const MAP_COMMANDS = new Set(['read_map_files', 'write_map_files', 'sync_map', 'regenerate_per_map_files', 'reanchor_pos', 'set_pos_origin', 'restart_mapping', 'set_coverage_planner_radius', 'save_map', 'delete_map', 'save_recharge_pos', 'start_mapping']);
 
 export function isMowerMapOperationBusy(sn: string): boolean { return active.has(sn); }
 
 /** Autonomous navigation cannot race a map install. Joystick/manual stops remain available. */
 export function isMapOperationCommandBlocked(sn: string, command: Record<string, unknown>): boolean {
-  if (!active.has(sn)) return false;
   return Object.entries(command).some(([cmd, params]) => {
-    if (NAVIGATION_COMMANDS.has(cmd)) return true;
-    if (!MAP_COMMANDS.has(cmd)) return false;
+    const busy = active.has(sn);
+    if (busy && NAVIGATION_COMMANDS.has(cmd)) return true;
+    if (!MANAGED_WRITES.has(cmd) && (!busy || !MAP_COMMANDS.has(cmd))) return false;
     const id = params && typeof params === 'object' ? (params as Record<string, unknown>).operation_id : undefined;
     return typeof id !== 'string' || !ownedCommands.get(sn)?.has(id);
   });

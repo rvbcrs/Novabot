@@ -1,3 +1,4 @@
+import { applyMapsToMower } from '../services/mowerMapApply.js';
 /**
  * Admin Status API — server health, users, devices, errors
  * Protected by authMiddleware + adminMiddleware
@@ -13,25 +14,24 @@ import fs from 'fs';
 import { execSync } from 'child_process';
 import { db } from '../db/database.js';
 import { isDeviceOnline, banishSn, unbanSn, listBannedSns } from '../mqtt/broker.js';
-import { awaitCommand, publishToDevice, publishToExtended, onExtendedResponse, offExtendedResponse, applyVerbatimToMower, verifyMowerMapFiles } from '../mqtt/mapSync.js';
+import { awaitCommand, publishToDevice, applyVerbatimToMower, verifyMowerMapFiles } from '../mqtt/mapSync.js';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo, otaVersionRepo, walkerBundleRepo, signalHistoryRepo } from '../db/repositories/index.js';
 import type { WalkerBundleRow } from '../db/repositories/index.js';
 import { AuthRequest } from '../types/index.js';
 import { invalidateSetupCache } from '../middleware/setupGuard.js';
 import { parseMapZip, MapArea } from '../mqtt/mapConverter.js';
 import { startMdnsAdvertiser, stopMdnsAdvertiser, getActiveAdvertisement } from '../services/mdnsAdvertiser.js';
-import { listBackups, backupPath, regenerateLatestZipFromBackup } from '../services/mapBackup.js';
+import { listBackups, backupPath } from '../services/mapBackup.js';
 import { getPolygonAnchor } from '../services/anchor.js';
 import { markFrameUnvalidated, isFrameUnvalidated } from '../services/frameValidation.js';
 import { settleRestoredFrame } from '../services/restoreFrameCheck.js';
-import { exportBundle, parseBundle, BundleValidationError, computeAnchorRebase, type ParsedBundle } from '../services/portableMap.js';
+import { parseBundle, BundleValidationError, type ParsedBundle } from '../services/portableMap.js';
 import { synthesizePortableFromWalker } from '../maps/walkerBundleImporter.js';
 import { buildMaskOverlay, parsePgm } from '../maps/maskOverlay.js';
 import { ImportStagingStore } from '../services/importStaging.js';
 import { getDeviceHealth } from '../services/deviceHealth.js';
 import { classifyBundle, type ClassifyResult } from '../services/bundleClassifier.js';
 import { importAuditRepo } from '../db/repositories/importAudit.js';
-import { deriveHeading } from '../services/driveCalibration.js';
 import {
   getMowerFileCapability,
   MOWER_FILE_WRITE_UNSUPPORTED_CODE,
@@ -1575,14 +1575,6 @@ function parsedVerbatimRestore(parsed: ParsedBundle): boolean {
   ));
 }
 
-function bundleUnicomTargetName(canonical: string): string {
-  const inter = canonical.match(/^map\d+to(map\d+)_\d+_unicom$/);
-  if (inter) return inter[1];
-  if (/^map\d+tocharge_unicom$/.test(canonical)) return 'charge';
-  const fallback = canonical.match(/^map\d+to(.+?)_?unicom$/);
-  return fallback?.[1] ?? 'charge';
-}
-
 async function writeLatestZipFromCsvFiles(sn: string, csvFiles?: Record<string, string>): Promise<number | null> {
   if (!csvFiles || Object.keys(csvFiles).length === 0) return null;
   const storage = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
@@ -2876,55 +2868,9 @@ adminStatusRouter.get('/wifi-heatmap/:sn', (req: AuthRequest, res: Response) => 
 
 // POST /api/admin-status/maps/:sn/reset-polygon-offset
 adminStatusRouter.post('/maps/:sn/reset-polygon-offset', async (req: AuthRequest, res: Response) => {
-  const T = reqT(req);
   const { sn } = req.params;
-
-  mapRepo.setPolygonOffset(sn, 0, 0);
-  const regenPath = regenerateLatestZipFromBackup(sn);
-  if (!regenPath) {
-    res.status(400).json({ ok: false, error: T`Geen kaartgegevens gevonden voor deze maaier: breng het gebied eerst in kaart.`, dx_m: 0, dy_m: 0 });
-    return;
-  }
-  if (!isDeviceOnline(sn)) {
-    res.status(404).json({
-      ok: false, partial: true,
-      error: T`Maaier offline: sync_map niet verstuurd; de maaier neemt de verschuiving over bij de volgende verbinding`,
-      dx_m: 0, dy_m: 0,
-    });
-    return;
-  }
-
-  const syncResult = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const respond = data.sync_map_respond as Record<string, unknown> | undefined;
-      if (!respond) return;
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: respond.result === 0, respond });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { sync_map: {} });
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: false, timeout: true });
-    }, 30000);
-  });
-
-  if (syncResult.timeout) {
-    res.status(504).json({
-      ok: false, partial: true,
-      error: T`Maaier reageerde niet binnen 30 s; de synchronisatie kan op de achtergrond nog afronden`,
-      dx_m: 0, dy_m: 0,
-    });
-    return;
-  }
-
-  console.log(`[Admin] reset-polygon-offset ${sn}: syncOk=${syncResult.ok}`);
-  res.json({ ok: syncResult.ok, dx_m: 0, dy_m: 0, syncResult: syncResult.respond ?? null });
+  const ok = await applyMapsToMower(sn, { x: 0, y: 0 });
+  res.status(ok ? 200 : 409).json({ ok, reason: ok ? null : 'map_apply_failed', dx_m: 0, dy_m: 0 });
 });
 
 // POST /api/admin-status/factory-reset — wipe all user data and return to setup

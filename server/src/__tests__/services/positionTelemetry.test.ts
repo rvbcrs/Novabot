@@ -25,7 +25,12 @@ it('reads real nested timer positions, refuses invalid coordinates and stale doc
   ingestPositionTelemetry(sn, { rtk_fix_quality: 4, recharge_status: 9 });
   ingestPositionTelemetry(sn, { localization: { localization_state: 'RUNNING', map_position: { x: 1, y: 2 }, gps_position: { latitude: 52, longitude: 6 } } });
   expect(freshPositionState(sn).pose).toMatchObject({ x: 1, y: 2 });
-  expect(positionTelemetry(sn)?.gps.at(-1)).toMatchObject({ lat: 52, lng: 6, fixed: true });
+  expect(positionTelemetry(sn)?.gps).toHaveLength(0);
+  ingestPositionTelemetry(sn, { rtk_sample_id: '1:0', rtk_latitude: 52, rtk_longitude: 6 });
+  vi.advanceTimersByTime(1000);
+  ingestPositionTelemetry(sn, { rtk_sample_id: '1:0', rtk_latitude: 52, rtk_longitude: 6 });
+  expect(positionTelemetry(sn)?.gps).toHaveLength(1);
+  expect(positionTelemetry(sn)?.gps[0]).toMatchObject({ lat: 52, lng: 6, fixed: true });
   ingestPositionTelemetry(sn, { map_position_x: null, map_position_y: 2 });
   expect(freshPositionState(sn).pose).toBeNull();
   vi.advanceTimersByTime(10_001);

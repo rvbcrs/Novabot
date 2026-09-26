@@ -920,24 +920,25 @@
     "bannerTitle": "Opnieuw verankeren nodig",
     "bannerBody": "Het kaartframe moet opnieuw op de dock worden verankerd.",
     "bannerCta": "Openen",
-    "idleIntro": "Na een restore moet het kaartframe opnieuw worden verankerd op de dock. Eén knop doet de hele reeks.",
+    "idleIntro": "Zet de maaier op het onverplaatste dock en wacht op RTK Fixed. Start het herankeren en volg de stappen met de joystick, terwijl je bij de maaier staat.",
     "ready": "Klaar om te starten",
     "needDock": "Dok de maaier eerst (laden).",
     "needFix": "Wacht op RTK Fixed.",
     "onDock": "Op de dock",
     "offDock": "Niet op de dock",
     "busy": "Bezig...",
-    "runningHint": "De maaier rijdt zelf; houd hem in de gaten.",
-    "needsDriveHint": "Rij met de joystick ~1 m recht achteruit; ik ga automatisch verder zodra de localisatie lockt.",
+    "runningHint": "De oorsprong wordt gecontroleerd en hersteld. Rij pas wanneer de wizard daarom vraagt.",
+    "needsDriveHint": "Rij onder toezicht met de joystick recht achteruit tot de wizard een nieuwe lokalisatie bevestigt. Houd ruimte vrij van obstakels.",
     "needsPositionHint": "Rij de maaier recht voor de dock op ~50 cm en druk op \"Start docken\".",
-    "manualBackupHint": "Dok de maaier handmatig met de joystick en druk Verifieer.",
+    "manualBackupHint": "Rij na de bevestigde lokalisatie met de joystick terug op het dock tot de maaier laadt en druk op Verifieer.",
     "btnStart": "Start verankeren",
     "btnDock": "Start docken",
     "btnVerify": "Verifieer",
-    "btnRetryAuto": "Opnieuw automatisch",
+    "btnRetryAuto": "Opnieuw proberen",
     "btnLater": "Later",
     "startFailed": "Starten mislukt",
-    "verifyFailed": "Verifiëren mislukt"
+    "verifyFailed": "Verifiëren mislukt",
+    "returnToDockHint": "Rij met de joystick terug op het dock en druk op Verifieer."
   },
   "sensors": {
     "connectivity": "Verbinding",
@@ -1684,6 +1685,5 @@
       "body": "Maak van je tuin een 3D-render, van bovenaf of schuin, bij dag of bij avond. Je zones, obstakels en de maaier staan er live op. Kies hem onder Ondergrond in de kaartbalk. Let op: de render wordt door AI getekend op basis van de luchtfoto, dus hij lijkt op je tuin maar klopt niet tot in elk detail met de werkelijkheid."
     },
     "button": "Nieuw"
-  },
-  "reanchor.returnToDockHint": "Rij met de joystick terug op het dock en druk op Verifieer."
+  }
 }
