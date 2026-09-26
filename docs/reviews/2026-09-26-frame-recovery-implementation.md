@@ -1,6 +1,6 @@
 # Kaart- en frameherstel: softwarecontrole en fysieke acceptatie
 
-Deze wijziging voert het [herstelplan](../superpowers/plans/2026-09-25-frames-gps-utm-fixes.md) uit. De software is lokaal gecontroleerd; er is niets naar server of maaiers uitgerold en er is geen fysieke proef uitgevoerd. Voortgang en resterend werk staan in Beads onder `Novabot-55f`.
+Deze wijziging voert het [herstelplan](../superpowers/plans/2026-09-25-frames-gps-utm-fixes.md) uit. De software is lokaal gecontroleerd. Dockmetingen zijn inmiddels op het fysieke apparaat gecontroleerd; volledige acceptatie van restore, kopie en herankering is nog niet afgerond. Uitrolstatus en resterend werk staan in Beads onder `Novabot-55f`.
 
 ## Herstellen en kaarttoepassing
 
@@ -22,6 +22,8 @@ Deze procedure geldt voor een onverplaatst dock en bestaande zones die fysiek op
 
 Er is geen automatische rij- of dockopdracht in deze herstelcyclus. Een herstart, storing of verlopen cyclus geeft het frame niet vrij. De grens van 0,4 m is een herstelcontrole en bewijst geen centimeternauwkeurigheid.
 
+De live controle heeft een aanvullende beperking aangetoond: raw GNSS meet de antenne, terwijl de lokale voertuigpose een ander referentiepunt gebruikt. De volledige TF-transformatie en de overeenstemming tussen raw GNSS en gefuseerde lokalisatie moeten nog in de herankerprocedure worden opgenomen (`Novabot-55f.19`). Bovenstaande procedure is daarom nog geen fysiek goedgekeurd herstelpad.
+
 ## Kopiëren, tekenen en beeldplaatsing
 
 Kopiëren vereist een verse stabiele Fixed + RUNNING-meting, een gevalideerd frame en een servergebonden meet-ID. Niet-nul fysieke polygonoffsets worden voorlopig geweigerd. Het doeldock blijft behouden. Nieuwe dockverbindingen worden tegen bestaande en gekopieerde obstakels gecontroleerd; overlap met een andere zone levert geen automatische verbinding op.
@@ -30,12 +32,16 @@ Tekenen, penseel en plakken gebruiken de inverse van de weergavetransformatie, i
 
 De dockpin is beeldkalibratie. Alleen de pin verplaatsen wijzigt bestaande maaierbestanden niet. Nieuwe tekeningen en navigatieklikken worden wel door die gewijzigde kalibratie omgerekend en kunnen daardoor op een andere fysieke plek uitkomen. Geografisch geplaatste dronehoeken zijn deelbaar; elke maaier heeft daarnaast zijn eigen koppeling van lokale meters naar het beeld.
 
+De desktopactie "Gedockte maaier koppelen aan foto" koppelt een aangewezen beeldpunt aan het onafhankelijk opgeslagen dock in de maaier. Ze vereist een consistente gecorreleerde snapshot, overeenstemming tussen dock-YAML en `map_info.json`, acht verse stabiele Fixed + RUNNING-dockposes en maximaal 5 cm verschil met het opgeslagen dock. Een bestaande rotatie, schaalcorrectie of offset wordt geweigerd. De vorige referentie wordt eerst geback-upt. De actie schrijft uitsluitend de beeldreferentie op de server, zonder navigatieanker, kanalen, zones of `pos.json` op de maaier te wijzigen. Frame-invalidatie verwijdert deze referentie.
+
+De desktop haalt kaarten, kalibratie en dockpose samen op en vernieuwt deze bij `maps:changed` en opnieuw verbinden. Zo kan een oude dockpose niet blijven staan naast nieuw opgehaalde kalibratie. Dit repareert geen fout dockkanaal: dat blijft op zijn werkelijk opgeslagen lokale positie zichtbaar. De afzonderlijke mobiele `MiniMap` gebruikt nog verschillende positiebronnen en valt onder `Novabot-55f.21`.
+
 ## Uitrol en bewijsgrenzen
 
 De server en de aangepaste `extended_commands.py` horen samen: commandocorrelatie, consistente snapshots en gestempelde RTK-metingen zijn vereist. Oudere firmware wordt veilig geweigerd of loopt op een meettimeout; de exacte runtimecadans en ROS-ontvangerstempels moeten bij de fysieke proef worden bevestigd. De interne referentiedocumenten `docs/reference/FRAMES-GPS-UTM.md` en `REANCHOR.md` zijn lokaal bijgewerkt; die map is bewust uitgesloten van Git.
 
-Voor maaier .244 blijft de historische ankertegenspraak onopgelost. Zonder nieuwe betrouwbare dockmeting wordt geen anker gekozen. Fysieke acceptatie omvat snapshot vóór/na, restore, herankeren, herstart, kopie met doeldock en doorgang, en pas daarna begeleid rijden. Enkele centimeters tekenen vereist daarnaast meerdere ingemeten grondpunten en onafhankelijke controlepunten verspreid over het hele gebied. Een satellietfoto en één passend dockpunt zijn daarvoor onvoldoende bewijs.
+Voor maaier .244 bevestigde een verse meting na handmatig rijden en docken het opgeslagen maaierdock binnen circa 1 cm, terwijl het serverdockkanaal circa 1,21 m afweek. Een latere meting liet opnieuw circa 10 cm verschil tussen actuele pose en opgeslagen dock zien. Een eenmalig goede meting is dus geen blijvende validatie. Het kanaalconflict blijft open. Fysieke acceptatie omvat snapshot vóór/na, restore, herankeren, herstart, kopie met doeldock en doorgang, en pas daarna begeleid rijden. Enkele centimeters tekenen vereist daarnaast meerdere ingemeten grondpunten en onafhankelijke controlepunten verspreid over het hele gebied. Een satellietfoto en één passend dockpunt zijn daarvoor onvoldoende bewijs.
 
 ## Lokale verificatie
 
-Server: 1.476 tests geslaagd, 39 bestaande tests overgeslagen; de laatste MQTT-guardwijziging heeft daarnaast 12 gerichte tests. App: 190 tests geslaagd. Dashboardprojectie: 4 checks geslaagd. Firmwarehelpers: 6 Python-tests geslaagd. Server- en app-TypeScript en de dashboardproductiebuild slagen. De dashboardbuild meldt de bestaande waarschuwing over grote bundels. Deze controles vervangen geen runtime- of fysieke acceptatie.
+Server: 1.482 tests geslaagd, 39 bestaande tests overgeslagen. App: eerder 190 tests geslaagd. Dashboardprojectie: 4 checks geslaagd. Firmwarehelpers: 6 Python-tests geslaagd. Server-TypeScript en de dashboardproductiebuild slagen. De dashboardbuild meldt de bestaande waarschuwing over grote bundels. Volledige lintcontrole van `MowerMap.tsx` meldt nog bestaande fouten; die controle is niet groen. Deze controles vervangen geen runtime- of fysieke acceptatie.
