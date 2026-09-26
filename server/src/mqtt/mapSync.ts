@@ -7,6 +7,7 @@
  *
  * Responses worden geparsed en opgeslagen in de `maps` tabel.
  */
+import { commandChannelEvents, isListening } from './commandChannel.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -303,44 +304,90 @@ export function notifyRespond(sn: string, respondType: string, data: unknown): v
  * @param timeoutMs Max wachttijd (default 5000)
  * @returns         De inhoud van het `_respond` bericht (maaier-stijl: direct de waarde; charger-stijl: de `message` property)
  */
+/** How long a command waits for a device that is not listening right now.
+ *  mqtt_node's restarts take 20-30 s (live .244, 2026-09-26). */
+const LISTENER_WAIT_MS = 45_000;
+
 export function awaitCommand(
   sn: string,
   command: string,
   payload: unknown = null,
   timeoutMs = 5000,
+  listenerWaitMs = LISTENER_WAIT_MS,
 ): Promise<unknown> {
   const respondType = `${command}_respond`;
   const key = `${sn}|${respondType}`;
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let sent = false;
+    let droppedAfterSend = false;
+    let resent = false;
+
+    const finish = (): void => {
       settled = true;
-      // Probeer resolver te verwijderen
+      clearTimeout(timer);
+      commandChannelEvents.off('up', onUp);
+      commandChannelEvents.off('down', onDown);
       const list = pendingResolvers.get(key);
       if (list) {
         const idx = list.indexOf(resolver);
         if (idx >= 0) list.splice(idx, 1);
         if (list.length === 0) pendingResolvers.delete(key);
       }
-      // English: this text ends up inside user-facing errors, and a thrown
-      // Error has no reader language. Technical detail, kept neutral.
-      reject(new Error(`timeout after ${timeoutMs}ms waiting for ${respondType} from ${sn}`));
-    }, timeoutMs);
+    };
+    // English: this text ends up inside user-facing errors, and a thrown
+    // Error has no reader language. Technical detail, kept neutral.
+    const fail = (message: string): void => {
+      if (settled) return;
+      finish();
+      reject(new Error(message));
+    };
+
+    // The answer window starts at the actual send, not at the call, so a
+    // command held back while mqtt_node restarted still gets its full time.
+    const send = (): void => {
+      sent = true;
+      droppedAfterSend = false;
+      clearTimeout(timer);
+      timer = setTimeout(() => fail(`timeout after ${timeoutMs}ms waiting for ${respondType} from ${sn}`), timeoutMs);
+      publishToDevice(sn, { [command]: payload });
+    };
+
+    // The listener came (back): send what was held, or send once more if it
+    // dropped after we sent, since that copy may never have arrived.
+    const onUp = (upSn: string): void => {
+      if (upSn !== sn || settled) return;
+      if (!sent) { console.log(`${TAG} ${sn}: ${command} sent now the mower listens again`); send(); return; }
+      if (droppedAfterSend && !resent) {
+        resent = true;
+        console.log(`${TAG} ${sn}: listener dropped while waiting for ${respondType}, sending ${command} once more`);
+        send();
+      }
+    };
+    const onDown = (downSn: string): void => {
+      if (downSn === sn && sent) droppedAfterSend = true;
+    };
 
     const resolver: PendingResolver = (data) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
+      finish();
       resolve(data);
     };
 
     const existing = pendingResolvers.get(key) ?? [];
     existing.push(resolver);
     pendingResolvers.set(key, existing);
+    commandChannelEvents.on('up', onUp);
+    commandChannelEvents.on('down', onDown);
 
-    publishToDevice(sn, { [command]: payload });
+    if (isListening(sn)) {
+      send();
+    } else {
+      console.log(`${TAG} ${sn}: nobody listens on its command topic (mqtt_node restarting?), holding ${command} up to ${listenerWaitMs}ms`);
+      timer = setTimeout(() => fail(`${sn} did not come back to receive ${command} within ${listenerWaitMs}ms (mower software restarting?)`), listenerWaitMs);
+    }
   });
 }
 

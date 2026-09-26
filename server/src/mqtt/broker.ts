@@ -1,15 +1,11 @@
+import { noteSubscribe, noteDisconnect } from './commandChannel.js';
 import net from 'net';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 // aedes v1.0.0 is ESM-only — loaded lazily inside startMqttBroker() via dynamic import
-type AedesBroker = { publish: (packet: AedesPublishPacket, cb: (err?: Error | null) => void) => void; handle: unknown; on: (event: string, listener: (...args: any[]) => void) => void; close: (cb?: () => void) => void; connectedClients: number };
 type Client = { id: string; conn?: { remoteAddress?: string }; [key: string]: unknown };
 type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; cmd?: string; dup?: boolean };
-import { db } from '../db/database.js';
 import { deviceRepo, equipmentRepo, mapRepo, connectionEventRepo } from '../db/repositories/index.js';
-import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
@@ -50,7 +46,7 @@ function topicColor(topic: string): string {
 }
 
 // Matcht standaard MAC-notaties: AA:BB:CC:DD:EE:FF of AA-BB-CC-DD-EE-FF
-const MAC_SEP_RE  = /([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}/;
+const MAC_SEP_RE  = /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/;
 // Matcht 12 aaneengesloten hex-tekens (geen separator), bijv. AABBCCDDEEFF
 const MAC_FLAT_RE = /(?<![0-9A-Fa-f])([0-9A-Fa-f]{12})(?![0-9A-Fa-f])/;
 // Serienummer patroon: bijv. LFIC1230700004 of LFIN...
@@ -111,7 +107,7 @@ function sanitizeConnectFlags(buf: Buffer): void {
 
 
 function normalizeMac(raw: string): string {
-  const clean = raw.replace(/[:\-]/g, '').toUpperCase();
+  const clean = raw.replace(/[:-]/g, '').toUpperCase();
   return clean.match(/.{2}/g)!.join(':');
 }
 
@@ -138,14 +134,14 @@ function wifiStaToBle(staMac: string): string {
 }
 
 // Flexibele MAC regex voor ARP output — matcht zowel gepadde (0E:E4:05) als ongepadde (e:e4:5) notatie
-const ARP_MAC_RE = /([0-9A-Fa-f]{1,2}[:\-]){5}[0-9A-Fa-f]{1,2}/;
+const ARP_MAC_RE = /([0-9A-Fa-f]{1,2}[:-]){5}[0-9A-Fa-f]{1,2}/;
 
 /**
  * Normaliseer een MAC-adres uit ARP output (kan ongepadde octetten bevatten).
  * Bijv. "e:e4:5:92:2b:e3" → "0E:E4:05:92:2B:E3"
  */
 function normalizeArpMac(raw: string): string {
-  return raw.split(/[:\-]/).map(b => b.toUpperCase().padStart(2, '0')).join(':');
+  return raw.split(/[:-]/).map(b => b.toUpperCase().padStart(2, '0')).join(':');
 }
 
 /**
@@ -877,7 +873,7 @@ export async function startMqttBroker(): Promise<void> {
       // De cloud stuurt nooit proactief commando's naar apparaten.
     }
 
-    (callback as Function)(null, true);
+    callback(null, true);
   };
 
   broker.on('clientError', (client: Client, err: Error) => {
@@ -901,6 +897,7 @@ export async function startMqttBroker(): Promise<void> {
   broker.on('clientDisconnect', (client: Client) => {
     seenClients.delete(client.id); // zodat reconnect weer gelogd wordt
     clientSubscriptions.delete(client.id);
+    noteDisconnect(client.id);
 
     // Verwijder uit online-set op basis van SN in device_registry
     const devRow = deviceRepo.findByClientId(client.id);
@@ -929,7 +926,10 @@ export async function startMqttBroker(): Promise<void> {
     console.log(`${clientColor(client.id)}[MQTT] SUBSCRIBE ${client.id} -> [${topics}]${C.reset}`);
     // Track subscriptions
     if (!clientSubscriptions.has(client.id)) clientSubscriptions.set(client.id, new Set());
-    for (const sub of subscriptions) clientSubscriptions.get(client.id)!.add(sub.topic);
+    for (const sub of subscriptions) {
+      clientSubscriptions.get(client.id)!.add(sub.topic);
+      noteSubscribe(client.id, sub.topic);
+    }
     const subSn = extractSn(client.id) ?? extractSn(topics);
     pushMqttLog({
       ts: Date.now(), type: 'subscribe', clientId: client.id, clientType: '?', sn: subSn,
@@ -969,9 +969,6 @@ export async function startMqttBroker(): Promise<void> {
     const otaKeywords = ['ota_upgrade_cmd', 'ota_version_info', 'ota_upgrade_state'];
     const tagForPayload = (p: string) => otaKeywords.some(k => p.includes(k)) ? '[OTA] ' : '';
 
-    // Vlag om herhaalde up_status_info te onderdrukken in console (niet in pushMqttLog)
-    let suppressLog = false;
-
     // Bepaal kleur: app (blauw) of apparaat (groen/geel op basis van topic/clientId)
     const pubColor = /^[0-9a-f]{8}-/i.test(client.id) ? C.blue : topicColor(packet.topic) || clientColor(client.id);
 
@@ -983,9 +980,9 @@ export async function startMqttBroker(): Promise<void> {
         isEncrypted = true;
         // Onderdruk herhaalde up_status_info (toon elke 30e keer)
         if (decrypted.includes('"up_status_info"')) {
+          // Herhaalde up_status_info: alleen elke 30e in de console (pushMqttLog krijgt ze allemaal).
           statusLogCounter++;
-          if (statusLogCounter % 30 !== 1) suppressLog = true;
-          else console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}  (×30 suppressed)${C.reset}`);
+          if (statusLogCounter % 30 === 1) console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}  (×30 suppressed)${C.reset}`);
         } else {
           console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}${C.reset}`);
         }
@@ -1008,8 +1005,7 @@ export async function startMqttBroker(): Promise<void> {
       // Onderdruk ook plain up_status_info
       if (logPayload.includes('"up_status_info"')) {
         statusLogCounter++;
-        if (statusLogCounter % 30 !== 1) suppressLog = true;
-        else console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}  (×30 suppressed)${C.reset}`);
+        if (statusLogCounter % 30 === 1) console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}  (×30 suppressed)${C.reset}`);
       } else {
         console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}${C.reset}`);
       }
@@ -1436,7 +1432,7 @@ export async function startMqttBroker(): Promise<void> {
             // Deels opgeslokt — rest doorgeven
             data = buf.subarray(toSwallow);
           }
-          return (origWrite as Function)(data, ...rest);
+          return (origWrite as (...args: unknown[]) => boolean)(data, ...rest);
         };
       }
     });
