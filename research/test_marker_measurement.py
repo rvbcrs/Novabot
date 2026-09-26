@@ -1,5 +1,6 @@
 """Run on a laptop: python3 research/test_marker_measurement.py (no ROS required)."""
 import importlib.util
+import itertools
 import json
 import math
 import os
@@ -45,8 +46,10 @@ def capture():
             "pose": {"pose": pose(map_gps)},
             "twist": {"twist": {"linear": dict.fromkeys("xyz", 0), "angular": dict.fromkeys("xyz", 0)}}})
         add("/robot_decision/map_position", pose(map_base))
-        add("/bestpos_parsed_data", {"header": header(t, "gps_link"), "qual": 4})
+        add("/bestpos_parsed_data", {"header": header(t, "gps_link"), "qual": 4, "diff_age": 1.4})
         add("/robot_combination_localization/combination_status", {"status": 200})
+        if i % 10 == 0:
+            add("/chassis_incident", {"error_lora": False, "warning_lora_rtk_data_overtime": False})
         add("/robot_decision/robot_status", {"merged_work_status": 0, "error_status": 0})
     return out, commands._marker_compose(map_base, base_tag)
 
@@ -94,6 +97,25 @@ class MarkerMeasurementTest(unittest.TestCase):
                         row["data"]["header"] = header(99.8, "gps_link")
                 with self.assertRaises(ValueError):
                     commands._marker_measurement_result(samples, 100, 106)
+
+    def test_lora_status8_requires_current_healthy_flags_and_fresh_corrections(self):
+        for kind in ("healthy", "error", "warning", "missing", "stale", "unknown_status", "old_corrections", "nan_age"):
+            with self.subTest(kind=kind):
+                samples, _ = capture()
+                for row in samples["/robot_decision/robot_status"]:
+                    row["data"]["error_status"] = 9 if kind == "unknown_status" else 8
+                flags = samples["/chassis_incident"]
+                if kind == "error": flags[1]["data"]["error_lora"] = True
+                if kind == "warning": flags[1]["data"]["warning_lora_rtk_data_overtime"] = True
+                if kind == "missing": del flags[1]["data"]["error_lora"]
+                if kind == "stale": samples["/chassis_incident"] = flags[:1]
+                if kind in ("old_corrections", "nan_age"):
+                    samples["/bestpos_parsed_data"][15]["data"]["diff_age"] = 3.1 if kind == "old_corrections" else float("nan")
+                if kind == "healthy":
+                    self.assertEqual(commands._marker_measurement_result(samples, 100, 106)["result"], 0)
+                else:
+                    with self.assertRaises(ValueError):
+                        commands._marker_measurement_result(samples, 100, 106)
 
     def test_fingerprint_checks_native_dock_and_dispatcher_checks_frame(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -164,8 +186,9 @@ class MarkerMeasurementTest(unittest.TestCase):
                 pass
 
             def spin_once(self, **kwargs):
-                callbacks["/bestpos_parsed_data"]({"qual": 4})
+                callbacks["/bestpos_parsed_data"]({"qual": 4, "diff_age": 1.4})
                 callbacks["/robot_combination_localization/combination_status"]({"status": 200})
+                callbacks["/chassis_incident"]({"error_lora": False, "warning_lora_rtk_data_overtime": False})
                 callbacks["/robot_decision/robot_status"]({"merged_work_status": 0, "error_status": 0})
 
             def shutdown(self):
@@ -179,7 +202,7 @@ class MarkerMeasurementTest(unittest.TestCase):
                    "rosidl_runtime_py.utilities": ns(get_message=lambda kind: object),
                    "rosidl_runtime_py.convert": ns(message_to_ordereddict=lambda value: value),
                    "std_srvs.srv": ns(SetBool=ns(Request=lambda: ns(data=False)))}
-        with patch.dict("sys.modules", modules), patch.object(commands.time, "time", return_value=100), patch.object(commands.time, "monotonic", side_effect=iter(range(100))):
+        with patch.dict("sys.modules", modules), patch.object(commands.time, "time", side_effect=itertools.count(100, .01)), patch.object(commands.time, "monotonic", side_effect=iter(range(100))):
             with self.assertRaisesRegex(ValueError, "static transform missing"):
                 commands._capture_dock_marker()
         self.assertEqual(toggles, [True, False])

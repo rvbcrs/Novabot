@@ -2803,7 +2803,27 @@ def _marker_frame_fingerprint(home="home0"):
 
 def _marker_robot_idle(msg):
     # Explicit stock merged states FREE, CHARGING, STOP; never infer idle from no data.
-    return int(msg["merged_work_status"]) in (0, 4, 5) and int(msg["error_status"]) == 0
+    # Code 8 can outlive the raw LoRa fault; only use with the mandatory
+    # fresh chassis flags and correction-age checks below. Never clear the status.
+    return int(msg["merged_work_status"]) in (0, 4, 5) and int(msg["error_status"]) in (0, 8)
+
+
+def _marker_rtk_fixed(msg):
+    age = float(msg.get("diff_age", float("inf")))
+    return int(msg["qual"]) == 4 and math.isfinite(age) and 0 <= age <= 3
+
+
+def _marker_lora_healthy(msg):
+    return msg.get("error_lora") is False and msg.get("warning_lora_rtk_data_overtime") is False
+
+
+_MARKER_HEALTH_TOPICS = (
+    ("/bestpos_parsed_data", _marker_rtk_fixed, 1.5),
+    ("/robot_combination_localization/combination_status", lambda d: int(d["status"]) == 200, 1.5),
+    ("/robot_decision/robot_status", _marker_robot_idle, 1.5),
+    # Stock ChassisIncident is published every 2s with a zero source stamp.
+    ("/chassis_incident", _marker_lora_healthy, 3),
+)
 
 
 def _marker_measurement_result(samples, start_wall, end_wall):
@@ -2828,17 +2848,14 @@ def _marker_measurement_result(samples, start_wall, end_wall):
     first, last = min(unique), max(unique)
     if last - first < 5 or last - first > 15:
         raise ValueError("marker window must span 5 to 15 seconds")
-    health_topics = (
-        ("/bestpos_parsed_data", lambda d: int(d["qual"]) == 4),
-        ("/robot_combination_localization/combination_status", lambda d: int(d["status"]) == 200),
-        ("/robot_decision/robot_status", _marker_robot_idle),
-    )
-    for topic, valid in health_topics:
-        rows = [r for r in samples.get(topic, []) if first - 1.5 <= r["received"] <= last + .5]
+    for topic, valid, max_age in _MARKER_HEALTH_TOPICS:
+        rows = [r for r in samples.get(topic, []) if first - max_age <= r["received"] <= last + .5]
         if not rows or any(not valid(r["data"]) for r in rows):
-            raise ValueError("measurement requires stationary idle robot, RTK Fixed and LOC_SUCCESS: " + topic)
+            raise ValueError("measurement requires idle robot, healthy LoRa, fresh RTK Fixed and LOC_SUCCESS: " + topic)
         times = sorted(r["received"] for r in rows)
-        if times[0] > first or times[-1] < last - 1.5 or any(b - a > 1.5 for a, b in zip(times, times[1:])):
+        if (times[0] > first or times[-1] < last - max_age or
+                any(not 0 < b - a <= max_age for a, b in zip(times, times[1:])) or
+                (topic == "/chassis_incident" and len(times) < 2)):
             raise ValueError("health telemetry stale: " + topic)
         if topic == "/bestpos_parsed_data":
             receiver_times = sorted({_marker_stamp(r["data"]) for r in rows})
@@ -2943,17 +2960,22 @@ def _capture_dock_marker():
                 samples["/tf_static"]["gps_link"] = value
 
     def health_ready():
-        required = (("/bestpos_parsed_data", lambda d: int(d["qual"]) == 4),
-                    ("/robot_combination_localization/combination_status", lambda d: int(d["status"]) == 200),
-                    ("/robot_decision/robot_status", _marker_robot_idle))
-        return all(samples.get(t) and time.time() - samples[t][-1]["received"] < 1.5 and
-                   check(samples[t][-1]["data"]) for t, check in required)
+        now = time.time()
+        for topic, check, max_age in _MARKER_HEALTH_TOPICS:
+            rows = samples.get(topic, [])[-(2 if topic == "/chassis_incident" else 1):]
+            if (len(rows) < (2 if topic == "/chassis_incident" else 1) or
+                    not 0 <= now - rows[-1]["received"] < max_age or
+                    any(not check(row["data"]) for row in rows) or
+                    any(not 0 < b["received"] - a["received"] <= max_age for a, b in zip(rows, rows[1:]))):
+                return False
+        return True
 
     try:
         qos = QoSProfile(depth=30, reliability=ReliabilityPolicy.BEST_EFFORT)
         for topic, kind in (("/aruco/pose", "geometry_msgs/msg/PoseStamped"),
                             ("/robot_combination_localization/odom", "nav_msgs/msg/Odometry"),
                             ("/robot_decision/map_position", "geometry_msgs/msg/Pose"),
+                            ("/chassis_incident", "novabot_msgs/msg/ChassisIncident"),
                             ("/bestpos_parsed_data", "novabot_msgs/msg/BestPos"),
                             ("/robot_combination_localization/combination_status", "localization_msgs/msg/CombinationStatus"),
                             ("/robot_decision/robot_status", "decision_msgs/msg/RobotStatus")):
