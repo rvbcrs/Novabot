@@ -2437,12 +2437,16 @@ def handle_start_edge_cut(params, respond):
     # Match the shared-memory DDS transport the ROS nodes use — without
     # CYCLONEDDS_URI pointing at shm_cyclonedds.xml the CLI client cannot
     # discover /navigate_through_coverage_paths.
+    # PYTHONUNBUFFERED: the ros2 CLI is Python, which ignores stdbuf -oL and
+    # block-buffers into our pipe — without it no Feedback block reaches the
+    # monitor until the action exits, so the dashboard's edge progress stays 0.
     env = {
         **os.environ,
         "ROS_DOMAIN_ID": "0",
         "ROS_LOCALHOST_ONLY": "1",
         "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
         "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+        "PYTHONUNBUFFERED": "1",
     }
 
     # Only Low is supported: it is the one level whose configuration is known
