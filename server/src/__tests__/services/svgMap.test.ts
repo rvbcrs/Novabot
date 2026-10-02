@@ -118,6 +118,51 @@ describe('renderMowerMapSvg', () => {
     expect(out).toContain('class="trail"');
   });
 
+  it('renders missed_points as orange circle markers', () => {
+    deviceCache.set(SN, new Map([
+      ['missed_points', '1 2;3 -4'],
+    ]));
+    const out = renderMowerMapSvg(SN);
+    const markers = [...out.matchAll(/<circle class="missed-point" /g)];
+    expect(out).toContain('.missed-point { fill: #f97316;');
+    expect(out).toContain('fill-opacity: 0.4;');
+    expect(out).toContain('stroke: none;');
+    expect(markers).toHaveLength(2);
+    expect(out).toContain('r="2.5"');
+  });
+
+  it('ignores malformed missed_points entries and keeps valid points in bounds', () => {
+    deviceCache.set(SN, new Map([
+      ['missed_points', 'bad;10 0; ;1 nope;2'],
+    ]));
+    const out = renderMowerMapSvg(SN);
+    const matches = [...out.matchAll(/<circle class="missed-point" cx="([\d.]+)" cy="([\d.]+)"/g)];
+    expect(matches).toHaveLength(1);
+    const cx = Number(matches[0][1]);
+    const cy = Number(matches[0][2]);
+    expect(cx).toBeGreaterThan(500);
+    expect(cx).toBeLessThanOrEqual(600);
+    expect(cy).toBeGreaterThanOrEqual(0);
+    expect(cy).toBeLessThanOrEqual(600);
+    expect(out).toContain('No work map yet');
+  });
+
+  it('projects missed_points through the same local SVG transform as the trail', () => {
+    vi.mocked(getLocalTrail).mockReturnValue([
+      { x: 0, y: 0, ts: 0 },
+      { x: 1, y: 2, ts: 0 },
+    ]);
+    deviceCache.set(SN, new Map([
+      ['missed_points', '1 2'],
+    ]));
+    const out = renderMowerMapSvg(SN);
+    const trail = out.match(/<polyline class="trail" points="([^"]+)"/);
+    const marker = out.match(/<circle class="missed-point" cx="([\d.]+)" cy="([\d.]+)"/);
+    expect(trail && marker).toBeTruthy();
+    const trailLast = trail![1].trim().split(' ').at(-1);
+    expect(trailLast).toBe(`${marker![1]},${marker![2]}`);
+  });
+
   it('shows progress badge when cov_ratio is cached', () => {
     deviceCache.set(SN, new Map([
       ['cov_ratio', '0.42'],
