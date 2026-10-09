@@ -482,6 +482,17 @@ describe('altijd randmaaien', () => {
     expect(edgeCutCalls()).toHaveLength(0);
   });
 
+  it('een rit zonder maaien (Work:MOVING, bv. naar het dock na de randmaai) armt niets', () => {
+    const SN = 'ALWAYS_DRIVE_HOME';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    deviceCache.set(SN, new Map([['work_status', '92'], ['msg', 'Mode:COVERAGE Work:MOVING Prev work:FINISHED Recharge: WAIT']]));
+    startScheduleRunner();
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
   it('de randmaai zelf (edge_active) armt niets', () => {
     const SN = 'ALWAYS_EDGE_ACTIVE';
     deviceSettingsRepo.upsert(SN, 'edge_always', '1');

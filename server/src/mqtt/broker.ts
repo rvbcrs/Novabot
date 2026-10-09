@@ -1254,6 +1254,14 @@ export async function startMqttBroker(): Promise<void> {
             set('edge_task_planned_area', body.task_planned_area);
             if (body.result_status != null) set('edge_result_status', body.result_status);
             forwardToDashboard(extSn, changes);
+            // The edge goal ends where the edge ends (return_to_start false) and
+            // nothing else drives the mower back, so a finished edge cut (100
+            // FINISHED, 90 PARTIALLY_FINISHED) goes home, as the stock edge pass
+            // at the end of a mow did. A stopped or failed one stays put.
+            if (body.active === false && (body.result_status === 100 || body.result_status === 90)) {
+              const sn = extSn;
+              void import('../services/mowingService.js').then(m => m.goHome(sn));
+            }
           }
         }
 

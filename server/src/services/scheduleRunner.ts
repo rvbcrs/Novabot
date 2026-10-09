@@ -68,10 +68,11 @@ export function firstMapName(mapIds: string | undefined): string {
 function armAlwaysEdge(nowMs: number): void {
   for (const { sn } of deviceSettingsRepo.listAll().filter(r => r.key === EDGE_ALWAYS_KEY && r.value === '1')) {
     const cache = deviceCache.get(sn);
-    // Alleen een echte coverage-taak: niet de randmaai zelf (edge_active, gaat
-    // buiten robot_decision om), niet mapping en geen rit naar dock of punt.
-    const covering = getMowerPhase(sn) === 'mowing'
-      && /Mode:COVERAGE/.test(cache?.get('msg') ?? '')
+    // Alleen een echte coverage-taak: Work:COVERING, niet MOVING/RUNNING. Een rit
+    // naar het dock (ook na de randmaai) kan als Mode:COVERAGE Work:MOVING
+    // rapporteren en zou dan een nieuwe randmaai armen. Ook niet de randmaai
+    // zelf (edge_active, gaat buiten robot_decision om) en niet mapping.
+    const covering = /Mode:COVERAGE Work:COVERING\b/.test(cache?.get('msg') ?? '')
       && cache?.get('edge_active') !== '1';
     const started = covering && !wasCovering.get(sn);
     wasCovering.set(sn, covering);
