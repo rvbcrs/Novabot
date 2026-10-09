@@ -3265,10 +3265,10 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
         const departure = freshPositionState(sn);
         if (!departure.docked || !departure.running || !departure.pose) throw new ReanchorError(M`Begin stilstaand op het eigen dock met vers laadcontact en lokalisatie.`);
         const signature = frameSnapshotSignature(snapshot);
-        // 1 m puts the mower inside the window where auto_recharge_server starts
-        // its visual approach directly (0.87..1.47 m from the departure pose).
+        // 1.15 m puts the mower mid-window where auto_recharge_server starts its
+        // visual approach directly (the mower checks 0.95..1.40 m from the departure pose).
         const move = (action: 'reverse' | 'dock', chargePose?: DockPose) => guardedDockMove(sn, operation,
-          { action, distance: action === 'reverse' ? 1 : 0, fromDock: action === 'reverse', signature, ...(chargePose ? { chargePose } : {}) }, check,
+          { action, distance: action === 'reverse' ? 1.15 : 0, fromDock: action === 'reverse', signature, ...(chargePose ? { chargePose } : {}) }, check,
           id => { cycle.motionId = id; }, () => {
             if (movementStarted) return;
             // The native arm has confirmed v3 and all preflight checks passed.
