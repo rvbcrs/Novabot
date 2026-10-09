@@ -253,7 +253,7 @@ export async function createBundleFromCsvFiles(
  *
  * Returns the saved BackupEntry, or null if there's no usable polygon/anchor.
  */
-export async function createBundleFromDb(sn: string, reason: string): Promise<BackupEntry | null> {
+export async function createBundleFromDb(sn: string, reason: string, dockPose?: { x: number; y: number; orientation: number }): Promise<BackupEntry | null> {
   const cal = mapRepo.getCalibration(sn);
   if (!cal?.charger_lat || !cal?.charger_lng) {
     console.warn(`[portable-backup] ${sn}: skip synth — no charger anchor`);
@@ -296,7 +296,8 @@ export async function createBundleFromDb(sn: string, reason: string): Promise<Ba
     };
   });
 
-  // Charging pose. PREFER the mower's REAL live dock pose, captured from
+  // Charging pose. A dockPose from the caller wins; otherwise PREFER the
+  // mower's REAL live dock pose, captured from
   // map_position while it is docked (getDockPose only stores a non-zero
   // position, and only while CHARGING/FULL). The map-edit apply path gates on
   // the mower being docked (mapEdit.isMowerDocked), so on that path this is
@@ -311,10 +312,10 @@ export async function createBundleFromDb(sn: string, reason: string): Promise<Ba
   // mapEdit.bundleAndPush propagates to the dashboard apply/revert routes
   // (try/catch → 500), setup.ts cloud-import, adminStatus rebuild, and
   // firmwareSafety all wrap the call in try/catch.
-  let chargingPose: { x: number; y: number; orientation: number } | null = null;
+  let chargingPose: { x: number; y: number; orientation: number } | null = dockPose ?? null;
   const live = getDockPose(sn);
   if (
-    live &&
+    !chargingPose && live &&
     Number.isFinite(live.x) && Number.isFinite(live.y) && Number.isFinite(live.orientation) &&
     !(live.x === 0 && live.y === 0 && live.orientation === 0)
   ) {
