@@ -20,7 +20,18 @@ import { M, renderMsg, type Lang, type Msg } from './serverText.js';
 import { serverTimeZone } from '../utils/serverTimeZone.js';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
+let edgeIntervalId: ReturnType<typeof setInterval> | null = null;
 const CHECK_INTERVAL_MS = 30_000;
+// The edge watchers look more often than the schedules: the drive home after a
+// mow has to be caught before the mower is halfway to the dock.
+const EDGE_TICK_MS = 3_000;
+// ponytail: fixed floor, a setting if people want it. The edge cut runs outside
+// robot_decision and its low-battery return, so it only starts with this much;
+// on the dock the watcher waits until the mower has charged to it.
+const EDGE_MIN_BATTERY = 30;
+// The firmware finished the mow and starts its own drive home (init phases,
+// then RETURN_TO_PILE). ALIGN_PILE and later are left alone: it is docking.
+const RETURNING_AFTER_MOW = /Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: (REQUEST_START|SYSTEM_CHECK_INIT|LOCALIZATION_UTM_INIT|LOCALIZATION_INIT|SENSOR_INIT|MAP_INIT|INIT_SUCCESS|RETURN_TO_PILE)\b/;
 const TRIGGER_WINDOW_MS = 5 * 60_000; // 5 minuten window — ruim genoeg voor restarts
 
 // Levensduur van een rand-dag watcher. Bewust ruim gehouden op 12 uur, óók na
@@ -256,6 +267,8 @@ export type EdgeWatchEntry = {
    *  wordt direct na een geaccepteerde start_navigation gezet). */
   armedAt: number;
   sawMowing: boolean;
+  /** stop_to_charge sent to break off the drive home after the mow. */
+  cancelSentAt?: number;
 };
 
 /** State machine per maaier voor de rand-dag. Arm bij trigger (sawMowing=false),
@@ -345,42 +358,70 @@ export function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null 
   return new Date(now.getTime() - sinceMs);
 }
 
-function checkSchedules() {
-  const now = new Date();
+/** Is the edge cut this watcher was armed for still wanted? The schedule that
+ *  armed it must still exist and be on (finding 4: this catches every delete or
+ *  disable path, not only the routes that call disarmEdgeWatchForSchedule), or
+ *  "edge cut after every mow" must still be on. Returns why not, or null. */
+function edgeNotWanted(sn: string, entry: EdgeWatchEntry): string | null {
+  if (entry.scheduleId === null) return edgeAlways(sn) ? null : '"altijd randmaaien" staat inmiddels uit';
+  return scheduleRepo.findById(entry.scheduleId)?.enabled ? null : `schema ${entry.scheduleId} bestaat niet meer of staat uit`;
+}
 
-  // Rand-dag watchers: vuur een losse randmaai zodra een gearmde maaier na het
-  // maaien gaat laden (= maaibeurt klaar). Staat vóór de schema-lus zodat hij
-  // ook loopt op ticks waarop geen enkel schema aan de beurt is. Puur via
-  // advanceEdgeWatch; state in pendingEdge. Kopie van de entries zodat
-  // delete/set tijdens de iteratie veilig is.
-  armAlwaysEdge(now.getTime());
+function checkEdgeWatchers(): void {
+  const now = Date.now();
+  armAlwaysEdge(now);
+  // Kopie van de entries zodat delete/set tijdens de iteratie veilig is. State
+  // steeds EERST bijwerken, het bewegingscommando als LAATSTE: gooit de
+  // publish-keten een fout, dan kan dezelfde entry niet nog eens vuren.
   for (const [sn, entry] of [...pendingEdge]) {
-    const { next, fire } = advanceEdgeWatch(entry, getMowerPhase(sn), now.getTime(), EDGE_WATCH_TIMEOUT_MS);
-    // State EERST bijwerken, het bewegingscommando als LAATSTE. Gooit de
-    // publish-keten een fout, dan is de watcher al opgeruimd en kan dezelfde
-    // entry op de volgende tick niet nog een keer vuren.
+    const cache = deviceCache.get(sn);
+    const msg = cache?.get('msg') ?? '';
+    const battery = parseInt(cache?.get('battery_power') ?? cache?.get('battery_capacity') ?? '', 10);
+    const batteryOk = !Number.isFinite(battery) || battery >= EDGE_MIN_BATTERY;
+    // mow_zone_drive breaks off the firmware's drive home itself when it takes
+    // the wheels; while it is busy the server stays out. "done" = coverage was
+    // handed to the firmware.
+    const zoneDriveBusy = !['', 'done', 'error'].includes(cache?.get('mow_zone_phase') ?? '');
+
+    // Direct: the mow just finished and the firmware starts its drive home.
+    // Break that off (stop_to_charge, the stop button of the app and the
+    // dashboard) and cut the edge from where the mower is. If the firmware
+    // does not let go it docks, and the dock path below takes over.
+    if (entry.sawMowing && !entry.cancelSentAt && batteryOk && !zoneDriveBusy
+        && RETURNING_AFTER_MOW.test(msg) && !edgeNotWanted(sn, entry)) {
+      pendingEdge.set(sn, { ...entry, cancelSentAt: now });
+      publishToDevice(sn, { stop_to_charge: {} });
+      console.log(`[ScheduleRunner] EDGE: maaibeurt klaar, terugrit afbreken voor randmaai sn=${sn}`);
+      continue;
+    }
+    if (entry.cancelSentAt && /Work:FINISHED\b/.test(msg) && /Recharge: (CANCELLED|WAIT)\b/.test(msg)) {
+      pendingEdge.delete(sn);
+      const why = edgeNotWanted(sn, entry);
+      if (why) { console.log(`[ScheduleRunner] EDGE NIET GESTART sn=${sn}: ${why}`); continue; }
+      const r = startEdgeCut(sn, entry.mapName, entry.bladeHeightMm, false);
+      console.log(`[ScheduleRunner] EDGE ${r.ok ? 'STARTED' : 'FAILED'} (direct na maaien) sn=${sn} map=${entry.mapName} blade=${entry.bladeHeightMm}mm ${r.error ?? ''}`);
+      continue;
+    }
+
+    // Dock: the mower docked after the mow (the drive home was not broken off).
+    const { next, fire } = advanceEdgeWatch(entry, getMowerPhase(sn), now, EDGE_WATCH_TIMEOUT_MS);
+    if (fire && !batteryOk) { pendingEdge.set(sn, entry); continue; } // charge first
     if (next === null) pendingEdge.delete(sn);
     else pendingEdge.set(sn, next);
     if (fire) {
-      // Hercontrole op het vuurmoment (finding 4): het schema dat deze watcher
-      // armde moet nog bestaan en aan staan. Dit vangt ALLE verwijder- en
-      // uitzetpaden af (dashboard, app, admin, directe DB-wijziging), niet
-      // alleen de routes die disarmEdgeWatchForSchedule aanroepen. Gearmd door
-      // "altijd randmaaien": die instelling moet dan nog aan staan.
-      if (entry.scheduleId === null ? !edgeAlways(sn) : !scheduleRepo.findById(entry.scheduleId)?.enabled) {
-        console.log(`[ScheduleRunner] EDGE NIET GESTART sn=${sn}: ${entry.scheduleId === null
-          ? '"altijd randmaaien" staat inmiddels uit'
-          : `schema ${entry.scheduleId} bestaat niet meer of staat uit`}`);
-        continue;
-      }
-      // departFromDock: de watcher vuurt per definitie op fase 'charging'
-      // (gedockt); zonder deze vlag blijft het chassis magnetisch aan het dock
-      // vergrendeld en plant NTCP vanaf een bijna-lethal positie. De app en
-      // het dashboard zetten deze vlag in exact dezelfde situatie ook.
+      const why = edgeNotWanted(sn, entry);
+      if (why) { console.log(`[ScheduleRunner] EDGE NIET GESTART sn=${sn}: ${why}`); continue; }
+      // departFromDock: de watcher vuurt hier op fase 'charging' (gedockt);
+      // zonder deze vlag blijft het chassis magnetisch aan het dock vergrendeld
+      // en plant NTCP vanaf een bijna-lethal positie.
       const r = startEdgeCut(sn, entry.mapName, entry.bladeHeightMm, true);
       console.log(`[ScheduleRunner] EDGE ${r.ok ? 'STARTED' : 'FAILED'} sn=${sn} map=${entry.mapName} blade=${entry.bladeHeightMm}mm ${r.error ?? ''}`);
     }
   }
+}
+
+function checkSchedules() {
+  const now = new Date();
 
   // Haal ALLE enabled schedules op — de runner handelt alles af
   const rows = scheduleRepo.findEnabled();
@@ -630,12 +671,15 @@ export function startScheduleRunner(): void {
     `[ScheduleRunner] Server-TZ: ${process.env.TZ ?? '(niet gezet — UTC)'} — lokale tijd nu: ${new Date().toLocaleString('en-CA', { hour12: false })}. ` +
     `Schema's met eigen timezone (browser/app) vuren in hun eigen zone.`,
   );
+  checkEdgeWatchers();
   checkSchedules();
   intervalId = setInterval(checkSchedules, CHECK_INTERVAL_MS);
+  edgeIntervalId = setInterval(checkEdgeWatchers, EDGE_TICK_MS);
   console.log(`[ScheduleRunner] Started, checking every ${CHECK_INTERVAL_MS / 1000}s`);
 }
 
 export function stopScheduleRunner(): void {
+  if (edgeIntervalId) { clearInterval(edgeIntervalId); edgeIntervalId = null; }
   if (intervalId) {
     clearInterval(intervalId);
     intervalId = null;

@@ -502,3 +502,94 @@ describe('altijd randmaaien', () => {
     expect(__getPendingEdgeForTest().has(SN)).toBe(false);
   });
 });
+
+// Direct na het maaien randmaaien: de firmware meldt de beurt klaar en begint
+// zijn terugrit (live .100: "Work:FINISHED Prev work:FINISHED_ONCE Recharge:
+// RETURN_TO_PILE"). De server breekt die af met stop_to_charge en start de
+// randmaai vanaf waar de maaier staat, zonder eerst naar het dock te rijden.
+describe('randmaai direct na het maaien', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deviceCache.clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    stopScheduleRunner();
+    vi.useRealTimers();
+  });
+
+  const EDGE_TICK = 3_000;
+  function setMowing3(sn: string, battery = '60'): void {
+    setMowing(sn);
+    deviceCache.get(sn)!.set('current_map_ids', '1000').set('target_height', '3').set('battery_power', battery);
+  }
+  function setRecharge(sn: string, recharge: string, battery = '60'): void {
+    deviceCache.set(sn, new Map([
+      ['battery_power', battery], ['cov_ratio', '1'],
+      ['msg', `Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: ${recharge}`],
+    ]));
+  }
+  const stopToCharge = () => vi.mocked(publishToDevice).mock.calls.filter(c => 'stop_to_charge' in (c[1] as object));
+
+  it('breekt de terugrit af en start de randmaai op de plek, niet vanaf het dock', () => {
+    const SN = 'DIRECT_HAPPY';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setMowing3(SN);
+    startScheduleRunner();
+    setRecharge(SN, 'RETURN_TO_PILE');
+    vi.advanceTimersByTime(EDGE_TICK);
+    expect(stopToCharge()).toHaveLength(1);
+    expect(edgeCutCalls()).toHaveLength(0);
+
+    setRecharge(SN, 'CANCELLED');
+    vi.advanceTimersByTime(EDGE_TICK);
+    expect(edgeCutCalls()).toEqual([{ start_edge_cut: { mapName: 'map3', bladeHeight: 50, departFromDock: false } }]);
+    vi.advanceTimersByTime(EDGE_TICK * 5);
+    expect(stopToCharge()).toHaveLength(1);
+    expect(edgeCutCalls()).toHaveLength(1);
+  });
+
+  it('laat de firmware niet los: hij dockt en de randmaai start vanaf het dock', () => {
+    const SN = 'DIRECT_REFUSED';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setMowing3(SN);
+    startScheduleRunner();
+    setRecharge(SN, 'RETURN_TO_PILE');
+    vi.advanceTimersByTime(EDGE_TICK * 3);
+    expect(stopToCharge()).toHaveLength(1);
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(EDGE_TICK);
+    expect(edgeCutCalls()).toEqual([{ start_edge_cut: { mapName: 'map3', bladeHeight: 50, departFromDock: true } }]);
+  });
+
+  it('lage accu: geen afbreken; op het dock pas randmaaien als hij genoeg geladen is', () => {
+    const SN = 'DIRECT_LOW_BATTERY';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setMowing3(SN, '25');
+    startScheduleRunner();
+    setRecharge(SN, 'RETURN_TO_PILE', '22');
+    vi.advanceTimersByTime(EDGE_TICK * 3);
+    expect(stopToCharge()).toHaveLength(0);
+
+    setDockedAfterFinishedMow(SN);
+    deviceCache.get(SN)!.set('battery_power', '21');
+    vi.advanceTimersByTime(EDGE_TICK * 5);
+    expect(edgeCutCalls()).toHaveLength(0);
+    deviceCache.get(SN)!.set('battery_power', '35');
+    vi.advanceTimersByTime(EDGE_TICK);
+    expect(edgeCutCalls()).toHaveLength(1);
+  });
+
+  it('mow_zone_drive aan het werk: de server grijpt niet in', () => {
+    const SN = 'DIRECT_ZONE_DRIVE';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setMowing3(SN);
+    startScheduleRunner();
+    setRecharge(SN, 'RETURN_TO_PILE');
+    deviceCache.get(SN)!.set('mow_zone_phase', 'following_unicom');
+    vi.advanceTimersByTime(EDGE_TICK * 3);
+    expect(stopToCharge()).toHaveLength(0);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+});
