@@ -91,3 +91,64 @@ describe('dashboard → Novabot app', () => {
     expect(cutGrassPlanRepo.findById(scheduleId)).toBeUndefined();
   });
 });
+
+// The real Novabot app never sends planId: it lists plans per weekday and sends
+// the item's numeric `id` with deleteType "single" (only this day) or "all"
+// (this schedule on every day), see pages/schedule/logic.dart _requestToDelete.
+describe('Novabot app delete/edit by list id', () => {
+  async function listItem(day: string, startTime: string) {
+    const list = await request(app).post('/api/nova-data/appManage/queryCutGrassPlan').set(auth).send({ sn: SN });
+    return (list.body.value[day] as Array<{ id: number; startTime: string }>).find(i => i.startTime === startTime)!;
+  }
+  async function dashboardSchedule(startTime: string, weekdays: number[]) {
+    const res = await request(app).post(`/api/dashboard/schedules/${SN}`).send({ startTime, endTime: '23:00', weekdays, cuttingHeight: 50 });
+    return res.body.schedule.scheduleId as string;
+  }
+
+  it('"all" removes that one schedule, made in the dashboard, and leaves the others', async () => {
+    const a = await dashboardSchedule('07:15', [0, 6]);
+    const b = await dashboardSchedule('18:00', [6]);
+    const item = await listItem('Sat', '07:15');
+    await request(app).post('/api/nova-data/appManage/deleteCutGrassPlan').set(auth).send({ id: item.id, deleteType: 'all' });
+    expect(scheduleRepo.findByIdAndMower(a, SN)).toBeUndefined();
+    expect(cutGrassPlanRepo.findById(a)).toBeUndefined();
+    expect(scheduleRepo.findByIdAndMower(b, SN)).toBeTruthy();
+    expect(cutGrassPlanRepo.findById(b)).toBeTruthy();
+  });
+
+  it('"single" removes only that weekday', async () => {
+    const a = await dashboardSchedule('07:15', [0, 6]);
+    const item = await listItem('Sat', '07:15');
+    await request(app).post('/api/nova-data/appManage/deleteCutGrassPlan').set(auth).send({ id: item.id, deleteType: 'single' });
+    expect(JSON.parse(scheduleRepo.findByIdAndMower(a, SN)!.weekdays)).toEqual([0]);
+    expect(JSON.parse(cutGrassPlanRepo.findById(a)!.weekday!)).toEqual(['Sun']);
+    expect((await request(app).post('/api/nova-data/appManage/queryCutGrassPlan').set(auth).send({ sn: SN })).body.value.Sat).toHaveLength(0);
+  });
+
+  it('"single" on the last weekday removes the schedule', async () => {
+    const a = await dashboardSchedule('07:15', [6]);
+    const item = await listItem('Sat', '07:15');
+    await request(app).post('/api/nova-data/appManage/deleteCutGrassPlan').set(auth).send({ id: item.id, deleteType: 'single' });
+    expect(scheduleRepo.findByIdAndMower(a, SN)).toBeUndefined();
+    expect(cutGrassPlanRepo.findById(a)).toBeUndefined();
+  });
+
+  it('a plan made in the app is deleted by its list id', async () => {
+    const res = await request(app).post('/api/nova-data/appManage/saveCutGrassPlan').set(auth).send({
+      sn: SN, weeks: ['Mon'], startTime: '09:00', endTime: '11:00', cutGrassHeight: 4,
+    });
+    const planId = res.body.value.planId as string;
+    const item = await listItem('Mon', '09:00');
+    await request(app).post('/api/nova-data/appManage/deleteCutGrassPlan').set(auth).send({ id: item.id, deleteType: 'all' });
+    expect(cutGrassPlanRepo.findById(planId)).toBeUndefined();
+    expect(scheduleRepo.findByIdAndMower(`app:${planId}`, SN)).toBeUndefined();
+  });
+
+  it('an edit by list id updates the dashboard schedule instead of adding a copy', async () => {
+    const a = await dashboardSchedule('07:15', [6]);
+    const item = await listItem('Sat', '07:15');
+    await request(app).post('/api/nova-data/appManage/updateCutGrassPlan').set(auth).send({ id: item.id, weeks: ['Sat'], startTime: '08:30', endTime: '09:30' });
+    expect(scheduleRepo.findByIdAndMower(a, SN)!.start_time).toBe('08:30');
+    expect(scheduleRepo.findByIdAndMower(`app:${a}`, SN)).toBeUndefined();
+  });
+});

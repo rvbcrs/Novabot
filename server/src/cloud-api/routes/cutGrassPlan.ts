@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { cutGrassPlanRepo, equipmentRepo, mapRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, PlanRow } from '../../types/index.js';
-import { mirrorPlanToSchedule, removeScheduleForPlan } from '../../services/scheduleMirror.js';
+import { mirrorPlanToSchedule, removeScheduleForPlan, setPlanWeekdays, weeksToWeekdays } from '../../services/scheduleMirror.js';
 import type { CutGrassPlanRow } from '../../db/repositories/cutGrassPlans.js';
 
 export const cutGrassPlanRouter = Router();
@@ -13,6 +13,32 @@ function hashCode(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return h;
+}
+
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** The Novabot app lists a plan once per weekday and deletes "only this day" by
+ *  that item's id alone, so every day item gets its own id, as the LFI cloud
+ *  gave it: row id * 10 + day (1 = Mon ... 7 = Sun). */
+function dayItemId(rowId: number, day: string): number {
+  return rowId * 10 + DAYS.indexOf(day) + 1;
+}
+
+/** The caller's plan a request points at: planId, or the id of a day item from
+ *  queryCutGrassPlan (the app never sends planId), with that item's weekday. */
+function resolvePlan(body: { planId?: unknown; id?: unknown }, userId: string): { plan?: CutGrassPlanRow; day?: string } {
+  let plan: CutGrassPlanRow | undefined;
+  let day: string | undefined;
+  if (body.planId) {
+    plan = cutGrassPlanRepo.findById(String(body.planId));
+  } else {
+    const n = Number(body.id);
+    if (Number.isInteger(n) && n % 10 >= 1 && n % 10 <= 7) {
+      plan = cutGrassPlanRepo.findByRowId(Math.floor(n / 10));
+      day = DAYS[(n % 10) - 1];
+    }
+  }
+  return plan?.user_id === userId ? { plan, day } : {};
 }
 
 function calcMinutes(start: string, end: string): number {
@@ -134,7 +160,6 @@ cutGrassPlanRouter.post('/queryCutGrassPlan', authMiddleware, (req: AuthRequest,
   // WorkPlanEntity.fromJson parst json["Mon"], json["Tue"], etc.
   // KRITIEK: elke dag krijgt een apart item met `week` gezet op die specifieke dag.
   // Cloud geeft ook per dag een uniek `id` — wij hashen planId+dag.
-  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const grouped: Record<string, unknown[]> = {};
   for (const day of DAYS) grouped[day] = [];
   for (const item of items) {
@@ -143,6 +168,7 @@ cutGrassPlanRouter.post('/queryCutGrassPlan', authMiddleware, (req: AuthRequest,
       if (grouped[day]) {
         grouped[day].push({
           ...item,
+          id: dayItemId(item.id as number, day),
           week: day,  // specifieke dag voor dit item
           workTime: item.startTime && item.endTime
             ? String(calcMinutes(item.startTime as string, item.endTime as string))
@@ -242,14 +268,15 @@ cutGrassPlanRouter.post('/saveCutGrassPlan', authMiddleware, (req: AuthRequest, 
 
 // POST /api/nova-data/appManage/updateCutGrassPlan
 cutGrassPlanRouter.post('/updateCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
-  const body = req.body as { planId?: string } & Record<string, unknown>;
-  if (!body.planId) { res.json(fail('planId required', 400)); return; }
+  const body = req.body as { planId?: string; id?: unknown } & Record<string, unknown>;
+  const { plan } = resolvePlan(body, req.userId!);
+  if (!plan) { res.json(fail('planId required', 400)); return; }
 
   const workAreaInput = body.workArea ?? body.areaMapFileNames;
   const repeatTypeStr =
     body.repeatType != null ? String(body.repeatType) : null;
 
-  cutGrassPlanRepo.update(body.planId, req.userId!, {
+  cutGrassPlanRepo.update(plan.plan_id, req.userId!, {
     startTime: (body.startTime as string) ?? null,
     endTime: (body.endTime as string) ?? null,
     weekday: body.weekday ?? body.weeks
@@ -266,34 +293,32 @@ cutGrassPlanRouter.post('/updateCutGrassPlan', authMiddleware, (req: AuthRequest
     area: (body.area as number) ?? null,
     timezone: (body.timezone as string) ?? null,
   });
-  const updated = cutGrassPlanRepo.findById(body.planId);
+  const updated = cutGrassPlanRepo.findById(plan.plan_id);
   if (updated) mirrorPlanToSchedule(updated);
   res.json(ok());
 });
 
 // POST /api/nova-data/appManage/deleteCutGrassPlan
-// Novabot app stuurt: { id: <number>, deleteType: "all" }
+// Novabot app stuurt: { id: <id van het dag-item>, deleteType: "single" | "all" }
+// (pages/schedule/logic.dart _requestToDelete). "single" = alleen deze dag,
+// "all" = dit schema op alle dagen; nooit de andere schema's van de gebruiker.
 cutGrassPlanRouter.post('/deleteCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
-  const { planId, id, deleteType } = req.body as { planId?: string; id?: number | string; deleteType?: string };
-  const resolvedPlanId = planId ?? (id != null ? String(id) : undefined);
+  const body = req.body as { planId?: string; id?: number | string; deleteType?: string };
+  if (body.planId == null && body.id == null) { res.json(fail('planId or id required', 400)); return; }
 
-  if (!resolvedPlanId) { res.json(fail('planId or id required', 400)); return; }
-
-  // id kan een hashcode integer zijn — zoek het echte plan
-  if (deleteType === 'all') {
-    // Verwijder alle plans voor deze user
-    const allPlans = cutGrassPlanRepo.findByUser(req.userId!);
-    for (const p of allPlans) {
-      removeScheduleForPlan(p as CutGrassPlanRow);
-      cutGrassPlanRepo.delete((p as any).plan_id, req.userId!);
+  const { plan, day } = resolvePlan(body, req.userId!);
+  if (plan) {
+    const weeks = plan.weekday ? (JSON.parse(plan.weekday) as unknown[]) : [];
+    const dayNum = day ? weeksToWeekdays([day])[0] : undefined;
+    const rest = weeks.filter(w => weeksToWeekdays([w])[0] !== dayNum);
+    if (body.deleteType === 'single' && dayNum !== undefined && rest.length > 0 && rest.length < weeks.length) {
+      setPlanWeekdays(plan, rest);
+    } else {
+      removeScheduleForPlan(plan);
+      cutGrassPlanRepo.delete(plan.plan_id, plan.user_id);
     }
-    res.json(ok());
-  } else {
-    const existing = cutGrassPlanRepo.findById(resolvedPlanId);
-    if (existing) removeScheduleForPlan(existing);
-    cutGrassPlanRepo.delete(resolvedPlanId, req.userId!);
-    res.json(ok());
   }
+  res.json(ok());
 });
 
 // POST /api/nova-data/appManage/queryNewVersion

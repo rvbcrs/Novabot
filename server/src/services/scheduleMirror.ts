@@ -67,6 +67,12 @@ function mapForAppArea(sn: string, entry: unknown) {
   return all.find(m => m.canonical_name === base || m.map_name === entry || m.file_name === entry) ?? null;
 }
 
+/** The dashboard schedule a plan mirrors: the schedule's own id for a plan made
+ *  in the dashboard, app:<plan_id> for one made in the app. */
+function scheduleIdOf(planId: string, sn: string): string {
+  return scheduleRepo.findByIdAndMower(planId, sn) ? planId : scheduleIdForPlan(planId);
+}
+
 // ── app plan → dashboard schedule ────────────────────────────────────────
 export function mirrorPlanToSchedule(plan: CutGrassPlanRow): void {
   const eq = equipmentRepo.findByEquipmentId(plan.equipment_id);
@@ -85,7 +91,7 @@ export function mirrorPlanToSchedule(plan: CutGrassPlanRow): void {
     timezone: plan.timezone ?? null,
     enabled: 1,
   };
-  const scheduleId = scheduleIdForPlan(plan.plan_id);
+  const scheduleId = scheduleIdOf(plan.plan_id, sn);
   if (scheduleRepo.findByIdAndMower(scheduleId, sn)) {
     scheduleRepo.updateByIdAndMower(scheduleId, sn, data);
   } else {
@@ -95,7 +101,14 @@ export function mirrorPlanToSchedule(plan: CutGrassPlanRow): void {
 
 export function removeScheduleForPlan(plan: CutGrassPlanRow): void {
   const sn = equipmentRepo.findByEquipmentId(plan.equipment_id)?.mower_sn;
-  if (sn) scheduleRepo.deleteByIdAndMower(scheduleIdForPlan(plan.plan_id), sn);
+  if (sn) scheduleRepo.deleteByIdAndMower(scheduleIdOf(plan.plan_id, sn), sn);
+}
+
+/** Novabot app "only this day": the plan and its schedule keep the other days. */
+export function setPlanWeekdays(plan: CutGrassPlanRow, weeks: unknown[]): void {
+  cutGrassPlanRepo.update(plan.plan_id, plan.user_id, { weekday: JSON.stringify(weeks) });
+  const sn = equipmentRepo.findByEquipmentId(plan.equipment_id)?.mower_sn;
+  if (sn) scheduleRepo.updateByIdAndMower(scheduleIdOf(plan.plan_id, sn), sn, { weekdays: JSON.stringify(weeksToWeekdays(weeks)) });
 }
 
 // ── dashboard schedule → app plan ────────────────────────────────────────

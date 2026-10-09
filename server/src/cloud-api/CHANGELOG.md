@@ -2,6 +2,20 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-10-09 - schedules are deleted and edited by the app's list id
+
+- `queryCutGrassPlan` (POST, the per-weekday list): every day item gets its own
+  `id`, row id * 10 + weekday (1 = Mon ... 7 = Sun), as the LFI cloud gave
+  each day its own id. Other fields unchanged.
+- `deleteCutGrassPlan`: the app sends that `id` with `deleteType` "single"
+  (only this day) or "all" (this schedule on every day) and never a `planId`.
+  The id was looked up as a plan_id, so nothing was deleted, and "all" removed
+  every plan of the user. Now "single" drops that weekday (the whole schedule
+  when it was the last day) and "all" removes that one schedule, in both
+  tables. `planId` still works. Response unchanged (`ok()`).
+- `updateCutGrassPlan`: accepts the same list `id` when `planId` is missing,
+  instead of failing with "planId required".
+
 ## 2026-10-07 - no shell strings around unzip
 
 - `queryEquipmentMap` (map_info.json read) and `downloadMapFile`: the ZIP is

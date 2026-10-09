@@ -37,6 +37,9 @@ export class CutGrassPlanRepository {
   private _findById = db.prepare(
     'SELECT * FROM cut_grass_plans WHERE plan_id = ?'
   );
+  private _findByRowId = db.prepare(
+    'SELECT * FROM cut_grass_plans WHERE id = ?'
+  );
   private _findRecentByUser = db.prepare(
     'SELECT * FROM cut_grass_plans WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1'
   );
@@ -95,6 +98,10 @@ export class CutGrassPlanRepository {
 
   findById(planId: string): CutGrassPlanRow | undefined {
     return this._findById.get(planId) as CutGrassPlanRow | undefined;
+  }
+
+  findByRowId(id: number): CutGrassPlanRow | undefined {
+    return this._findByRowId.get(id) as CutGrassPlanRow | undefined;
   }
 
   findRecentByUser(userId: string): CutGrassPlanRow | undefined {
