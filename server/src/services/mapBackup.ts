@@ -234,16 +234,16 @@ function _enforceRetention(sn: string): void {
  *
  * Does NOT change the polygon CSV bytes — only edits map_info.json metadata.
  */
-export function regenerateLatestZipFromBackup(sn: string, verifiedOrientation?: number): string | null {
+export function regenerateLatestZipFromBackup(sn: string, verifiedDock?: { x: number; y: number; orientation: number }): string | null {
   const anchor = getPolygonAnchor(sn);
   if (!anchor) {
     console.warn(`${TAG} regenerate skipped — no polygon anchor for ${sn}`);
     return null;
   }
 
-  if (verifiedOrientation !== undefined) {
-    if (!Number.isFinite(verifiedOrientation)) return null;
-    anchor.orientation = verifiedOrientation;
+  if (verifiedDock !== undefined) {
+    if (![verifiedDock.x, verifiedDock.y, verifiedDock.orientation].every(Number.isFinite)) return null;
+    Object.assign(anchor, verifiedDock);
   }
 
   // Build fresh ZIP from current DB state.

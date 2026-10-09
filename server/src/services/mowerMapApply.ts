@@ -40,8 +40,9 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
       if (!before || !freshPositionState(sn).docked || !isDeviceOnline(sn) || (!snapshotAnchorMatches(before, anchor) && !matchesEmptyDock)) { apply.fail('sync_failed'); return; }
       if (offset) mapRepo.setPolygonOffset(sn, offset.x, offset.y);
       const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
-      const dockHeading = Number(JSON.parse((before.csv_files as Record<string, string>)['map_info.json']).charging_pose.orientation);
-      const zipPath = regenerateLatestZipFromBackup(sn, dockHeading);
+      // novabot_mapping rewrites map_info.json's charging_pose from charging_station.yaml on restart.
+      const dock = String(before.charging_station_yaml ?? '').match(/charging_pose:\s*\[([^\]]+)\]/)?.[1].split(',').map(Number) ?? [];
+      const zipPath = regenerateLatestZipFromBackup(sn, { x: dock[0], y: dock[1], orientation: dock[2] });
       if (!zipPath) { apply.fail('sync_failed'); return; }
       const bytes = readFileSync(zipPath);
       const zip = await unzipper.Open.buffer(bytes);
