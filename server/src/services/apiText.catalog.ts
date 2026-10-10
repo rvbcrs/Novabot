@@ -330,6 +330,11 @@ export const CATALOG: Catalog = {
     fr: "Cette zone porte le passage vers la station de charge. Supprimer la zone supprime aussi ce passage, auquel toute la carte est ancrée. Modifiez la zone au lieu de la supprimer.",
     de: "Diese Zone trägt den Kanal zur Ladestation. Wer die Zone löscht, löscht auch diesen Kanal, und an ihm ist die ganze Karte verankert. Bearbeiten Sie die Zone, statt sie zu löschen.",
   },
+  "Er is geen dockkanaal, dus de server heeft geen dockanker om op te herankeren. Herstel eerst het dockkanaal onder Instellingen, Herstel.": {
+    en: "There is no dock channel, so the server has no dock reference to re-anchor on. Repair the dock channel first under Settings, Recovery.",
+    fr: "Il n'y a pas de passage vers la station, le serveur n'a donc pas de référence de station pour le réancrage. Réparez d'abord le passage vers la station sous Réglages, Récupération.",
+    de: "Es gibt keinen Dockkanal, daher hat der Server keine Dockreferenz zum Neuverankern. Reparieren Sie zuerst den Dockkanal unter Einstellungen, Wiederherstellung.",
+  },
   "Download mislukt": {
     en: "Download failed",
     fr: "Échec du téléchargement",
@@ -1396,15 +1401,20 @@ export const CATALOG: Catalog = {
     fr: "Zone de travail non valide : {0}",
     de: "Ungültiger Arbeitsbereich: {0}",
   },
+  "Het opgeslagen dock ligt verder dan {0} m van elke zone; er is geen dockkanaal aan te maken.": {
+    en: "The saved dock lies more than {0} m from every zone; no dock channel can be created.",
+    fr: "La station enregistrée se trouve à plus de {0} m de chaque zone ; aucun passage vers la station ne peut être créé.",
+    de: "Das gespeicherte Dock liegt mehr als {0} m von jeder Zone entfernt; es kann kein Dockkanal angelegt werden.",
+  },
+  "Het dockkanaal begint al op het opgeslagen dock; er is niets te herstellen.": {
+    en: "The dock channel already starts at the saved dock; there is nothing to repair.",
+    fr: "Le passage vers la station commence déjà à la station enregistrée ; il n'y a rien à réparer.",
+    de: "Der Dockkanal beginnt bereits am gespeicherten Dock; es gibt nichts zu reparieren.",
+  },
   "Geen vrije dockaanloop binnen {0}; teken een gecontroleerde doorgang.": {
     en: "No clear dock approach within {0}; draw a checked passage.",
     fr: "Aucune approche de station dégagée dans {0} ; tracez un passage vérifié.",
     de: "Keine freie Dockanfahrt innerhalb von {0}; zeichnen Sie einen geprüften Durchgang.",
-  },
-  "Geen bestaand dockkanaal om te herstellen.": {
-    en: "No existing dock channel to repair.",
-    fr: "Aucun canal de station existant à réparer.",
-    de: "Kein vorhandener Dockkanal zum Reparieren.",
   },
   "Kanaalreparatie vereist een kaart zonder fysieke verschuiving.": {
     en: "Channel repair requires a map without a physical offset.",

@@ -3388,8 +3388,13 @@ dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
     res.status(409).json({ ok: false, error: T`Een kaartinstallatie is niet bevestigd. Herstel die installatie eerst; herankeren kan deze fout niet oplossen.` }); return;
   }
   const state = freshPositionState(sn);
-  if (!isDeviceOnline(sn) || !state.docked || !state.fixed || !getPolygonAnchor(sn)) {
+  if (!isDeviceOnline(sn) || !state.docked || !state.fixed) {
     res.status(409).json({ ok: false, error: T`Herankeren vereist een online maaier op zijn eigen dock, verse RTK Fixed en een eenduidig dockanker.` }); return;
+  }
+  // Told apart from the line above: an owner without any dock channel could not
+  // see which of the four conditions failed (field report, Oct 2026).
+  if (!getPolygonAnchor(sn)) {
+    res.status(409).json({ ok: false, reason: 'no_dock_anchor', error: T`Er is geen dockkanaal, dus de server heeft geen dockanker om op te herankeren. Herstel eerst het dockkanaal onder Instellingen, Herstel.` }); return;
   }
   // The cycle's first step needs a stable docked pose with the localization
   // RUNNING. A mower that has not localized yet (normal right after a boot on

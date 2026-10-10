@@ -227,6 +227,16 @@ it('rejects old clients, missing confirmation, stale telemetry and FULL without 
   feed({ battery_state: 'FULL', recharge_status: 0 }); expect((await start()).status).toBe(409);
   expect(guardedDockMove).not.toHaveBeenCalled();
 });
+// Field report (Oct 2026): one sentence for four conditions left the owner
+// guessing which one failed; it was the missing dock channel.
+it('names a missing dock channel instead of the combined precondition', async () => {
+  feed();
+  for (const row of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(row.map_id);
+  const res = await start();
+  expect(res.status).toBe(409);
+  expect(res.body.reason).toBe('no_dock_anchor');
+  expect(guardedDockMove).not.toHaveBeenCalled();
+});
 it('retires recalibration and old single-step shortcuts without any mower write', async () => {
   feed();
   expect((await request(server).post(`/api/dashboard/maps/${SN}/recalibrate-charging-pose`).send({ force: true })).status).toBe(410);

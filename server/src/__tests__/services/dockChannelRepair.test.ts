@@ -18,7 +18,8 @@ import { planDockChannelRepair, repairDockChannels, withConfirmedCopyDocks } fro
 import { readMowerMapSnapshot } from '../../services/mowerMapOperation.js';
 import { installVerifiedMapZip } from '../../services/mowerMapApply.js';
 import { mapRepo, deviceSettingsRepo } from '../../db/repositories/index.js';
-import { clearFrameUnvalidated, clearMapInstallPending, markMapInstallPending, isFrameUnvalidated } from '../../services/frameValidation.js';
+import { clearFrameUnvalidated, clearMapInstallPending, markMapInstallPending, isFrameUnvalidated, markFrameUnvalidated } from '../../services/frameValidation.js';
+import { getPolygonAnchor } from '../../services/anchor.js';
 import { clearPositionTelemetry, ingestPositionTelemetry } from '../../services/positionTelemetry.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from '../../services/dockPhotoReference.js';
 import { isDeviceOnline } from '../../mqtt/broker.js';
@@ -78,6 +79,69 @@ it('repairs toward the lawn using saved heading, preserving every non-channel CS
   wrongDirection.x3_csv_files = { ...wrongDirection.csv_files };
   wrongDirection.charging_station_yaml = `charging_pose: [${pose.x}, ${pose.y}, ${Math.PI / 2}]`;
   expect(() => planDockChannelRepair(wrongDirection)).toThrow('vrije dockaanloop');
+});
+
+// Field report (N2000, Oct 2026): with no dock channel anywhere, the anchor was
+// null, so re-anchor, map pushes and this repair all refused, and only a new
+// map0 mapping session could bring a channel back.
+const noChannel = () => {
+  const s = snapshot();
+  delete (s.csv_files as Record<string, string>)['map0tocharge_unicom.csv'];
+  s.x3_csv_files = { ...s.csv_files };
+  return s;
+};
+
+it('creates a missing dock channel from the saved dock, into the zone it sits in', () => {
+  const s = noChannel(), p = planDockChannelRepair(s);
+  expect(p.created).toBe(true);
+  expect(p.needed).toBe(true);
+  expect(p.channels.map(c => c.name)).toEqual(['map0tocharge_unicom.csv']);
+  expect(p.channels[0].points[0]).toMatchObject({ x: pose.x, y: pose.y });
+  expect(p.channels[0].points.at(-1)!.y).toBeCloseTo(1.93);
+  expect(p.csvFiles['map0_work.csv']).toBe(s.csv_files['map0_work.csv']);
+  const far = noChannel();
+  const farPose = { x: 0, y: -5, orientation: -Math.PI / 2 };
+  far.csv_files['map_info.json'] = JSON.stringify({ charging_pose: farPose });
+  far.x3_csv_files = { ...far.csv_files };
+  far.charging_station_yaml = `charging_pose: [${farPose.x}, ${farPose.y}, ${farPose.orientation}]`;
+  expect(() => planDockChannelRepair(far)).toThrow('verder dan 3 m');
+});
+
+it('leaves a channel that already starts at the saved dock alone', async () => {
+  const healthy = snapshot();
+  healthy.csv_files['map0tocharge_unicom.csv'] = goodChannel; healthy.x3_csv_files = { ...healthy.csv_files };
+  expect(planDockChannelRepair(healthy).needed).toBe(false);
+  for (const row of mapRepo.findByMowerSn(sn)) mapRepo.deleteById(row.map_id);
+  rows(sn, healthy);
+  vi.mocked(readMowerMapSnapshot).mockResolvedValue(healthy);
+  const { preview } = await repairDockChannels(sn);
+  expect(preview.needed).toBe(false);
+  await expect(repairDockChannels(sn, preview.planHash)).rejects.toThrow('niets te herstellen');
+  expect(installVerifiedMapZip).not.toHaveBeenCalled();
+});
+
+it('creates the channel on an unvalidated frame and gives the server its anchor back', async () => {
+  for (const row of mapRepo.findByMowerSn(sn)) mapRepo.deleteById(row.map_id);
+  rows(sn, noChannel());
+  vi.mocked(readMowerMapSnapshot).mockResolvedValue(noChannel());
+  expect(getPolygonAnchor(sn)).toBeNull();
+  // A frame that is off is why the mower reads half a metre from its saved dock.
+  markFrameUnvalidated(sn);
+  samples(sn, pose.x + 0.5);
+  const { preview } = await repairDockChannels(sn);
+  expect(preview).toMatchObject({ created: true, needed: true, zone: 'map0' });
+  expect(preview.seatOffsetM).toBeCloseTo(0.5, 2);
+  const result = await repairDockChannels(sn, preview.planHash);
+  expect(result.applied).toBe(true);
+  expect(getPolygonAnchor(sn)).toMatchObject({ x: pose.x, y: pose.y });
+  expect(mapRepo.findBySnAndCanonical(sn, 'map0tocharge_unicom')?.map_type).toBe('unicom');
+  // Validating the frame is the re-anchor's job, not this repair's.
+  expect(isFrameUnvalidated(sn)).toBe(true);
+});
+
+it('still refuses to rebuild an existing channel on an unvalidated frame', async () => {
+  markFrameUnvalidated(sn);
+  await expect(repairDockChannels(sn)).rejects.toThrow('gevalideerd frame');
 });
 
 it('accepts a connector filtered in csv_file while x3_csv_file keeps the route (touching zones)', () => {
