@@ -10,7 +10,9 @@ vi.mock('../../mqtt/broker.js', () => ({
   forceDisconnectDevice: vi.fn(),
   lookupMac: vi.fn(),
 }));
-import { updateDeviceData, getLocalTrail, getGpsTrail, deviceCache, _forgetTrailsForTest } from '../../mqtt/sensorData.js';
+import { updateDeviceData, getLocalTrail, getGpsTrail, clearGpsTrail, deviceCache, _forgetTrailsForTest } from '../../mqtt/sensorData.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // #111: the trail is one mowing session, cleared only when a NEW task starts.
 const SN = 'LFIN_TRAIL_111';
@@ -112,5 +114,15 @@ describe('trail session lifecycle', () => {
     move('Mode:COVERAGE Work:RUNNING Prev work:FINISHED Recharge: FINISHED', { work_status: 50 });
     _forgetTrailsForTest(SN);
     expect(getLocalTrail(SN).length).toBe(0);
+  });
+
+  // The SN comes from the /trail/:sn route too: no "../" out of storage/trails.
+  it('never touches a file outside storage/trails for a crafted SN', () => {
+    const victim = path.resolve(process.env.STORAGE_PATH ?? './storage', 'victim.json');
+    fs.mkdirSync(path.dirname(victim), { recursive: true });
+    fs.writeFileSync(victim, '{}');
+    clearGpsTrail('../victim');
+    expect(fs.existsSync(victim)).toBe(true);
+    fs.rmSync(victim);
   });
 });

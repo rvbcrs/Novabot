@@ -517,14 +517,19 @@ export function _trackTrailSession(sn: string, msg: string, taskMode: string, ac
   }
 }
 
-const trailFile = (sn: string) => path.resolve(process.env.STORAGE_PATH ?? './storage', 'trails', `${sn}.json`);
+// The SN reaches this path from MQTT topics and from the /trail/:sn route, so
+// only a plain serial number gets a file (no "../" out of storage/trails).
+const SAFE_SN = /^[A-Za-z0-9_-]{1,64}$/;
+const trailFile = (sn: string) => SAFE_SN.test(sn) ? path.resolve(process.env.STORAGE_PATH ?? './storage', 'trails', `${sn}.json`) : null;
 /** Mowers whose saved trail was already read (or must not be: a new session began). */
 const trailsLoaded = new Set<string>();
 
 function saveTrails(sn: string): void {
+  const file = trailFile(sn);
+  if (!file) return;
   try {
-    fs.mkdirSync(path.dirname(trailFile(sn)), { recursive: true });
-    fs.writeFileSync(trailFile(sn), JSON.stringify({ gps: gpsTrails.get(sn) ?? [], local: localTrails.get(sn) ?? [] }));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ gps: gpsTrails.get(sn) ?? [], local: localTrails.get(sn) ?? [] }));
   } catch (e) {
     console.warn(`[TRAIL] ${sn}: saving the trail failed: ${(e as Error).message}`);
   }
@@ -532,16 +537,19 @@ function saveTrails(sn: string): void {
 
 function removeSavedTrails(sn: string): void {
   trailsLoaded.add(sn);
-  try { fs.rmSync(trailFile(sn), { force: true }); } catch { /* nothing saved */ }
+  const file = trailFile(sn);
+  if (!file) return;
+  try { fs.rmSync(file, { force: true }); } catch { /* nothing saved */ }
 }
 
 /** After a restart: the last finished session's trail, read once. */
 function loadSavedTrails(sn: string): void {
   if (trailsLoaded.has(sn)) return;
   trailsLoaded.add(sn);
-  if (gpsTrails.has(sn) || localTrails.has(sn)) return;
+  const file = trailFile(sn);
+  if (!file || gpsTrails.has(sn) || localTrails.has(sn)) return;
   try {
-    const saved = JSON.parse(fs.readFileSync(trailFile(sn), 'utf8')) as { gps?: TrailPoint[]; local?: LocalTrailPoint[] };
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as { gps?: TrailPoint[]; local?: LocalTrailPoint[] };
     if (Array.isArray(saved.gps) && saved.gps.length) gpsTrails.set(sn, saved.gps);
     if (Array.isArray(saved.local) && saved.local.length) localTrails.set(sn, saved.local);
   } catch { /* no saved trail */ }
