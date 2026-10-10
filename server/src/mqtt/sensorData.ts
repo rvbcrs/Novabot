@@ -80,7 +80,10 @@ export const SENSORS: SensorDef[] = [
   { field: 'plan_path',        name: 'Plan Path',         component: 'sensor', icon: 'mdi:map-marker-path',    entity_category: 'diagnostic' },
   { field: 'cov_ratio',        name: 'Coverage Ratio',    component: 'sensor', icon: 'mdi:percent', state_class: 'measurement', unit: '%' },
   { field: 'cov_area',         name: 'Coverage Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement', unit: 'm²' },
-  { field: 'cov_work_time',    name: 'Coverage Work Time', component: 'sensor', icon: 'mdi:timer', state_class: 'measurement', unit: 's' },
+  // Minuten, net als cov_estimate_time: robot_decision deelt navigation_time
+  // (seconden) door 60 en logt "cov_work_time(min)". Stock firmware vult het
+  // veld in report_state_robot in de praktijk niet (blijft 0).
+  { field: 'cov_work_time',    name: 'Coverage Work Time', component: 'sensor', icon: 'mdi:timer', state_class: 'measurement', unit: 'min' },
   { field: 'cov_estimate_time',name: 'Coverage Estimated Remaining', component: 'sensor', icon: 'mdi:timer-sand', state_class: 'measurement', unit: 'min' },
   { field: 'cov_remaining_area', name: 'Coverage Remaining Area', component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement', unit: 'm²' },
   { field: 'valid_cov_work_time', name: 'Valid Coverage Work Time', component: 'sensor', icon: 'mdi:timer-check', state_class: 'measurement', unit: 'min', entity_category: 'diagnostic' },

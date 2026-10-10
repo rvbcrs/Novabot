@@ -210,14 +210,16 @@ equipmentStateRouter.post('/saveCutGrassRecord', upload.none(), (req: Request, r
       if (Number.isFinite(a)) workArea = a;
     }
     if (workTime === null || workTime === 0) {
-      // valid_cov_work_time is already in minutes; cov_work_time is in seconds.
-      // Try the minutes field first, fall back to seconds ÷ 60.
-      const tMin = parseFloat(cache.get('valid_cov_work_time') ?? '');
-      if (Number.isFinite(tMin) && tMin > 0) {
-        workTime = tMin;
+      // Both fields are MINUTES: robot_decision divides the planner's
+      // navigation_time (seconds) by 60 and logs it as "cov_work_time(min)";
+      // CovTaskInfo.msg documents both as /分钟 (per minute). Prefer the
+      // effective mowing time, fall back to the total work time.
+      const tValid = parseFloat(cache.get('valid_cov_work_time') ?? '');
+      if (Number.isFinite(tValid) && tValid > 0) {
+        workTime = tValid;
       } else {
-        const tSec = parseFloat(cache.get('cov_work_time') ?? '');
-        if (Number.isFinite(tSec) && tSec > 0) workTime = Math.round(tSec / 60);
+        const tWork = parseFloat(cache.get('cov_work_time') ?? '');
+        if (Number.isFinite(tWork) && tWork > 0) workTime = Math.round(tWork);
       }
     }
     // Issue #17 round 3: stock v5.7.1 firmware ships saveCutGrassRecord

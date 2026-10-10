@@ -180,7 +180,7 @@ Main status report (~750B JSON, 800B encrypted).
 | `cov_ratio` | number | Coverage ratio (0.0-1.0) |
 | `cov_estimate_time` | number | Estimated remaining time (minutes) |
 | `cov_remaining_area` | number | Remaining area to mow (m²) |
-| `cov_work_time` | number | Coverage work time elapsed (minutes) |
+| `cov_work_time` | number | Coverage work time elapsed (minutes). Stock robot_decision leaves it at 0 in this report, so do not rely on it for the session length |
 | `cov_direction` | number | Coverage mowing direction (0-180°) |
 | `cov_map_path` | string | Map path being covered |
 | `target_height` | number | Target cutting height (0..7 enum). Physical cm = `target_height + 2`, mm = `(target_height + 2) * 10` |

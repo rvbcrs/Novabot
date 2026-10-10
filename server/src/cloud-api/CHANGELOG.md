@@ -2,6 +2,17 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-10-10 - work-record fallback reads cov_work_time as minutes
+
+- `saveCutGrassRecord`: the sensor-cache fallback no longer divides
+  `cov_work_time` by 60. The field is minutes, like `valid_cov_work_time`:
+  robot_decision divides the planner's `navigation_time` (seconds) by 60 and
+  logs it as `cov_work_time(min)`, and `CovTaskInfo.msg` documents both as
+  minutes. The 2026-05-01 entry below called it seconds without a source.
+  Stock firmware leaves the field at 0 in `report_state_robot`, so the
+  server-side session timer stays the fallback that usually fills
+  `work_time`. Response unchanged.
+
 ## 2026-10-09 - schedules are deleted and edited by the app's list id
 
 - `queryCutGrassPlan` (POST, the per-weekday list): every day item gets its own

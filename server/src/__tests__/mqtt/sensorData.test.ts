@@ -166,6 +166,15 @@ describe('sensor definitions', () => {
   it('does not call the finished sub-area list a measurement', () => {
     expect(SENSORS.find(s => s.field === 'finished_area')?.state_class).toBeUndefined();
   });
+
+  // robot_decision divides the planner's navigation_time and
+  // estimate_remaining_time (both seconds) by 60 and logs
+  // "cov_work_time(min)"; CovTaskInfo.msg documents the work times as minutes.
+  it('reports the coverage times in minutes', () => {
+    for (const field of ['cov_work_time', 'valid_cov_work_time', 'cov_estimate_time']) {
+      expect(SENSORS.find(s => s.field === field)?.unit).toBe('min');
+    }
+  });
 });
 
 describe('ingestSensorStream (novabot/sensor/<SN> from extended_commands.py)', () => {

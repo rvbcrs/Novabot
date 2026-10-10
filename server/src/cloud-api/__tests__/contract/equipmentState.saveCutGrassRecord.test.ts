@@ -11,11 +11,12 @@
  *     display show `(user_cm + 2)` cm — two too many.
  *
  *   Bug 2 — workTime always 0.
- *     The sensor-cache key `cov_work_time` is in SECONDS, but the work_record
- *     column is in MINUTES. The old code stored seconds-as-minutes, so short
- *     sessions that showed 0 in cov_work_time stayed 0. Fix: try
- *     `valid_cov_work_time` (already minutes) first; fall back to
- *     `cov_work_time / 60`.
+ *     Fix: try `valid_cov_work_time` first; fall back to `cov_work_time`.
+ *     Both are MINUTES, like the work_record column: robot_decision divides
+ *     the planner's navigation_time (seconds) by 60 and logs the result as
+ *     "cov_work_time(min)", and CovTaskInfo.msg documents both as minutes.
+ *     (An earlier round treated cov_work_time as seconds and divided by 60,
+ *     which turned 170 minutes into 3.)
  *
  *   Bug 3 — dateTime formatted as ISO-8601 "2026-04-29T18:13:10.94Z".
  *     The app and dashboard expect SQL/display format "2026-04-29 18:13:10"
@@ -161,14 +162,13 @@ describe('POST /api/nova-data/equipmentState/saveCutGrassRecord — issue #17 re
     expect(rows[0].work_time).toBe(170);
   });
 
-  it('[Bug 2] sensor-cache fallback converts cov_work_time (seconds) to minutes', async () => {
+  it('[Bug 2] sensor-cache fallback stores cov_work_time (minutes) as minutes', async () => {
     const app = buildTestApp();
     const user = seedUser();
     seedEquipment({ user, snMower: SN });
 
-    // cov_work_time is in seconds — must be divided by 60.
-    // 10200 s = 170 min.
-    seedCache({ cov_work_time: '10200' });
+    // cov_work_time is in minutes (robot_decision: navigation_time / 60).
+    seedCache({ cov_work_time: '170' });
 
     await request(app)
       .post('/api/nova-data/equipmentState/saveCutGrassRecord')
@@ -179,13 +179,14 @@ describe('POST /api/nova-data/equipmentState/saveCutGrassRecord — issue #17 re
     expect(rows[0].work_time).toBe(170);
   });
 
-  it('[Bug 2] regression: old code stored cov_work_time seconds raw (10200 would be stored as 10200 not 170)', async () => {
-    // This test verifies the fix: 10200 seconds → 170 minutes, not 10200.
+  it('[Bug 2] regression: cov_work_time is not divided by 60 (42.4 min is stored as 42, not 1)', async () => {
+    // The previous round treated cov_work_time as seconds; 42.4 would have
+    // landed as Math.round(42.4 / 60) = 1 minute.
     const app = buildTestApp();
     const user = seedUser();
     seedEquipment({ user, snMower: SN });
 
-    seedCache({ cov_work_time: '600' }); // 600 s = 10 min
+    seedCache({ cov_work_time: '42.4' });
 
     await request(app)
       .post('/api/nova-data/equipmentState/saveCutGrassRecord')
@@ -193,8 +194,7 @@ describe('POST /api/nova-data/equipmentState/saveCutGrassRecord — issue #17 re
       .field('dateTime', '2026-04-29 18:13:10');
 
     const rows = messageRepo.findWorkRecordsByUserId(user.app_user_id, 10, 0);
-    // 600 ÷ 60 = 10 min. Old code would have stored 600.
-    expect(rows[0].work_time).toBe(10);
+    expect(rows[0].work_time).toBe(42);
   });
 
   // ──────────────────────────────────────────────────────────────────────────
