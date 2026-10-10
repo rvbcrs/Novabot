@@ -10,7 +10,7 @@ vi.mock('../../mqtt/broker.js', () => ({
   forceDisconnectDevice: vi.fn(),
   lookupMac: vi.fn(),
 }));
-import { updateDeviceData, getLocalTrail, getGpsTrail } from '../../mqtt/sensorData.js';
+import { updateDeviceData, getLocalTrail, getGpsTrail, deviceCache, _forgetTrailsForTest } from '../../mqtt/sensorData.js';
 
 // #111: the trail is one mowing session, cleared only when a NEW task starts.
 const SN = 'LFIN_TRAIL_111';
@@ -74,5 +74,43 @@ describe('trail session lifecycle', () => {
     expect(getLocalTrail(SN).length).toBe(mowed + 2);
     move('Mode:COVERAGE Work:RUNNING Prev work:FINISHED Recharge: FINISHED', { work_status: 50, recharge_status: 0 });
     expect(getLocalTrail(SN).length).toBe(1);
+  });
+
+  // #140 (waltervl, 5 Oct): the trail was still gone some time after the mow.
+  // work_status 1 is "Failed" in the firmware (WorkStatusString), not mowing,
+  // and a failed start or dock attempt after the mow opened a new session.
+  it('a Failed report after the mow keeps the trail', () => {
+    move('Mode:COVERAGE Work:COVERING Prev work:RUNNING Recharge: WAIT', { work_status: 90 });
+    report({ msg: 'Mode:COVERAGE Work:FINISHED Prev work:COVERING Recharge: FINISHED', task_mode: 0, work_status: 9 });
+    const mowed = getLocalTrail(SN).length;
+    move('Mode:COVERAGE Work:FAILED Prev work:FINISHED Recharge: FINISHED', { work_status: 1 });
+    expect(getLocalTrail(SN).length).toBe(mowed);
+  });
+
+  // The edge cut now follows the mow directly; it finishes that session.
+  it('an edge cut after the mow adds to its trail instead of starting a new one', () => {
+    move('Mode:COVERAGE Work:COVERING Prev work:RUNNING Recharge: WAIT', { work_status: 90 });
+    report({ msg: 'Mode:COVERAGE Work:FINISHED Prev work:COVERING Recharge: WAIT', task_mode: 0, work_status: 9 });
+    const mowed = getLocalTrail(SN).length;
+    deviceCache.get(SN)!.set('edge_active', '1');
+    move('Mode:COVERAGE Work:WAIT Prev work:FINISHED Recharge: WAIT', { work_status: 0 });
+    deviceCache.get(SN)!.set('edge_active', '0');
+    expect(getLocalTrail(SN).length).toBe(mowed + 1);
+  });
+
+  // "Store and show GPS trail until the next mowing session": a server restart
+  // emptied the in-memory trail, in the dashboard and the HA render alike.
+  it('the trail of a finished session survives a server restart', () => {
+    move('Mode:COVERAGE Work:RUNNING Prev work:FINISHED Recharge: FINISHED', { work_status: 50 });
+    move('Mode:COVERAGE Work:COVERING Prev work:RUNNING Recharge: WAIT', { work_status: 90 });
+    report({ msg: 'Mode:COVERAGE Work:FINISHED Prev work:COVERING Recharge: FINISHED', task_mode: 0, work_status: 9 });
+    const local = getLocalTrail(SN).length, gps = getGpsTrail(SN).length;
+    _forgetTrailsForTest(SN);
+    expect(getLocalTrail(SN).length).toBe(local);
+    expect(getGpsTrail(SN).length).toBe(gps);
+    // A new mow still starts clean, and does not bring the old file back.
+    move('Mode:COVERAGE Work:RUNNING Prev work:FINISHED Recharge: FINISHED', { work_status: 50 });
+    _forgetTrailsForTest(SN);
+    expect(getLocalTrail(SN).length).toBe(0);
   });
 });

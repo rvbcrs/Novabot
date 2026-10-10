@@ -9,6 +9,8 @@ import { ingestPositionTelemetry, clearPositionTelemetry } from '../services/pos
 
 import { ERROR_ACK_KEY } from './errorKind.js';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { db } from '../db/database.js';
 import { equipmentRepo } from '../db/repositories/equipment.js';
 import { scheduleRepo } from '../db/repositories/schedules.js';
@@ -495,16 +497,61 @@ export function _trackMowProgress(sn: string, snValues: Map<string, string>, act
 /** Called for every sensor batch. Closes the session on a terminal state and
  *  clears both trails on the first active sample after that. Exported for
  *  tests. */
-export function _trackTrailSession(sn: string, msg: string, taskMode: string, active: boolean, returning = false): void {
-  if (isTaskClosed(msg, taskMode, active)) { trailSessionClosed.set(sn, true); return; }
+export function _trackTrailSession(sn: string, msg: string, taskMode: string, active: boolean, returning = false, edgeOnly = false): void {
+  if (isTaskClosed(msg, taskMode, active)) {
+    // Kept on disk until the next session (#140): a server restart emptied the
+    // in-memory trail, in the dashboard and the HA render alike.
+    if (trailSessionClosed.get(sn) === false) saveTrails(sn);
+    trailSessionClosed.set(sn, true);
+    return;
+  }
   // The return to the dock after a finished task is still that session: stock
   // 5.7.1 reports it as Work:MOVING with recharge_status 50/53 (#31), which
-  // wiped the trail right after finishing (#140). Only a new mow clears.
-  if (active && !returning && (trailSessionClosed.get(sn) ?? true)) {
+  // wiped the trail right after finishing (#140). So is the edge cut that now
+  // follows the mow. Only a new mow clears.
+  if (active && !returning && !edgeOnly && (trailSessionClosed.get(sn) ?? true)) {
     gpsTrails.delete(sn);
     localTrails.delete(sn);
+    removeSavedTrails(sn);
     trailSessionClosed.set(sn, false);
   }
+}
+
+const trailFile = (sn: string) => path.resolve(process.env.STORAGE_PATH ?? './storage', 'trails', `${sn}.json`);
+/** Mowers whose saved trail was already read (or must not be: a new session began). */
+const trailsLoaded = new Set<string>();
+
+function saveTrails(sn: string): void {
+  try {
+    fs.mkdirSync(path.dirname(trailFile(sn)), { recursive: true });
+    fs.writeFileSync(trailFile(sn), JSON.stringify({ gps: gpsTrails.get(sn) ?? [], local: localTrails.get(sn) ?? [] }));
+  } catch (e) {
+    console.warn(`[TRAIL] ${sn}: saving the trail failed: ${(e as Error).message}`);
+  }
+}
+
+function removeSavedTrails(sn: string): void {
+  trailsLoaded.add(sn);
+  try { fs.rmSync(trailFile(sn), { force: true }); } catch { /* nothing saved */ }
+}
+
+/** After a restart: the last finished session's trail, read once. */
+function loadSavedTrails(sn: string): void {
+  if (trailsLoaded.has(sn)) return;
+  trailsLoaded.add(sn);
+  if (gpsTrails.has(sn) || localTrails.has(sn)) return;
+  try {
+    const saved = JSON.parse(fs.readFileSync(trailFile(sn), 'utf8')) as { gps?: TrailPoint[]; local?: LocalTrailPoint[] };
+    if (Array.isArray(saved.gps) && saved.gps.length) gpsTrails.set(sn, saved.gps);
+    if (Array.isArray(saved.local) && saved.local.length) localTrails.set(sn, saved.local);
+  } catch { /* no saved trail */ }
+}
+
+/** Tests only: drop the in-memory trails as a server restart does. */
+export function _forgetTrailsForTest(sn: string): void {
+  gpsTrails.delete(sn);
+  localTrails.delete(sn);
+  trailsLoaded.delete(sn);
 }
 
 function appendTrailPoint(sn: string, rawLat: string, rawLng: string): void {
@@ -526,11 +573,13 @@ function appendTrailPoint(sn: string, rawLat: string, rawLng: string): void {
 }
 
 export function getGpsTrail(sn: string): TrailPoint[] {
+  loadSavedTrails(sn);
   return gpsTrails.get(sn) ?? [];
 }
 
 export function clearGpsTrail(sn: string): void {
   gpsTrails.delete(sn);
+  removeSavedTrails(sn);
 }
 
 // ── Local meter trail (from map_position_x/y, much more accurate than GPS) ──
@@ -552,11 +601,13 @@ function appendLocalTrailPoint(sn: string, x: number, y: number): void {
 }
 
 export function getLocalTrail(sn: string): LocalTrailPoint[] {
+  loadSavedTrails(sn);
   return localTrails.get(sn) ?? [];
 }
 
 export function clearLocalTrail(sn: string): void {
   localTrails.delete(sn);
+  removeSavedTrails(sn);
 }
 
 // ── Validation trail (RTK-FIX paired GPS + map_position samples) ────────────
@@ -1265,7 +1316,10 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     || currentMsg.includes('Mode:MAPPING')
     || currentMsg.includes('USER_MAP')
     || currentMsg.includes('ASSISTANT_MAP');
-  const mowingByStatus = workStatus === '1';
+  // 90..94 = Mowing, Avoiding obstacle, Driving, Edge cutting, Re-covering
+  // (robot_status::WorkStatusString). 1 is "Failed": counting it as mowing let a
+  // failed start after a finished mow wipe that mow's trail (#140).
+  const mowingByStatus = ['90', '91', '92', '93', '94'].includes(workStatus);
   const isActive = edgeActive
     || mappingActive
     || mowingByStatus
@@ -1282,7 +1336,9 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     (RETURNING_RECHARGE_STATUS.has(rechargeStatus) && !/Recharge:\s*FINISHED/i.test(currentMsg))
     || /Recharge:\s*(GOING|ALIGN_PILE|ALIGNING|MOVING|RUNNING|BACK|DOCKING|RETURN_TO_PILE)/i.test(currentMsg)
     || /Work:(GO_PILE|BACK_CHARGER|DOCKING)\b/.test(currentMsg));
-  _trackTrailSession(sn, currentMsg, taskMode, isActive, returning);
+  // An edge cut alone (no mow or mapping tag) continues the last session.
+  const edgeOnly = edgeActive && !mappingActive && !/Work:(RUNNING|NAVIGATING|COVERING)\b/.test(currentMsg);
+  _trackTrailSession(sn, currentMsg, taskMode, isActive, returning, edgeOnly);
   _trackMowProgress(sn, snValues, isActive);
 
   if (isActive) {
