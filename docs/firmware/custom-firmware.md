@@ -179,7 +179,7 @@ A build script (`research/build_custom_firmware.sh`) automates the process of cr
 | 5. LED bridge | Copies `led_bridge.py` (MQTT->ROS `/led_set`) |
 | 6. WiFi AP fallback | Creates `wifi_ap_fallback.sh` + `wifi_watchdog.sh` |
 | 7. daemon_node fix | Injects `ros2 run daemon_process daemon_node` into run_novabot.sh |
-| 8. Extended commands | Copies `extended_commands.py` + `pin_verify_ros2.py` |
+| 8. Extended commands | Copies `extended_commands.py` + `mow_zone_drive.py` (its drive helper) |
 | 9. STM32 MCU patch | Disabled/legacy in current build (`build_custom_firmware.sh:1611-1615`). Stock v3.6.0 is retained because the v3.6.6 patch broke blade calibration. |
 | 10. Server bundle | _(optional)_ Bundles server + dashboard + Node.js |
 | 11. Version update | Updates `novabot_api.yaml` + `Readme.txt` + `package_verify.json` |
@@ -379,8 +379,8 @@ All commands are sent as `{<command>: <payload>}` on `novabot/extended/<SN>`. Th
 
 | Command | Payload | Description |
 |---------|---------|-------------|
-| `verify_pin` | `{"code": "1234"}` | PIN verify via `pin_verify_ros2.py` subprocess (bypasses broken stock C++ action client) |
-| `query_pin` | `{}` | Return stored device PIN from `/userdata/device_pin.json` |
+| `verify_pin` | `{"code": "1234"}` | Send the PIN straight to the STM32 over serial (CMD 0x23 type=2, `serial_pin_verify()`); answers `result` 0/1/2 plus a `reason` on failure. See [Remote PIN verify](#remote-pin-verify-serial) |
+| `query_pin` | `{}` | Ask the STM32 for its stored PIN over serial (CMD 0x23 type=0); `{"result": 2, "error": "no_response"}` when it does not answer |
 
 #### Perception / Semantic
 
@@ -425,11 +425,33 @@ The stock `mqtt_node`'s `get_preview_cover_path` / `get_map_plan_path` handlers 
 
 The log handlers return `{result: 0, value: {name, total_lines, returned, content}}` so the admin panel can paginate client-side without re-fetching.
 
-### PIN Verify Workaround (`pin_verify_ros2.py`)
+### Remote PIN verify (serial)
 
-The stock `mqtt_node` has a broken C++ action client for `ChassisPinCodeSet` --- it times out after 21 seconds because it never finds the action server. A Python ROS 2 action client finds it in under 1 second.
+The stock `mqtt_node` has a broken C++ action client for `ChassisPinCodeSet`: it times out after 21 seconds because it never finds the action server, and then reports `error_status=151` itself. OpenNova therefore does not use MQTT `dev_pin_info` or the ROS 2 action for the verify.
 
-`pin_verify_ros2.py` is a standalone ROS 2 script called by `extended_commands.py` via subprocess. It sends a type=2 (verify) goal to `chassis_control_node`, which forwards it to the STM32 MCU.
+`verify_pin` runs `serial_pin_verify()` in `extended_commands.py`:
+
+1. It kills `chassis_control_node` to get exclusive use of `/dev/ttyACM0`. A `chassis_control_node` restart right after a verify, `query_pin` or `clear_error` is this kill, not a reaction of the MCU to the frame.
+2. It sends CMD `0x23` type=2 with the 4 PIN digits as ASCII and listens for 2 seconds.
+3. On a verified answer it sends five type=3 clear-error frames so tilt/lift detection does not bring the error screen back.
+
+The answer on `novabot/extended_response/<SN>`:
+
+| `verify_pin_respond` | Meaning |
+|----------------------|---------|
+| `{"result": 0, "status": "verified"}` | The MCU accepted the PIN (status 0, or 2 on the earlier patched builds) |
+| `{"result": 1, "status": "wrong_pin", "reason": "wrong_pin"}` | The MCU answered status 3 |
+| `{"result": 1, "reason": "unexpected_answer", ...}` | The MCU answered another status |
+| `{"result": 1, "reason": "invalid_pin", ...}` | The code is not 4 digits |
+| `{"result": 2, "error": "no_response", "reason": "mcu_no_answer", "hint": "..."}` | No CMD `0x23` answer at all |
+| `{"result": 2, "reason": "serial_error", "error": "..."}` | The serial port could not be used |
+
+!!! warning "Stock MCU v3.6.0 does not answer"
+    Remote verify (type=2) was added by the patched STM32 builds (v3.6.2 and later, see [STM32 MCU Firmware](#stm32-mcu-firmware-v366)). The current build keeps the stock MCU v3.6.0, and a field report (custom-45, MCU v3.6.0 NewMotor) confirmed it sends no CMD `0x23` answer. That is the `mcu_no_answer` case: enter the PIN on the mower's screen. Firmware older than the `reason` field sends only `{"result": 2, "error": "no_response"}`; the server reads that as `mcu_no_answer` too.
+
+The server route `POST /api/dashboard/pin/:sn/verify` waits up to 15 seconds for this answer. On success it clears the PIN error in its cache; on failure it answers `409` (or `504` when the mower does not reply) with `{ok: false, reason, error, hint}`, where `error` is a translated sentence for the user. Before, it answered `ok: true` straight away and hid the PIN error even when the MCU never answered.
+
+The verify used to go through a separate ROS 2 script, `pin_verify_ros2.py`. Nothing called it any more and it has been removed.
 
 **Startup:** `extended_commands.py` is launched by `run_novabot.sh` with a 12-second delay after boot, giving ROS 2 nodes time to initialize.
 

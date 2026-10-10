@@ -382,7 +382,7 @@ Frame format: `[02 02] [07 FF] [LEN] [CMD PAYLOAD... CRC8] [03 03]`
 | `0x20` | Periodic (~10Hz) | Error/incident report. Data byte at offset reflects `error_byte` from `check_pin_lock()` |
 | `0x23` type=0 | Request | Query PIN state |
 | `0x23` type=1 | Request | Set new PIN (4 ASCII digits, 0x30-0x39) |
-| `0x23` type=2 | Request | Verify PIN (4 ASCII digits) → response status: 0=success |
+| `0x23` type=2 | Request | Verify PIN (4 ASCII digits) → response status: 0=success. Patched MCU builds (v3.6.2+) only: stock v3.6.0 sends no answer |
 
 !!! warning "PIN digits must be ASCII"
     PIN digits MUST be ASCII characters (`0x30`-`0x39`), NOT raw values (`0x00`-`0x09`).
@@ -410,7 +410,7 @@ The PIN lock error (151) involves three layers:
 |-------|-----------|-------|-----|
 | 1 | STM32 `check_pin_lock()` | Sets error_byte when battery ≥19V, counter >200 ticks | v3.6.5: lock_state=0xFF bypass |
 | 2 | `chassis_control_node` | Sets `error_no_pin_code` flag, only clears on action result status=0 | v3.6.6: verify returns status=0 |
-| 3 | `mqtt_node` action client | ChassisPinCodeSet action client never finds server (21s timeout) | Workaround: Python ROS2 client |
+| 3 | `mqtt_node` action client | ChassisPinCodeSet action client never finds server (21s timeout) | OpenNova bypasses it: `extended_commands.py` sends CMD `0x23` type=2 to the STM32 over serial (`serial_pin_verify`) |
 
 Historical fix (v3.6.6, not deployed): STM32 returns status=0 for verify success → chassis_control_node calls `set_pincode_flag(false)` → error_no_pin_code cleared at boot.
 
@@ -421,6 +421,7 @@ Historical fix (v3.6.6, not deployed): STM32 returns status=0 for verify success
 | Action name | `chassis_pin_code_set` |
 | Server | `chassis_control_node` |
 | Client (broken) | `mqtt_node` C++ — always times out (21s) |
-| Client (working) | Python via `pin_verify_ros2.py` — finds server in <1s |
+| Type | `novabot_msgs` (`novabot_msgs.action.ChassisPinCodeSet` in Python) |
+| OpenNova | Not used: `verify_pin` talks to the STM32 over serial, see [Remote PIN verify](custom-firmware.md#remote-pin-verify-serial) |
 | Goal | `type` (uint8: 1=set, 2=verify), `code` (string: 4 digits) |
 | Result | `status` (uint8: 0=success), `code` (string) |
