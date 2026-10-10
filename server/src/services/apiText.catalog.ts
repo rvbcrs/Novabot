@@ -675,6 +675,31 @@ export const CATALOG: Catalog = {
     fr: "Vérifier le code PIN",
     de: "Das Überprüfen der PIN",
   },
+  "De motorprint van de maaier gaf geen antwoord op de PIN-controle. Oudere MCU-firmware ondersteunt dat mogelijk niet: stock v3.6.0 antwoordt er niet op, PIN-controle op afstand kwam met de gepatchte MCU-versies (v3.6.2 en later). Voer de PIN in op het scherm van de maaier.": {
+    en: "The mower's motor board did not answer the PIN check. Older MCU firmware may not support it: stock v3.6.0 does not answer it, remote PIN checking came with the patched MCU builds (v3.6.2 and later). Enter the PIN on the mower's screen.",
+    fr: "La carte moteur de la tondeuse n'a pas répondu à la vérification du code PIN. Un firmware MCU plus ancien ne la prend peut-être pas en charge : la version d'origine v3.6.0 n'y répond pas, la vérification du code PIN à distance est arrivée avec les versions MCU modifiées (v3.6.2 et ultérieures). Saisissez le code PIN sur l'écran de la tondeuse.",
+    de: "Die Motorplatine des Mähers hat auf die PIN-Prüfung nicht geantwortet. Ältere MCU-Firmware unterstützt sie möglicherweise nicht: Die Original-Version v3.6.0 antwortet nicht darauf, die PIN-Prüfung aus der Ferne kam mit den gepatchten MCU-Versionen (v3.6.2 und neuer). Geben Sie die PIN am Display des Mähers ein.",
+  },
+  "Onjuiste PIN": {
+    en: "Wrong PIN",
+    fr: "Code PIN incorrect",
+    de: "Falsche PIN",
+  },
+  "De maaier kon de motorprint niet bereiken via de seriële poort": {
+    en: "The mower could not reach its motor board over the serial port",
+    fr: "La tondeuse n'a pas pu joindre sa carte moteur via le port série",
+    de: "Der Mäher konnte seine Motorplatine über die serielle Schnittstelle nicht erreichen",
+  },
+  "De motorprint gaf een onverwacht antwoord op de PIN-controle": {
+    en: "The motor board gave an unexpected answer to the PIN check",
+    fr: "La carte moteur a donné une réponse inattendue à la vérification du code PIN",
+    de: "Die Motorplatine hat auf die PIN-Prüfung unerwartet geantwortet",
+  },
+  "De maaier gaf geen antwoord op de PIN-controle": {
+    en: "The mower did not answer the PIN check",
+    fr: "La tondeuse n'a pas répondu à la vérification du code PIN",
+    de: "Der Mäher hat auf die PIN-Prüfung nicht geantwortet",
+  },
   "Positie van het laadstation onbekend": {
     en: "Charging station position unknown",
     fr: "Position de la station de charge inconnue",

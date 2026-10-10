@@ -469,6 +469,11 @@ export interface PinResult {
   action: string;
   cfg_value: number;
   error?: string;
+  /** verify only: why it failed, e.g. 'mcu_no_answer' (motor board firmware
+   *  without remote verify, stock v3.6.0), 'wrong_pin', 'no_reply'. */
+  reason?: string;
+  /** verify only: the mower's own (English) hint. */
+  hint?: string;
 }
 
 export async function pinQuery(sn: string): Promise<PinResult> {
@@ -479,8 +484,13 @@ export async function pinSet(sn: string, code: string): Promise<PinResult> {
   return (await post(`${BASE}/pin/${encodeURIComponent(sn)}/set`, { code })).json();
 }
 
+/** Resolves with the server's answer, a failed verify included (ok:false with
+ *  reason and a translated error), so the caller can tell the cases apart. */
 export async function pinVerify(sn: string, code: string): Promise<PinResult> {
-  return (await post(`${BASE}/pin/${encodeURIComponent(sn)}/verify`, { code })).json();
+  const res = await apiFetch(`${BASE}/pin/${encodeURIComponent(sn)}/verify`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+  });
+  return res.json().catch(() => ({ ok: false, action: 'verify', cfg_value: 2, error: `${res.status}` }));
 }
 
 export async function pinRaw(sn: string, cfg_value: number, code: string): Promise<PinResult> {

@@ -28,6 +28,7 @@ import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
+import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
 import { frameSnapshotSignature } from '../services/copyAlignment.js';
 import { guardedDockMove, rememberDockedPose, settleDockMotion, type DockPose } from '../services/dockMotion.js';
 import { assertReanchorFiles, measureReanchorDock, REANCHOR_TOLERANCE_M, type Origin } from '../services/reanchorGps.js';
@@ -6164,7 +6165,7 @@ dashboardRouter.post('/pin/:sn/set', (req: Request, res: Response) => {
 // Stuurt PIN naar chassis MCU; als correct → scherm gaat naar home (unlock).
 // extended_commands.py stuurt automatisch type=3 clear_error commands na succesvolle verify
 // om te voorkomen dat tilt/lift detectie het error scherm opnieuw toont.
-dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
+dashboardRouter.post('/pin/:sn/verify', async (req: Request, res: Response) => {
   const T = reqT(req);
   const { sn } = req.params;
   const { code } = req.body as { code?: string };
@@ -6180,16 +6181,26 @@ dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
   // NIET via MQTT dev_pin_info! mqtt_node's C++ ChassisPinCodeSet action client
   // vindt de action server NOOIT (21s timeout) en rapporteert dan error_status=151.
   // Dit VEROORZAAKT de PIN lock error die alle commando's blokkeert.
-  // ALLEEN via extended_commands.py → pin_verify_ros2.py → ROS2 action (bewezen werkend).
-  publishExtendedCommand(sn, { verify_pin: { code } });
-  console.log(`[PIN] Verify PIN voor ${sn}: ${code} (alleen via extended_commands.py ROS2)`);
+  // ALLEEN via extended_commands.py serial_pin_verify: CMD 0x23 type=2 over
+  // /dev/ttyACM0 naar de STM32. We wachten op verify_pin_respond, zodat een
+  // motorprint die niet antwoordt (stock MCU v3.6.0) niet als ontgrendeld telt.
+  console.log(`[PIN] Verify PIN voor ${sn}: ${code} (via extended_commands.py serial)`);
+  const outcome = await verifyPinOnMower(sn, code);
+  if (!outcome.ok) {
+    const reason = outcome.reason ?? 'unexpected_answer';
+    console.log(`[PIN] Verify PIN voor ${sn} mislukt: ${reason}`);
+    res.status(reason === 'no_reply' ? 504 : 409).json({
+      ok: false, action: 'verify', cfg_value: 2, reason, error: pinVerifyMessage(reason, T), hint: outcome.hint,
+    });
+    return;
+  }
 
   // Activeer cooldown: gedurende 60s worden inkomende error_status updates
   // die PIN-gerelateerd zijn genegeerd (voorkomt dat LoRa/report de error terugzet)
   markPinVerified(sn);
 
-  // Optimistisch error fields clearen in sensor cache — de PIN wordt
-  // via serial geverifieerd (extended_commands.py), geen MQTT response verwacht.
+  // Error fields clearen in sensor cache — de maaier bevestigde de verify
+  // via extended_commands.py, mqtt_node stuurt zelf geen response.
   // Zonder dit blijft de dashboard PIN overlay staan totdat de charger
   // een nieuwe up_status_info stuurt (kan minuten duren via LoRa).
   const snCache = deviceCache.get(sn);
