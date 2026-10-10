@@ -908,7 +908,7 @@ def find_stale_mow_drives(proc_root="/proc", self_pid=None):
         # Alleen echte ritten tellen: een droogloop (`check`) rijdt niet en
         # mag de volgende start niet blokkeren, en onze eigen wrapper-shell
         # draagt het scriptpad ook in zijn argv.
-        if re.search(r"mow_zone_drive\.py\s+(mow|return)\b", cmd):
+        if re.search(r"mow_zone_drive\.py\s+(mow|edge|return)\b", cmd):
             out.append(int(name))
     return out
 
@@ -1020,8 +1020,15 @@ def clear_parked_task(drv):
     log(f"after quit_mapping_mode: status={drv.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)}")
 
 
-def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
-    """Outbound: undock -> follow the unicom to the target zone -> coverage."""
+def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
+    """Outbound: undock -> follow the unicom to the target zone -> coverage.
+
+    edge=True (#148): the same departure and transit, then stop with PHASE
+    edge_ready instead of starting coverage; extended_commands.py starts the
+    edge cut of the zone the mower now stands in. An edge cut has no firmware
+    task that drives to the zone for us, and a free-planned approach is what
+    took mowers through the hedge, so a zone without a recorded route is
+    refused instead of guessed."""
     # A live task already owns the wheels (e.g. the app's start_navigation
     # fallback won the race while this process was still starting). Reloading
     # the map and quitting that task left the coverage running without
@@ -1051,8 +1058,13 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
         # task is executing" (live .244, 2026-09-14).
         home = _dock_zone()
         if not _channel_files(home, to_slot):
-            log(f"on the dock, no channel {home}->{to_slot}: the firmware runs the whole task")
-            return _cover(drv, map_ids, cutterhigh, direction)
+            if edge and to_slot != home:
+                log(f"edge: on the dock, no channel {home}->{to_slot}")
+                phase("error", "no_channel_to_zone")
+                return 1
+            if not edge:
+                log(f"on the dock, no channel {home}->{to_slot}: the firmware runs the whole task")
+                return _cover(drv, map_ids, cutterhigh, direction)
         # A channel to drive: the firmware departs, then we take over.
         if drv.localize_via_firmware(map_ids, cutterhigh, direction) is None:
             phase("error", "not_localized")
@@ -1073,7 +1085,10 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     target_poly = read_xy_csv(os.path.join(base, f"{to_slot}_work.csv"))
     already_in = bool(robot and len(target_poly) >= 3 and
                       point_in_poly(robot[0], robot[1], target_poly))
-    uni = _channel_files(from_slot, to_slot) if not already_in else []
+    # Still within the dock disc after the departure: for an edge cut the route
+    # starts in the dock's zone (coverage leaves this to the firmware).
+    route_from = _dock_zone() if (edge and from_slot == "dock") else from_slot
+    uni = _channel_files(route_from, to_slot) if not already_in else []
     if uni:
         log(f"transit route {from_slot} -> {to_slot}: {' + '.join(uni)}")
         phase("following_unicom")
@@ -1128,7 +1143,14 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
             log("restored controller params")
     else:
         log(f"transit skipped (route={bool(uni)} already_in={already_in})")
+        if edge and not already_in and route_from != to_slot:
+            phase("error", "no_channel_to_zone")
+            return 1
 
+    if edge:
+        # The mower stands in the target zone; the edge cut starts from here.
+        phase("edge_ready")
+        return 0
     # 3. coverage through robot_decision (keeps the normal state machine)
     return _cover(drv, map_ids, cutterhigh, direction)
 
@@ -1414,6 +1436,13 @@ def main():
                     phase("error", "invalid_target")
                 else:
                     rc = do_goto(drv, gx, gy, gyaw)
+        elif mode == "edge":
+            if len(args) < 4:
+                phase("error", "usage: mow_zone_drive.py edge <to_slot> <map_ids> <cutterhigh>")
+            elif not re.fullmatch(r"map\d+", args[1]):
+                phase("error", "invalid_map")
+            else:
+                rc = do_mow(drv, args[1], int(args[2]), int(args[3]), None, edge=True)
         elif mode == "mow":
             if len(args) < 5:
                 phase("error", "usage: mow_zone_drive.py mow <to_slot> <map_ids> <cutterhigh> <direction|->")

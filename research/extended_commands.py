@@ -1822,7 +1822,7 @@ def find_stale_mow_drives(proc_root="/proc", self_pid=None):
         # Alleen echte ritten tellen: een droogloop (`check`) rijdt niet en
         # mag de volgende start niet blokkeren, en onze eigen wrapper-shell
         # draagt het scriptpad ook in zijn argv.
-        if re.search(r"mow_zone_drive\.py\s+(mow|return)\b", cmd):
+        if re.search(r"mow_zone_drive\.py\s+(mow|edge|return)\b", cmd):
             out.append(int(name))
     return out
 
@@ -1894,6 +1894,11 @@ def handle_mow_zone(params, respond):
         respond("mow_zone_status", {"phase": "error", "error": "invalid_map"}); return
     cutterhigh = int(params.get("cutterhigh", 2))
     direction = params.get("direction", None)
+    # edge (#148): the same departure and transit, then the edge cut of that
+    # zone (start_edge_cut) instead of coverage.
+    edge = bool(params.get("edge", False))
+    edge_params = {"mapName": to_slot, "bladeHeight": params.get("bladeHeight", 40),
+                   "obstacleLevel": params.get("obstacleLevel"), "departFromDock": False}
     # Zone selection uses map_ids (the decimal positional bitmask), NOT
     # map_names (map_names + map_ids:0 -> robot_decision Error 118). The app
     # already computes the same encoding as `area`; fall back to 10^slot for
@@ -1945,10 +1950,10 @@ def handle_mow_zone(params, respond):
         # "Failed to make progress". mow_zone_drive.py keeps its shm footprint
         # tiny (throwaway tf-probe node, depth-1 pubs) so it no longer exhausts
         # the iceoryx pool.
-        'exec stdbuf -oL python3 "$1" mow "$2" "$3" "$4" "$5"'
+        'exec stdbuf -oL python3 "$1" "$2" "$3" "$4" "$5" "$6"'
     )
-    argv = ["bash", "-c", wrapper, "mow_zone", drive_script, to_slot,
-            str(int(map_ids)), str(int(cutterhigh)), d_arg]
+    argv = ["bash", "-c", wrapper, "mow_zone", drive_script, "edge" if edge else "mow",
+            to_slot, str(int(map_ids)), str(int(cutterhigh)), d_arg]
 
     def _run():
         terminal_seen = False
@@ -1966,6 +1971,10 @@ def handle_mow_zone(params, respond):
                 if line.startswith("PHASE "):
                     parts = line.split(" ", 2)
                     ph = parts[1] if len(parts) > 1 else ""
+                    if ph == "edge_ready" and edge:
+                        # In the target zone: cut its edge from here.
+                        handle_start_edge_cut(edge_params, respond)
+                        ph = "done"
                     if ph in ("done", "error"):
                         terminal_seen = True
                     msg = {"phase": ph, "map": to_slot}

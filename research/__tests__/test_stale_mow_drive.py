@@ -82,6 +82,12 @@ def test_a_return_run_counts_too():
     assert ec.find_stale_mow_drives(root, self_pid=999) == [111]
 
 
+def test_an_edge_run_counts_too():
+    # #148: an edge cut of a chosen zone drives the same transit.
+    root = fake_proc({111: "python3 /root/novabot/scripts/mow_zone_drive.py edge map6 1000000 2 -"})
+    assert ec.find_stale_mow_drives(root, self_pid=999) == [111]
+
+
 def test_it_never_reports_itself():
     root = fake_proc({
         111: "python3 /root/novabot/scripts/extended_commands.py mow_zone_drive.py",

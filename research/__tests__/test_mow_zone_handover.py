@@ -346,6 +346,69 @@ def test_executing_gate_matches_the_firmware_rule():
     assert not ex(0, 20)
 
 
+# #148: an edge cut of a chosen zone. Same departure and transit as a mow,
+# then PHASE edge_ready instead of coverage.
+class EdgeDriver(FakeDriver):
+    def localize_via_firmware(self, *a):
+        self.calls.append(("localize",))
+        self._loc = (0.0, 1.9)   # the firmware departed; the frame exists now
+        return self._loc
+
+    def set_params(self, items):
+        pass
+
+    def log_applied_params(self, names):
+        pass
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        self.calls.append(("nav_to",))
+        return True, ""
+
+    def follow_path(self, pts):
+        self.calls.append(("follow_path",))
+        return True, ""
+
+
+def run_edge(drv, to_slot):
+    seen = []
+    real, mzd.phase = mzd.phase, (lambda *a: seen.append(a))
+    try:
+        rc = mzd.do_mow(drv, to_slot, 10 ** int(to_slot[3:]), 2, None, edge=True)
+    finally:
+        mzd.phase = real
+    return rc, seen
+
+
+def test_edge_of_the_dock_zone_departs_and_hands_over():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
+    drv = EdgeDriver(localized=None)
+    rc, seen = run_edge(drv, "map0")
+    assert rc == 0 and seen[-1] == ("edge_ready",), seen
+    assert ("localize",) in drv.calls and ("follow_path",) not in drv.calls
+    assert not any(c[0] == "start_cov" for c in drv.calls)   # never a coverage task
+
+
+def test_edge_of_a_zone_without_a_route_is_refused():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
+    drv = EdgeDriver(localized=None)
+    rc, seen = run_edge(drv, "map6")
+    assert rc == 1 and seen[-1] == ("error", "no_channel_to_zone"), seen
+    assert drv.calls == [("reload_map",)]   # nothing moved, nothing started
+
+
+def test_edge_of_another_zone_drives_the_channel_first():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)],
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = EdgeDriver(localized=None)
+    rc, seen = run_edge(drv, "map6")
+    assert rc == 0 and seen[-1] == ("edge_ready",), seen
+    assert ("following_unicom",) in seen and ("follow_path",) in drv.calls
+    assert not any(c[0] == "start_cov" for c in drv.calls)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
