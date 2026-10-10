@@ -336,8 +336,9 @@ export function StartMowSheet({
       const url = await getServerUrl();
       if (!url || !mowerSn) return null;
       const res = await fetch(`${url}/api/dashboard/rain-forecast/${encodeURIComponent(mowerSn)}`);
-      const data = await res.json() as { available?: boolean; upcoming?: Array<{ time: string; mm: number; prob: number }> };
-      if (!data.available || !data.upcoming?.length) return null;
+      const data = await res.json() as { available?: boolean; pauseEnabled?: boolean; upcoming?: Array<{ time: string; mm: number; prob: number }> };
+      // Rain auto-pause off: the server never pauses, so there is nothing to warn about.
+      if (!data.available || data.pauseEnabled === false || !data.upcoming?.length) return null;
       const now = Date.now();
       const horizon = 3 * 60 * 60 * 1000;
       for (const h of data.upcoming) {

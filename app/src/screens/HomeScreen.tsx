@@ -1545,8 +1545,8 @@ export default function HomeScreen() {
       const url = await getServerUrl();
       if (url) {
         const res = await fetch(`${url}/api/dashboard/rain-forecast/${encodeURIComponent(sn)}`);
-        const data = await res.json() as { available?: boolean; upcoming?: Array<{ time: string; mm: number; prob: number }> };
-        if (data.available && data.upcoming?.length) {
+        const data = await res.json() as { available?: boolean; pauseEnabled?: boolean; upcoming?: Array<{ time: string; mm: number; prob: number }> };
+        if (data.available && data.pauseEnabled !== false && data.upcoming?.length) {
           const now = Date.now();
           const horizon = 3 * 60 * 60 * 1000;
           for (const h of data.upcoming) {

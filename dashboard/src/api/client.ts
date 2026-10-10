@@ -614,6 +614,8 @@ export interface RainForecast {
   available: boolean;
   clearAt: string | null;
   upcoming: Array<{ time: string; mm: number; prob: number }>;
+  /** false = rain auto-pause is off for this mower, so no start warning. */
+  pauseEnabled?: boolean;
 }
 
 export async function fetchRainForecast(sn: string): Promise<RainForecast> {
@@ -728,7 +730,7 @@ export function findIncomingRain(
   nowMs: number = Date.now(),
   horizonMs: number = 3 * 60 * 60 * 1000,
 ): { atMs: number; mm: number; prob: number } | null {
-  if (!forecast.available || !forecast.upcoming?.length) return null;
+  if (!forecast.available || forecast.pauseEnabled === false || !forecast.upcoming?.length) return null;
   for (const h of forecast.upcoming) {
     const at = new Date(h.time).getTime();
     if (at < nowMs || at - nowMs > horizonMs) continue;
