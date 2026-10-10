@@ -684,6 +684,35 @@ export async function reanchorAction(
   return res.json();
 }
 
+export interface DockChannelPreview {
+  planHash: string;
+  dock: { x: number; y: number; orientation: number };
+  channels: Array<{ name: string; points: Array<{ x: number; y: number }> }>;
+  /** No dock channel existed; one will be created in `zone`. */
+  created: boolean;
+  /** False when the channel already starts at the saved dock: nothing to do. */
+  needed: boolean;
+  zone: string | null;
+  /** Live docked position versus the saved dock pose, metres. */
+  seatOffsetM: number;
+}
+
+/** Read-only plan of the dock channel repair. Throws the server's reason when it refuses. */
+export async function previewDockChannelRepair(sn: string): Promise<DockChannelPreview> {
+  const data = await (await get(`${BASE}/maps/${encodeURIComponent(sn)}/repair-dock-channel`)).json() as { preview: DockChannelPreview };
+  return data.preview;
+}
+
+/** Apply exactly the previewed plan; a changed map or calibration is refused. */
+export async function applyDockChannelRepair(sn: string, planHash: string): Promise<{ ok: boolean; applied?: boolean; error?: string }> {
+  const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/repair-dock-channel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ planHash }),
+  });
+  return res.json();
+}
+
 export async function fetchReanchorStatus(sn: string): Promise<ReanchorStatus> {
   const data = await (await get(`${BASE}/reanchor/${encodeURIComponent(sn)}/status`)).json();
   return data.status;

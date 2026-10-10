@@ -5,7 +5,7 @@ import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
   CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, Bug, ExternalLink, Box,
-  Image as ImageIcon, Upload, Trash2, Copy,
+  Image as ImageIcon, Upload, Trash2, Copy, Route,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -13,6 +13,7 @@ import {
   updateMowerNickname, sendCommand, setSensorOverride, softRestartMower,
   fetchRainSettings, updateRainSettings, type RainSettings,
   setMaxSpeed, setChargeThreshold, rebootMower, fetchDeviceSettings,
+  previewDockChannelRepair, applyDockChannelRepair,
 } from '../api/client';
 import { readWeekStart, writeWeekStart, type WeekStart } from '../utils/weekStart';
 import { readTimeFormat, writeTimeFormat, type TimeFormat } from '../utils/timeFormat';
@@ -431,6 +432,45 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
     }
   };
 
+  // Dock channel repair: rebuilds a channel that does not start at the saved
+  // dock, or creates one when none exists (then re-anchoring works again).
+  const [dockChannelBusy, setDockChannelBusy] = useState(false);
+  const handleDockChannel = async () => {
+    const title = t('settings.mower.dockChannel', 'Dock channel');
+    setDockChannelBusy(true);
+    try {
+      const p = await previewDockChannelRepair(sn);
+      if (!p.needed) {
+        await dialog.alert({ title, message: t('settings.mower.dockChannelFine', 'The dock channel already starts at the saved dock. There is nothing to repair.') });
+        return;
+      }
+      const points = p.channels[0]?.points ?? [];
+      const length = points.slice(1).reduce((sum, q, i) => sum + Math.hypot(q.x - points[i].x, q.y - points[i].y), 0).toFixed(1);
+      const at = { x: p.dock.x.toFixed(2), y: p.dock.y.toFixed(2), length };
+      const message = [
+        p.created
+          ? t('settings.mower.dockChannelCreate', 'There is no dock channel. A new one will run {{length}} m from the saved dock ({{x}}, {{y}}) into zone {{zone}}.', { ...at, zone: p.zone })
+          : t('settings.mower.dockChannelRebuild', 'The dock channel does not start at the saved dock ({{x}}, {{y}}). It will be rebuilt as a {{length}} m lead into the lawn.', at),
+        p.seatOffsetM > 0.1
+          ? t('settings.mower.dockChannelOffset', 'The mower now reads {{cm}} cm from its saved dock. Run Re-anchor afterwards; it aligns the position to this channel.', { cm: Math.round(p.seatOffsetM * 100) })
+          : null,
+        t('settings.mower.dockChannelBackup', 'The map is backed up on the server first, and nothing else on the mower changes. This takes one to three minutes.'),
+      ].filter(Boolean).join('\n\n');
+      if (!(await dialog.confirm({ title, message, confirmLabel: p.created ? t('settings.mower.dockChannelCreateLabel', 'Create channel') : t('settings.mower.dockChannelRebuildLabel', 'Rebuild channel') }))) return;
+      const result = await applyDockChannelRepair(sn, p.planHash);
+      if (result.ok && result.applied) {
+        await dialog.alert({ title, message: t('settings.mower.dockChannelDone', 'The dock channel is in place. Now run Re-anchor, standing by the mower.') });
+      } else {
+        toast(`✗ ${result.error ?? t('settings.mower.dockChannelFailed', 'Dock channel repair failed')}`, 'error');
+      }
+    } catch (e) {
+      if (isUnsupportedFirmwareError(e)) { toast(t('firmware.requiresOpenNova'), 'error'); return; }
+      await dialog.alert({ title, message: e instanceof Error ? e.message : t('settings.mower.dockChannelFailed', 'Dock channel repair failed'), variant: 'danger' });
+    } finally {
+      setDockChannelBusy(false);
+    }
+  };
+
   const handleReboot = async () => {
     if (!(await dialog.confirm({
       title: t('settings.mower.rebootTitle', 'Reboot mower'),
@@ -695,6 +735,18 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
             <span className="flex-1">
               <span className="block text-sm font-semibold text-white">{t('reanchor.title')}</span>
               <span className="block text-xs text-gray-500">{t('reanchor.supervisedIntro')}</span>
+            </span>
+          </button>
+          <button
+            onClick={handleDockChannel}
+            disabled={!online || !firmwareSupported || dockChannelBusy}
+            title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
+            className="w-full flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 px-3 py-2.5 text-left transition-colors disabled:opacity-40"
+          >
+            {dockChannelBusy ? <Loader2 className="w-4 h-4 text-amber-400 flex-shrink-0 animate-spin" /> : <Route className="w-4 h-4 text-amber-400 flex-shrink-0" />}
+            <span className="flex-1">
+              <span className="block text-sm font-semibold text-white">{t('settings.mower.dockChannel', 'Dock channel')}</span>
+              <span className="block text-xs text-gray-500">{t('settings.mower.dockChannelDesc', 'Checks the channel to the dock and rebuilds or creates it from the saved dock. Needed when Re-anchor reports a missing dock channel.')}</span>
             </span>
           </button>
           <button
