@@ -2342,6 +2342,86 @@ def handle_mow_zone_check(params, respond):
     respond("mow_zone_check_started", {"map": to_slot})
 
 
+# Chassis flags that end an edge cut on the spot (#147): the STOP button and
+# the PIN lock it leads to, and the mower being lifted, tilted or turned over.
+# The edge cut is an NTCP goal outside robot_decision, so the firmware's own
+# reaction (pause its task, ask for the PIN) does not reach it: after the PIN
+# the mower drove on cutting the edge, and only power-off stopped it.
+_EDGE_STOP_FLAGS = (
+    "error_push_button_stop", "warning_push_button_stop",
+    "error_no_pin_code",
+    "error_upraise_stop", "warning_upraise_stop",
+    "error_tile_stop", "warning_tile_stop",
+    "error_turn_over",
+)
+
+
+def _edge_stop_reason(fields):
+    """The first stop flag set in one /chassis_incident message, else None."""
+    for key in _EDGE_STOP_FLAGS:
+        if fields.get(key) is True:
+            return key
+    return None
+
+
+def _echo_messages(lines):
+    """Yield {field: bool} per message from `ros2 topic echo` output ('---' separated)."""
+    msg = {}
+    for line in lines:
+        text = line.strip()
+        if text == "---":
+            if msg:
+                yield msg
+            msg = {}
+            continue
+        m = re.match(r"([a-z_]+):\s*(true|false)$", text)
+        if m:
+            msg[m.group(1)] = m.group(2) == "true"
+    if msg:
+        yield msg
+
+
+def _watch_edge_cut_safety(edge_proc, respond):
+    """Stop the edge cut when a /chassis_incident stop flag appears.
+
+    A fresh `ros2 topic echo` process, not an rclpy subscription in this
+    process: in-process subscriptions were seen to starve on this mower
+    (auto_map field report), and this one must not. ChassisIncident comes
+    every 2 s, so a STOP press is acted on within about that.
+    """
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        "exec timeout 2000 ros2 topic echo /chassis_incident novabot_msgs/msg/ChassisIncident"
+    )
+    try:
+        watcher = subprocess.Popen(
+            ["bash", "-c", cmd], env={**_ros_env(), "PYTHONUNBUFFERED": "1"},
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
+        )
+    except Exception as e:
+        log(f"edge_cut safety watch could not start: {e}")
+        return
+    try:
+        for fields in _echo_messages(watcher.stdout):
+            if edge_proc.poll() is not None:
+                break
+            reason = _edge_stop_reason(fields)
+            if reason:
+                log(f"edge_cut stopped on the mower: {reason}")
+                _kill_ros2_action_clients()
+                _call_cover_task_stop()
+                respond("edge_cut_stopped", {"reason": reason})
+                break
+    except Exception as e:
+        log(f"edge_cut safety watch error: {e}")
+    finally:
+        try:
+            watcher.kill()
+        except Exception:
+            pass
+
+
 def handle_start_edge_cut(params, respond):
     """Start edge-cutting via /navigate_through_coverage_paths action.
 
@@ -2624,6 +2704,10 @@ def handle_start_edge_cut(params, respond):
     threading.Thread(
         target=_monitor_edge_cut, args=(proc, perception_changed),
         daemon=True, name="edge-cut-monitor",
+    ).start()
+    threading.Thread(
+        target=_watch_edge_cut_safety, args=(proc, respond),
+        daemon=True, name="edge-cut-safety",
     ).start()
 
 
