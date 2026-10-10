@@ -1268,6 +1268,7 @@ export default function MapScreen() {
   // Adjacent work-map pairs with no inter-zone unicom between them. The mower
   // can't drive between unconnected zones, so we surface a one-tap entry to
   // record the missing channel (the actual recording happens in MappingScreen).
+  // Zones that touch are already connected; the outlines tell, same as there.
   const missingChannels = useMemo(
     () => findMissingChannels(
       maps.map((m) => ({
@@ -1275,6 +1276,7 @@ export default function MapScreen() {
         canonicalName: m.canonicalName,
         mapName: m.mapName,
         pointCount: m.mapArea?.length ?? 0,
+        points: m.mapArea,
       })),
     ),
     [maps],

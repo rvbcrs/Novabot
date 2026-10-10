@@ -11,7 +11,7 @@
  * State machine: idle → mapping → stopping → chargerPosition → done
  *                           ↘ cancelled (discard)
  */
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -45,7 +45,7 @@ import { getServerUrl } from '../services/auth';
 import { useExperimental } from '../context/ExperimentalContext';
 import { useI18n } from '../i18n';
 import { fixQualityLabel } from '../utils/fixQuality';
-import { findMissingChannels, getWorkMapName, type ChannelMapLike } from '../utils/mapChannels';
+import { findCloseZonePairs, findMissingChannels, findZonePair, getWorkMapName, type ChannelMapLike, type ZoneProximity } from '../utils/mapChannels';
 import {
   bleJoystickConnect,
   bleJoystickStart, bleJoystickMove, bleJoystickStop,
@@ -94,14 +94,16 @@ function getHoldType(x: number, y: number): number {
 
 type MappingState = 'idle' | 'calibrating' | 'preMapping' | 'mapping' | 'stopping' | 'saveRejected' | 'commandFailed' | 'chargerPosition' | 'done' | 'cancelled';
 type MappingMode = 'autonomous' | 'manual';
-// Verified against Flutter v2.4.0 clickStart branches (BuildMapPageLogic L12873):
-//   work          → add_scan_map type:null  (creates map0/map1/map2)
-//   obstacle      → add_scan_map type:2     (obstacle inside an existing work map)
-//   unicom        → add_scan_map type:4     (channel between two work maps, e.g. map0tomap1_0_unicom)
-//   charge_unicom → add_scan_map type:8     (channel from a work map to the charger, e.g. map0tocharge_unicom)
+// add_scan_map `type` per build type, as sent by buildTypeToScanType below
+// (verified against live Novabot-app captures; the older Flutter-decompile
+// reading of type:null/2/4 was wrong):
+//   work          → type:0  (creates map0/map1/map2)
+//   obstacle      → type:1  (obstacle inside an existing work map, mapName "map")
+//   unicom        → type:2  (channel between two work maps, e.g. map0tomap1_0_unicom)
+//   charge_unicom → type:8  (channel from a work map to the charger; not verified)
+//   modify        → type:4  (MAPPING_EDIT_MODE: redraw a work-map boundary;
+//                   firmware decides expand vs retract by geometry)
 // The mower firmware generates the canonical CSV filename based on start/end position at scan time.
-//   modify        → add_scan_map type:4 (MAPPING_EDIT_MODE: redraw a work-map
-//                   boundary; firmware decides expand vs retract by geometry)
 type MapBuildType = 'work' | 'obstacle' | 'unicom' | 'charge_unicom' | 'modify';
 
 function buildTypeToScanType(t: MapBuildType): number {
@@ -298,26 +300,43 @@ function MowerMappingScreen() {
   // upload + DB round-trip) so the "connect this new zone" prompt appears
   // without waiting. Shared with MapScreen via findMissingChannels so both
   // screens agree.
-  const missingMapChannels = (() => {
-    const channelMaps: ChannelMapLike[] = existingMaps.map(m => ({
+  //
+  // Zones that touch count as connected (no channel needed, and recording one
+  // between them fails with add_scan_map_respond result 1). Zones less than
+  // about 1 m apart get a warning before a channel is recorded (Novabot-cn1).
+  // Memoised: the outline gap is measured edge by edge and this component
+  // re-renders on every telemetry update.
+  const channelMaps = useMemo(() => {
+    const list: ChannelMapLike[] = existingMaps.map(m => ({
       mapType: m.mapType,
       canonicalName: m.canonicalName,
       mapName: m.mapName,
       fileName: m.fileName,
       connectedMaps: m.connectedMaps,
       pointCount: m.points?.length,
+      points: m.points,
     }));
     if (lastSaved?.buildType === 'work' && lastSaved.mapName) {
       const canon = lastSaved.mapName.match(/^(map\d+)/)?.[1];
-      const alreadyListed = !!canon && channelMaps.some(m =>
+      const alreadyListed = !!canon && list.some(m =>
         m.mapType === 'work' &&
         (m.canonicalName ?? m.fileName ?? m.mapName ?? '').startsWith(canon));
       if (canon && !alreadyListed) {
-        channelMaps.push({ mapType: 'work', mapName: lastSaved.mapName, canonicalName: lastSaved.mapName });
+        list.push({ mapType: 'work', mapName: lastSaved.mapName, canonicalName: lastSaved.mapName });
       }
     }
-    return findMissingChannels(channelMaps);
-  })();
+    return list;
+  }, [existingMaps, lastSaved]);
+  const closeZonePairs = useMemo(() => findCloseZonePairs(channelMaps), [channelMaps]);
+  const missingMapChannels = useMemo(
+    () => findMissingChannels(channelMaps, closeZonePairs),
+    [channelMaps, closeZonePairs],
+  );
+  const zonePairText = useCallback((pair: ZoneProximity) => t(pair.touching ? 'channelZonesTouch' : 'channelZonesClose', {
+    a: pair.a.replace('map', ''),
+    b: pair.b.replace('map', ''),
+    gap: pair.gapM.toFixed(2),
+  }), [t]);
   const mustCreateChannel = missingMapChannels.length > 0
     && mappingState === 'done'
     && lastSaved?.buildType !== 'unicom';
@@ -1026,6 +1045,23 @@ function MowerMappingScreen() {
     setMappingState('preMapping');
   }), [connectBleJoystick, sendCommand, runMappingAction]);
 
+  // Warn first when the two zones touch or lie less than about 1 m apart: a
+  // channel there usually fails (add_scan_map_respond result 1). Not a block;
+  // the user may record anyway.
+  const requestChannelFlow = useCallback((fromMap: string, toMap: string) => {
+    const pair = findZonePair(closeZonePairs, fromMap, toMap);
+    if (!pair) { void startChannelFlow(fromMap); return; }
+    appAlert({
+      title: t(pair.touching ? 'channelZonesTouchTitle' : 'channelZonesCloseTitle'),
+      message: zonePairText(pair),
+      accent: 'warning',
+      buttons: [
+        { text: t('cancel'), style: 'cancel' },
+        { text: t('channelRecordAnyway'), onPress: () => { void startChannelFlow(fromMap); } },
+      ],
+    });
+  }, [closeZonePairs, startChannelFlow, zonePairText, t]);
+
   // ── Start mapping ──
   const handleStartManual = () => {
     appAlertCompat.alert(
@@ -1115,9 +1151,10 @@ function MowerMappingScreen() {
 
     // EXACT Novabot app flow — verified against live BLE mqtt log 2026-04-17 21:45:
     // - First map EVER:  start_scan_map { model: "manual", mapName: "map0", type: 0, cmd_num }
-    // - Additional:      add_scan_map   { model: "manual", mapName: <name>, type: <0|2|4|8>, cmd_num }
+    // - Additional:      add_scan_map   { model: "manual", mapName: <name>, type: <0|1|2|4|8>, cmd_num }
     // The `type` value selects what kind of area the mower is scanning:
-    //   0 = work map, 2 = obstacle, 4 = map-to-map unicom, 8 = charge unicom.
+    //   0 = work map, 1 = obstacle, 2 = map-to-map unicom, 4 = modify (edit
+    //   mode), 8 = charge unicom. See buildTypeToScanType.
     // Non-work modes require at least one existing work map.
     if (existingWorkMapCount === 0 && mapBuildType !== 'work') {
       appAlertCompat.alert(
@@ -1722,7 +1759,7 @@ function MowerMappingScreen() {
                   <TouchableOpacity
                     key={`${ch.from}-${ch.to}`}
                     style={[styles.modeBtn, { backgroundColor: '#3b82f6', alignItems: 'center', paddingVertical: 12, marginTop: 8 }]}
-                    onPress={() => startChannelFlow(ch.from)}
+                    onPress={() => requestChannelFlow(ch.from, ch.to)}
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.modeBtnTitle, { color: colors.white }]}>
@@ -1730,6 +1767,14 @@ function MowerMappingScreen() {
                     </Text>
                   </TouchableOpacity>
                 ))}
+                {/* Channel mode lists the same note in its own warning card below. */}
+                {mapBuildType !== 'unicom' && missingMapChannels.map(ch => findZonePair(closeZonePairs, ch.from, ch.to))
+                  .filter((pair): pair is ZoneProximity => !!pair)
+                  .map(pair => (
+                    <Text key={`close-${pair.a}-${pair.b}`} style={[styles.modeBtnSub, { color: colors.amber, marginTop: 8 }]}>
+                      {zonePairText(pair)}
+                    </Text>
+                  ))}
                 <Text style={[styles.modeBtnSub, { color: colors.textMuted, marginTop: 10 }]}>
                   {t('channelDriveHint')}
                 </Text>
@@ -1801,6 +1846,21 @@ function MowerMappingScreen() {
                 <Text style={[styles.modeBtnSub, { marginBottom: 12, color: colors.textMuted }]}>
                   {t('mpUnicomModeHint')}
                 </Text>
+              )}
+              {/* Zones that touch need no channel; a channel between zones
+                  less than ~1 m apart usually fails (add_scan_map_respond
+                  result 1). Warn before the user drives one (Novabot-cn1). */}
+              {mapBuildType === 'unicom' && closeZonePairs.length > 0 && (
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.amber }}>
+                  <Ionicons name="warning" size={18} color={colors.amber} />
+                  <View style={{ flex: 1, gap: 6 }}>
+                    {closeZonePairs.map(pair => (
+                      <Text key={`${pair.a}-${pair.b}`} style={[styles.modeBtnSub, { color: colors.textDim }]}>
+                        {zonePairText(pair)}
+                      </Text>
+                    ))}
+                  </View>
+                </View>
               )}
               {mapBuildType === 'modify' && (
                 <Text style={[styles.modeBtnSub, { marginBottom: 12, color: colors.textMuted }]}>
@@ -2431,7 +2491,7 @@ function MowerMappingScreen() {
                   <>
                     <TouchableOpacity
                       style={[styles.doneBtn, { marginTop: 20, backgroundColor: '#3b82f6', width: '100%' }]}
-                      onPress={() => startChannelFlow(missingMapChannels[0].from)}
+                      onPress={() => requestChannelFlow(missingMapChannels[0].from, missingMapChannels[0].to)}
                       activeOpacity={0.7}
                     >
                       <Text style={styles.doneBtnText}>
