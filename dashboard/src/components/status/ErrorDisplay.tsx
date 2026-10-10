@@ -12,7 +12,9 @@ import { errorKind } from '../../utils/mowerActivity';
 //   8   = LoRa flicker
 //   113 = transient sensor/perception warning, auto-recovers
 //   132 = data transmission loss, auto-recovers
-//   151 = PIN lock — handled by PinKeypad overlay, no modal needed
+//   151 = PIN lock, entered on the mower itself. No dashboard component
+//         offers a remote unlock (PinKeypad.tsx is not rendered), and
+//         stock MCU v3.6.0 does not answer remote verify anyway.
 const HIDDEN_CODES = new Set(['8', '113', '132', '151']);
 
 // Codes that are normal for a few seconds and alarming only if they persist.
@@ -53,7 +55,7 @@ export function ErrorDisplay({ errorCode, errorMsg, errorStatus, sn, errorAck }:
   const hasError = (errorStatus && errorStatus !== 'OK') ||
                    (errorCode && errorCode !== 'None' && errorCode !== '0');
 
-  // PIN-related errors are handled by PinKeypad overlay, not this modal
+  // "Input PIN" messages get no modal either: the PIN is entered on the mower
   const isPinRelated = errorMsg?.toLowerCase().includes('input pin');
   // Hide transient noise regardless of work_status — codes 8/113/132 fire
   // mid-mowing too and the modal would interrupt every coverage cycle.
