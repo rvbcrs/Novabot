@@ -1270,9 +1270,15 @@ export async function startMqttBroker(): Promise<void> {
             // nothing else drives the mower back, so a finished edge cut (100
             // FINISHED, 90 PARTIALLY_FINISHED) goes home, as the stock edge pass
             // at the end of a mow did. A stopped or failed one stays put.
-            if (body.active === false && (body.result_status === 100 || body.result_status === 90)) {
+            // With more zones chosen (#148) the next one comes first. A stopped
+            // or failed edge cut forgets the rest.
+            if (body.active === false) {
               const sn = extSn;
-              void import('../services/mowingService.js').then(m => m.goHome(sn));
+              const finished = body.result_status === 100 || body.result_status === 90;
+              void import('../services/mowingService.js').then(m => {
+                if (!finished) m.cancelEdgeCuts(sn);
+                else if (!m.continueEdgeCuts(sn)) m.goHome(sn);
+              });
             }
           }
         }
@@ -1323,6 +1329,11 @@ export async function startMqttBroker(): Promise<void> {
             // (live .244, 2026-09-12).
             set('mow_zone_error', body.phase === 'error' ? (body.error || 'unknown') : '');
             forwardToDashboard(extSn, changes);
+            // A failed drive to the next edge zone (#148) ends the queue there.
+            if (body.phase === 'error') {
+              const sn = extSn;
+              void import('../services/mowingService.js').then(m => m.cancelEdgeCuts(sn));
+            }
           }
         }
 

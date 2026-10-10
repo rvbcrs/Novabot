@@ -335,6 +335,16 @@ export const CATALOG: Catalog = {
     fr: "Il n'y a pas de passage vers la station, le serveur n'a donc pas de référence de station pour le réancrage. Réparez d'abord le passage vers la station sous Réglages, Récupération.",
     de: "Es gibt keinen Dockkanal, daher hat der Server keine Dockreferenz zum Neuverankern. Reparieren Sie zuerst den Dockkanal unter Einstellungen, Wiederherstellung.",
   },
+  "randmaaien van een andere zone dan die van het dock vereist custom firmware {0} of nieuwer": {
+    en: "edge cutting a zone other than the dock's zone needs custom firmware {0} or newer",
+    fr: "tondre la bordure d'une zone autre que celle de la station nécessite le firmware custom {0} ou plus récent",
+    de: "Kantenschnitt einer anderen Zone als der des Docks erfordert Custom-Firmware {0} oder neuer",
+  },
+  "kies een of meer zones": {
+    en: "choose one or more zones",
+    fr: "choisissez une ou plusieurs zones",
+    de: "wählen Sie eine oder mehrere Zonen",
+  },
   "Download mislukt": {
     en: "Download failed",
     fr: "Échec du téléchargement",

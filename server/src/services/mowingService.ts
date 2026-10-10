@@ -18,6 +18,11 @@ import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { getMowingAreaErrorMsg, mowerSwVersion } from './mowingArea.js';
+import { customBuildNumber } from './firmwareAdvisory.js';
+import { freshPositionState } from './positionTelemetry.js';
+import { getPolygonAnchor } from './anchor.js';
+import { mapRepo } from '../db/repositories/maps.js';
+import { pointInPolygon } from '../maps/editGeometry.js';
 import { M, renderMsg, type Msg } from './serverText.js';
 
 /** Settle time (ms) between re-applying the saved para and start_navigation, so
@@ -397,6 +402,79 @@ export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number,
   publishExtendedCommand(sn, { start_edge_cut: cmd });
   console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm departFromDock=${departFromDock}${cmd.obstacleLevel ? ' obstacleLevel=1' : ''}`);
   return { ok: true };
+}
+
+// ── Randmaaien per zone (#148) ───────────────────────────────────────────
+// start_edge_cut snijdt de rand van één zone, vanaf waar de maaier staat. De
+// zone van het dock start zoals altijd direct vanaf het dock. Elke andere zone
+// gaat via mow_zone met edge:true: de maaier vertrekt, rijdt het opgenomen
+// kanaal naar die zone en start daar de randmaai (mow_zone_drive.py edge).
+// Meerdere zones lopen achter elkaar: na een afgeronde zone de volgende, na de
+// laatste naar huis (broker, edge_cut_status).
+
+/** First custom build whose mow_zone knows edge:true. An older one ignores the
+ *  flag and would MOW the zone, so other zones are refused there. */
+export const EDGE_ZONE_MIN_BUILD = 47;
+
+const pendingEdgeZones = new Map<string, { zones: string[]; bladeHeightMm: number }>();
+
+function zoneContaining(sn: string, p: { x: number; y: number } | null): string | null {
+  if (!p) return null;
+  for (const m of mapRepo.findWorkMaps(sn)) {
+    const slot = m.canonical_name?.match(/^map\d+$/)?.[0];
+    if (!slot || !m.map_area) continue;
+    try {
+      const poly = JSON.parse(m.map_area) as Array<{ x: number; y: number }>;
+      if (Array.isArray(poly) && poly.length >= 3 && pointInPolygon(p, poly)) return slot;
+    } catch { /* a broken polygon row is skipped */ }
+  }
+  return null;
+}
+
+function startEdgeCutZone(sn: string, zone: string, bladeHeightMm: number): MowingResult {
+  const docked = freshPositionState(sn).docked;
+  if (docked && zoneContaining(sn, getPolygonAnchor(sn)) === zone) return startEdgeCut(sn, zone, bladeHeightMm, true);
+  const build = customBuildNumber(mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')));
+  if (build == null || build < EDGE_ZONE_MIN_BUILD) {
+    return refuse(M`randmaaien van een andere zone dan die van het dock vereist custom firmware ${EDGE_ZONE_MIN_BUILD} of nieuwer`);
+  }
+  const cmd: Record<string, unknown> = {
+    map: zone, edge: true, bladeHeight: bladeHeightMm,
+    // The firmware's own departure needs a task height (wire = cm - 2).
+    cutterhigh: Math.max(0, Math.min(7, Math.round(bladeHeightMm / 10) - 2)),
+  };
+  if (edgeObstacleLevel(sn) === 1) cmd.obstacleLevel = 1;
+  publishExtendedCommand(sn, { mow_zone: cmd });
+  console.log(`[MowingService] edge cut via mow_zone: sn=${sn} zone=${zone} blade=${bladeHeightMm}mm`);
+  return { ok: true };
+}
+
+/** Randmaai van de gekozen zones, een voor een. */
+export function startEdgeCuts(sn: string, zones: string[], bladeHeightMm: number): MowingResult {
+  if (!sn) return { ok: false, error: 'sn required' };
+  const list = [...new Set(zones)];
+  if (!list.length || list.some(z => !/^map\d+$/.test(z))) return refuse(M`kies een of meer zones`);
+  if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
+  if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
+  pendingEdgeZones.delete(sn);
+  const r = startEdgeCutZone(sn, list[0], bladeHeightMm);
+  if (r.ok && list.length > 1) pendingEdgeZones.set(sn, { zones: list.slice(1), bladeHeightMm });
+  return r;
+}
+
+/** An edge cut finished: start the next queued zone. False = nothing left. */
+export function continueEdgeCuts(sn: string): boolean {
+  const queue = pendingEdgeZones.get(sn);
+  if (!queue?.zones.length) { pendingEdgeZones.delete(sn); return false; }
+  const [next, ...rest] = queue.zones;
+  if (rest.length) queue.zones = rest; else pendingEdgeZones.delete(sn);
+  if (!startEdgeCutZone(sn, next, queue.bladeHeightMm).ok) { pendingEdgeZones.delete(sn); return false; }
+  return true;
+}
+
+/** Stopped, failed or replaced: forget the remaining zones. */
+export function cancelEdgeCuts(sn: string): void {
+  pendingEdgeZones.delete(sn);
 }
 
 /**

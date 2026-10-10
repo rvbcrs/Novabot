@@ -83,7 +83,7 @@ import { startSourceDockCycle, sourceDockCycle } from '../services/sourceDockCyc
 import { startDockReturn, dockReturn } from '../services/dockReturnCycle.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
-import { MOW_PARA_SETTLE_MS, edgeObstacleLevel } from '../services/mowingService.js';
+import { MOW_PARA_SETTLE_MS, edgeObstacleLevel, startEdgeCuts } from '../services/mowingService.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
 import {
   startAutoMap, stopAutoMap, getStatus as getAutoMapStatus,
@@ -4567,6 +4567,22 @@ function syncVirtualWalls(sn: string): void {
 const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive', 'nav_to_point'];
 
 // POST /api/dashboard/extended/:sn — stuur commando naar extended_commands.py
+// POST /api/dashboard/edge-cut/:sn {zones: ['map0', ...], bladeHeight: mm}
+// Edge cut of the chosen zones, one after another (#148). The dock's zone
+// starts from the dock; any other zone drives its recorded channel first.
+dashboardRouter.post('/edge-cut/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const body = req.body as { zones?: unknown; bladeHeight?: unknown };
+  const zones = Array.isArray(body.zones) ? body.zones.filter((z): z is string => typeof z === 'string') : [];
+  const bladeHeight = Math.max(20, Math.min(90, Math.round(Number(body.bladeHeight) || 40)));
+  const result = startEdgeCuts(sn, zones, bladeHeight);
+  if (!result.ok) {
+    res.status(409).json({ ok: false, error: result.errorMsg ? renderMsg(langOf(req), result.errorMsg) : result.error });
+    return;
+  }
+  res.json({ ok: true, zones });
+});
+
 dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   const sn = req.params.sn;
   const command = req.body as Record<string, unknown>;
