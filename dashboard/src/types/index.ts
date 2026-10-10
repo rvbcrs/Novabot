@@ -115,6 +115,8 @@ export interface Schedule {
   lastResultAt?: string | null;
   lastResult?: 'started' | 'skipped' | 'failed' | 'missed' | null;
   lastResultReason?: string | null;
+  /** Gestart, maar met iets te melden (zonder weercheck gestart). */
+  lastResultWarning?: boolean;
   /** YYYY-MM-DD van de dag die overgeslagen wordt; zelf-wissend na de skip. */
   skipDate?: string | null;
   /** Richting die de volgende run echt gebruikt (base + rotatie). */

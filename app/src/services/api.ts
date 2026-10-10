@@ -139,6 +139,8 @@ export interface Schedule {
   lastResultAt?: string | null;
   lastResult?: 'started' | 'skipped' | 'failed' | 'missed' | null;
   lastResultReason?: string | null;
+  /** Gestart, maar met iets te melden (zonder weercheck gestart). */
+  lastResultWarning?: boolean;
   /** Richting die de volgende run echt gebruikt (base + alternate rotatie). */
   nextPathDirection?: number;
   created_at: string;

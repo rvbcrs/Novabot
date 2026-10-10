@@ -314,6 +314,7 @@ export default {
   schedulePausedRain: 'Paused - rain',
   scheduleSkipNext: 'Skip this day',
   scheduleSkipNextBadge: 'Skipped',
+  scheduleResultStarted: 'started',
   scheduleResultMissed: 'missed',
   scheduleResultFailed: 'start failed',
   scheduleResultSkipped: 'not started',

@@ -860,6 +860,7 @@
     "edit": "Edit",
     "save": "Save",
     "lastResult": {
+      "started": "started",
       "skipped": "not started",
       "failed": "start failed",
       "missed": "missed"

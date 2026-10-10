@@ -828,6 +828,7 @@
     "edit": "Bearbeiten",
     "save": "Speichern",
     "lastResult": {
+      "started": "gestartet",
       "skipped": "nicht gestartet",
       "failed": "Start fehlgeschlagen",
       "missed": "verpasst"

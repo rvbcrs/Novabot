@@ -931,6 +931,7 @@
     "edit": "Bewerken",
     "save": "Opslaan",
     "lastResult": {
+      "started": "gestart",
       "skipped": "niet gestart",
       "failed": "start mislukt",
       "missed": "gemist"

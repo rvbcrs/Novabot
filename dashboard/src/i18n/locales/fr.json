@@ -828,6 +828,7 @@
     "edit": "Modifier",
     "save": "Enregistrer",
     "lastResult": {
+      "started": "démarré",
       "skipped": "non démarré",
       "failed": "démarrage échoué",
       "missed": "manqué"

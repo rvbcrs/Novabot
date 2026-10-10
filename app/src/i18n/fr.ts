@@ -130,6 +130,7 @@ export default {
   scheduleRunning: 'Actif maintenant', schedulePausedRain: 'En pause - pluie',
   scheduleSkipNext: 'Passer ce jour',
   scheduleSkipNextBadge: 'Passé',
+  scheduleResultStarted: 'démarré',
   scheduleResultMissed: 'manqué',
   scheduleResultFailed: 'démarrage échoué',
   scheduleResultSkipped: 'non démarré',

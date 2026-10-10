@@ -130,6 +130,7 @@ export default {
   scheduleRunning: 'Läuft jetzt', schedulePausedRain: 'Pausiert - Regen',
   scheduleSkipNext: 'Diesen Tag überspringen',
   scheduleSkipNextBadge: 'Übersprungen',
+  scheduleResultStarted: 'gestartet',
   scheduleResultMissed: 'verpasst',
   scheduleResultFailed: 'Start fehlgeschlagen',
   scheduleResultSkipped: 'nicht gestartet',

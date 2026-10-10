@@ -551,13 +551,15 @@ export default function ScheduleScreen() {
                         </View>
                       )}
                     </View>
-                    {/* Why the last run did not happen (server-recorded). */}
-                    {s.lastResult && s.lastResult !== 'started' && s.lastResultAt && (
+                    {/* Why the last run did not happen (server-recorded), or
+                        that it started without the weather check. */}
+                    {s.lastResult && (s.lastResult !== 'started' || s.lastResultWarning) && s.lastResultAt && (
                       <Text style={[styles.lastResult, (s.lastResult === 'missed' || s.lastResult === 'failed') && styles.lastResultBad]}>
                         {new Date(s.lastResultAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
                         {' · '}
                         {s.lastResult === 'missed' ? (t('scheduleResultMissed', undefined) || 'missed')
                           : s.lastResult === 'failed' ? (t('scheduleResultFailed', undefined) || 'start failed')
+                          : s.lastResult === 'started' ? (t('scheduleResultStarted', undefined) || 'started')
                           : (t('scheduleResultSkipped', undefined) || 'not started')}
                         {s.lastResultReason ? ` · ${s.lastResultReason}` : ''}
                       </Text>

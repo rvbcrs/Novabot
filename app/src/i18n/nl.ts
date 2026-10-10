@@ -312,6 +312,7 @@ export default {
   schedulePausedRain: 'Gepauzeerd - regen',
   scheduleSkipNext: 'Sla deze dag over',
   scheduleSkipNextBadge: 'Overgeslagen',
+  scheduleResultStarted: 'gestart',
   scheduleResultMissed: 'gemist',
   scheduleResultFailed: 'start mislukt',
   scheduleResultSkipped: 'niet gestart',
