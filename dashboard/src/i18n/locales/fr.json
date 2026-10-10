@@ -444,7 +444,8 @@
       "stockNotice": "Firmware d’origine : les modifications ne peuvent pas être envoyées à la tondeuse d’ici. Utilisez « Modifier la carte » dans l’application OpenNova (parcourez la section modifiée).",
       "revertTitle": "Annuler les modifications",
       "discardTitle": "Supprimer les brouillons",
-      "pasteDismiss": "Vider le presse-papiers"
+      "pasteDismiss": "Vider le presse-papiers",
+      "dockCorridorTitle": "Obstacle dans la voie de sortie de la station"
     },
     "missedPoint": "Point manqué",
     "sourceMower": "parcouru par la tondeuse",

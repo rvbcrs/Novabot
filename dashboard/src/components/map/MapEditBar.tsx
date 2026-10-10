@@ -19,6 +19,8 @@ export interface MapEditBarProps {
    *  (write_map_files), so Apply/Re-sync are disabled and a notice explains
    *  the in-app "Edit map" route instead. Drafting still works. */
   firmwareSupported: boolean;
+  /** Non-blocking server warnings on the drafts, e.g. an obstacle in the dock exit lane. */
+  warnings?: { canonical: string; message: string }[];
 }
 
 const STATUS_COLORS: Record<MapEditBarProps['statusKind'], string> = {
@@ -37,7 +39,7 @@ const STATUS_COLORS: Record<MapEditBarProps['statusKind'], string> = {
  */
 export function MapEditBar({
   pendingCount, pendingSync, hasVersions, status, statusKind, busy,
-  onApply, onRevert, onDiscard, canUndo, canRedo, onUndo, onRedo, firmwareSupported,
+  onApply, onRevert, onDiscard, canUndo, canRedo, onUndo, onRedo, firmwareSupported, warnings = [],
 }: MapEditBarProps) {
   const { t } = useTranslation();
   // When the only thing outstanding is a failed push (no fresh drafts), the
@@ -84,6 +86,13 @@ export function MapEditBar({
           <span>{t('map.edit.stockNotice')}</span>
         </p>
       )}
+
+      {warnings.map(w => (
+        <p key={w.canonical} className="text-[11px] mb-2 leading-snug text-amber-400 flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <span>{w.canonical}: {w.message}</span>
+        </p>
+      ))}
 
       {status && (
         <p className={`text-[11px] mb-2 leading-snug whitespace-pre-line ${STATUS_COLORS[statusKind]}`}>

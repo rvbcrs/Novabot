@@ -297,9 +297,12 @@ export async function updateMapArea(sn: string, mapId: string, mapArea: LocalPoi
   });
 }
 
-export async function createMap(sn: string, mapName: string, mapArea: LocalPoint[], mapType?: string): Promise<MapData> {
+/** Non-blocking server warning on a drawn/edited shape, e.g. an obstacle in the dock exit lane. */
+export interface MapEditWarning { canonical: string; code: string; message: string }
+
+export async function createMap(sn: string, mapName: string, mapArea: LocalPoint[], mapType?: string): Promise<{ map: MapData; warnings: MapEditWarning[] }> {
   const data = await (await post(`${BASE}/maps/${encodeURIComponent(sn)}`, { mapName, mapArea, mapType })).json();
-  return data.map;
+  return { map: data.map, warnings: Array.isArray(data.warnings) ? data.warnings : [] };
 }
 
 // ── Zone kopiëren van een andere maaier ───────────────────────────────────
@@ -1127,7 +1130,11 @@ export interface EditMapEntry {
   alias: string | null; parentMap: string | null;
   points: { x: number; y: number }[]; draft: EditDraftDto | null;
 }
-export interface EditGeometryDto { maps: EditMapEntry[]; pendingSync: boolean; hasVersions: boolean }
+export interface EditGeometryDto {
+  maps: EditMapEntry[]; pendingSync: boolean; hasVersions: boolean;
+  /** Obstacle drafts in the dock exit lane (absent on older servers). */
+  warnings?: MapEditWarning[];
+}
 export interface EditValidationIssue { canonical: string; code: string; message: string }
 export interface EditApplyDto {
   ok: boolean; reason?: string;

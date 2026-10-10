@@ -2771,13 +2771,22 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       // de canonieke slotnaam van de maaier (map1, map1tomap0_0_unicom) staan.
       // Dat is de naam waar maaier, ZIP en dashboard het over eens zijn.
       const name = drawName.trim();
-      createMap(sn, name, localArea, drawType).then(newMap => {
+      createMap(sn, name, localArea, drawType).then(({ map: newMap, warnings }) => {
         setMaps(prev => [...prev, newMap]);
         setEditMode('none');
         setEditVertices([]);
         setDrawCursor(null);
         setSelectedMapId(newMap.mapId);
         setEditStatus('');
+        // Opgeslagen, maar het obstakel ligt in de uitrijbaan van het dock
+        // (Novabot-25m). Niet blokkerend: alleen melden.
+        if (warnings.length > 0) {
+          void dialog.alert({
+            title: t('map.edit.dockCorridorTitle'),
+            message: warnings.map(w => w.message).join('\n'),
+            variant: 'warning',
+          });
+        }
         // Werkgebied erbij → de maaier komt er alleen als er een kanaal naartoe
         // loopt. Meteen vragen, zoals de app na het opnemen van een zone doet.
         if (drawType === 'work' && newMap.canonicalName && newMap.canonicalName !== 'map0') {
@@ -2792,7 +2801,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         setEditStatusKind('error');
       });
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, localFromDisplay, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints]);
+  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, localFromDisplay, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints, dialog]);
 
   // Afronden na een dubbelklik: pas ná de render met de opgeschoonde punten,
   // zodat handleSavePolygon precies opslaat wat er op de kaart staat.
@@ -5991,6 +6000,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             hasVersions={editGeometry!.hasVersions}
             status={editStatus}
             statusKind={editStatusKind}
+            warnings={editGeometry!.warnings ?? []}
             busy={applying || historyBusy}
             onApply={handleApplyEdits}
             onRevert={handleRevertEdits}

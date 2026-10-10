@@ -547,7 +547,8 @@
       "stockNotice": "Stock firmware: wijzigingen kunnen van hieruit niet naar de maaier. Gebruik “Kaart bewerken” in de OpenNova-app (rij het gewijzigde stuk).",
       "revertTitle": "Wijzigingen terugdraaien",
       "discardTitle": "Concepten weggooien",
-      "pasteDismiss": "Klembord leegmaken"
+      "pasteDismiss": "Klembord leegmaken",
+      "dockCorridorTitle": "Obstakel in de uitrijbaan van het dock"
     },
     "missedPoint": "Gemist punt",
     "sourceMower": "gereden door de maaier",

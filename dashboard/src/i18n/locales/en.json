@@ -476,7 +476,8 @@
       "stockNotice": "Stock firmware: edits can't be sent to the mower from here. Use “Edit map” in the OpenNova app instead (drive the changed section).",
       "revertTitle": "Revert changes",
       "discardTitle": "Discard drafts",
-      "pasteDismiss": "Clear clipboard"
+      "pasteDismiss": "Clear clipboard",
+      "dockCorridorTitle": "Obstacle in the dock exit lane"
     },
     "missedPoint": "Missed point",
     "sourceMower": "driven by the mower",

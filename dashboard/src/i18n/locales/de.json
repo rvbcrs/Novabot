@@ -444,7 +444,8 @@
       "stockNotice": "Stock-Firmware: Änderungen können von hier nicht zum Mäher. Nutzen Sie „Karte bearbeiten“ in der OpenNova-App (den geänderten Abschnitt abfahren).",
       "revertTitle": "Änderungen zurücknehmen",
       "discardTitle": "Entwürfe verwerfen",
-      "pasteDismiss": "Zwischenablage leeren"
+      "pasteDismiss": "Zwischenablage leeren",
+      "dockCorridorTitle": "Hindernis in der Ausfahrspur der Ladestation"
     },
     "missedPoint": "Verpasster Punkt",
     "sourceMower": "vom Mäher gefahren",
