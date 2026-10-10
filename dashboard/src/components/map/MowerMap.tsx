@@ -2877,7 +2877,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         await refreshEditGeometry();
         break;
       default:
-        setEditStatus(t('map.edit.validationFailed'));
+        setEditStatus(r.error || t('map.edit.validationFailed'));
         setEditStatusKind('error');
         await refreshEditGeometry();
     }
