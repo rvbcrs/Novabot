@@ -36,6 +36,10 @@ export interface SensorDef {
   unit?: string;
   icon?: string;
   entity_category?: string;
+  /** Vermenigvuldiger voor de state die naar Home Assistant gaat, zodat die
+   *  bij `unit` past. Alleen de HA-bridge gebruikt dit; de cache houdt de
+   *  ruwe waarde. */
+  ha_scale?: number;
 }
 
 export const SENSORS: SensorDef[] = [
@@ -78,7 +82,9 @@ export const SENSORS: SensorDef[] = [
   { field: 'battery_state',    name: 'Battery State',     component: 'sensor', icon: 'mdi:battery-charging' },
   { field: 'msg',              name: 'Status Message',    component: 'sensor', icon: 'mdi:message-text',       entity_category: 'diagnostic' },
   { field: 'plan_path',        name: 'Plan Path',         component: 'sensor', icon: 'mdi:map-marker-path',    entity_category: 'diagnostic' },
-  { field: 'cov_ratio',        name: 'Coverage Ratio',    component: 'sensor', icon: 'mdi:percent', state_class: 'measurement', unit: '%' },
+  // cov_ratio komt als fractie 0..1 binnen (de rest van de server rekent
+  // daarmee); HA krijgt het als % via ha_scale.
+  { field: 'cov_ratio',        name: 'Coverage Ratio',    component: 'sensor', icon: 'mdi:percent', state_class: 'measurement', unit: '%', ha_scale: 100 },
   { field: 'cov_area',         name: 'Coverage Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement', unit: 'm²' },
   // Minuten, net als cov_estimate_time: robot_decision deelt navigation_time
   // (seconden) door 60 en logt "cov_work_time(min)". Stock firmware vult het

@@ -356,6 +356,16 @@ export async function handleLawnMowerCommand(sn: string, action: 'start_mowing' 
 
 const lastPublishTime = new Map<string, number>();
 
+/** De state die HA voor een veld krijgt. Een sensor met ha_scale wordt hier
+ *  geschaald zodat de waarde bij zijn unit past (cov_ratio 0,42 → 42 %).
+ *  Niet-numerieke waarden en sensoren zonder ha_scale gaan ongewijzigd door. */
+export function toHaState(sensor: SensorDef | undefined, value: string): string {
+  if (!sensor?.ha_scale) return value;
+  const n = parseFloat(value);
+  if (!Number.isFinite(n)) return value;
+  return String(Math.round(n * sensor.ha_scale * 10) / 10);
+}
+
 /**
  * Ontvang een MQTT bericht van de Aedes broker en stuur het door naar HA.
  * Wordt aangeroepen vanuit broker.ts publish handler.
@@ -390,7 +400,7 @@ export function forwardToHomeAssistant(
     for (const [field, displayValue] of changes) {
       const sensor = SENSORS.find(s => s.field === field);
       if (sensor) publishDiscoveryConfig(sn, sensor);
-      haClient.publish(`novabot/${sn}/${field}`, displayValue, { retain: true });
+      haClient.publish(`novabot/${sn}/${field}`, toHaState(sensor, displayValue), { retain: true });
     }
   }
 
