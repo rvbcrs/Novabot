@@ -45,6 +45,7 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 HTTP_PORT = 8000
 MAX_FPS = 10
 IDLE_TIMEOUT = 300  # seconden zonder viewers -> camera hardware uit (5 min)
+STALE_FRAME_TIMEOUT = 10  # seconds without a frame while someone watches -> restart the camera
 MARKER_USE_TIMEOUT = 30  # bounded protection for the 12s stationary measurement
 
 # Camera topic definities
@@ -111,6 +112,7 @@ class CameraManager:
         self.latest_frame = None  # type: Optional[bytes]
         self.frame_lock = threading.Lock()
         self.frame_count = 0
+        self.last_frame_time = 0.0
 
         # Viewer tracking
         self.active_viewers = 0
@@ -221,6 +223,7 @@ class CameraManager:
         with self.frame_lock:
             self.latest_frame = data
             self.frame_count += 1
+            self.last_frame_time = time.monotonic()
         if self.frame_count == 1 or self.frame_count % 300 == 0:
             print(f"[CAMERA:{self.key}] Frame #{self.frame_count}: {len(data)} bytes", flush=True)
 
@@ -265,6 +268,7 @@ class CameraManager:
             with self.frame_lock:
                 self.latest_frame = data
                 self.frame_count += 1
+                self.last_frame_time = time.monotonic()
 
             if self.frame_count == 1 or self.frame_count % 300 == 0:
                 print(f"[CAMERA:{self.key}] Frame #{self.frame_count}: {msg.encoding} {msg.width}x{msg.height} -> {len(data)} bytes JPEG", flush=True)
@@ -343,6 +347,11 @@ class CameraManager:
         """Controleer idle timeout."""
         while True:
             time.sleep(10)
+            # Stock switches the front camera off after a dock; with a viewer still
+            # attached we kept serving its last frame. Switch it back on.
+            if self.is_active and self.active_viewers and time.monotonic() - self.last_frame_time > STALE_FRAME_TIMEOUT:
+                with self.owner.lifecycle_lock:
+                    self._call_start_camera(self.owner.node, allow_fallback=False)
             self.owner.stop_if_idle(self)
 
 
