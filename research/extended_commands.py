@@ -541,8 +541,57 @@ def serial_clear_error():
         return {"result": 2, "error": str(e)}
 
 
+# How long serial_pin_verify listens for the CMD 0x23 answer.
+PIN_VERIFY_READ_S = 2.0
+
+# Sent along with reason "mcu_no_answer". Stock MCU v3.6.0 sends no CMD 0x23
+# reply to type=2 (field report, custom-45 + v3.6.0 NewMotor): remote verify
+# was added by our patched MCU builds (v3.6.2+, status 0 from v3.6.6), and
+# build_custom_firmware.sh keeps the stock v3.6.0 (step 5i).
+PIN_MCU_NO_ANSWER_HINT = (
+    "The motor board (STM32) did not answer the PIN verify (CMD 0x23 type=2). "
+    "Older MCU firmware may not support it: stock v3.6.0 does not answer it, "
+    "remote PIN verify came with the patched MCU builds (v3.6.2 and later). "
+    "Enter the PIN on the mower's screen."
+)
+
+
+def interpret_pin_verify_reply(buf):
+    """Turn the bytes read after a CMD 0x23 type=2 verify into the result.
+
+    result keeps its old meaning (0=verified, 1=refused, 2=no answer or serial
+    error); reason tells the cases apart for the server:
+      wrong_pin          the MCU answered status 3
+      unexpected_answer  the MCU answered another status
+      mcu_no_answer      no CMD 0x23 frame at all (error stays "no_response",
+                         all that older firmware sent, so the server still
+                         recognises those)
+    Status 0 (patched v3.6.6+) and 2 (the earlier patched builds) both mean verified.
+    """
+    verified = None
+    for f in parse_serial_frames(buf):
+        if len(f) > 5 and f[5] == 0x23:
+            status = f[6] if len(f) > 6 else 0xFF
+            log("PIN verify response status={}".format(status))
+            if status in (0, 2):
+                verified = {"result": 0, "status": "verified"}
+            elif status == 3:
+                return {"result": 1, "status": "wrong_pin", "reason": "wrong_pin"}
+            else:
+                return {"result": 1, "status": "unknown_status_{}".format(status),
+                        "reason": "unexpected_answer"}
+    if verified is None:
+        return {"result": 2, "error": "no_response", "reason": "mcu_no_answer",
+                "hint": PIN_MCU_NO_ANSWER_HINT}
+    return verified
+
+
 def serial_pin_verify(pin_str):
     """Send PIN verify command (CMD 0x23 type=2) to STM32 via serial.
+
+    Takes /dev/ttyACM0 by killing chassis_control_node (stm32_serial), so a
+    chassis_control_node restart right after a verify is that kill, not a
+    reaction of the MCU to the frame.
 
     After successful verify, sends type=3 clear error commands repeatedly
     to overcome tilt/lift detection re-triggering the error screen.
@@ -551,10 +600,12 @@ def serial_pin_verify(pin_str):
         pin_str: 4-digit PIN as string (e.g. "3053")
 
     Returns:
-        dict with result: 0=success, 1=wrong PIN, 2=serial error
+        dict with result: 0=success, 1=wrong PIN, 2=no answer or serial error,
+        plus reason on failure (see interpret_pin_verify_reply; "invalid_pin"
+        and "serial_error" come from here).
     """
     if len(pin_str) != 4 or not pin_str.isdigit():
-        return {"result": 1, "error": "PIN must be 4 digits"}
+        return {"result": 1, "error": "PIN must be 4 digits", "reason": "invalid_pin"}
 
     # Convert PIN to ASCII bytes (e.g. "3053" → [0x33, 0x30, 0x35, 0x33])
     pin_bytes = pin_str.encode('ascii')
@@ -568,32 +619,19 @@ def serial_pin_verify(pin_str):
 
             ser.write(frame)
 
-            # Read responses for 2 seconds
+            # Read responses for PIN_VERIFY_READ_S seconds
             buf = b""
             t0 = time.time()
-            while time.time() - t0 < 2:
+            while time.time() - t0 < PIN_VERIFY_READ_S:
                 chunk = ser.read(512)
                 if chunk:
                     buf += chunk
 
-        # Parse response frames, look for CMD 0x23
-        verify_result = None
-        for f in parse_serial_frames(buf):
-            if len(f) > 5 and f[5] == 0x23:
-                status = f[6] if len(f) > 6 else 0xFF
-                log("PIN verify response status={}".format(status))
-                if status == 0:
-                    verify_result = {"result": 0, "status": "verified"}
-                elif status == 2:
-                    verify_result = {"result": 0, "status": "verified"}
-                elif status == 3:
-                    return {"result": 1, "status": "wrong_pin"}
-                else:
-                    return {"result": 1, "status": "unknown_status_{}".format(status)}
-
-        if verify_result is None:
-            log("PIN verify: no CMD 0x23 response received")
-            return {"result": 2, "error": "no_response"}
+        verify_result = interpret_pin_verify_reply(buf)
+        if verify_result.get("reason") == "mcu_no_answer":
+            log("PIN verify: no CMD 0x23 response received (MCU firmware without remote verify?)")
+        if verify_result["result"] != 0:
+            return verify_result
 
         # PIN verified! Now repeatedly send type=3 clear error to force home screen.
         # Tilt/lift detection may re-trigger the error screen within ~100ms,
@@ -607,14 +645,15 @@ def serial_pin_verify(pin_str):
 
     except Exception as e:
         log("PIN verify serial error: {}".format(e))
-        return {"result": 2, "error": str(e)}
+        return {"result": 2, "error": str(e), "reason": "serial_error"}
 
 
 def handle_verify_pin(params, respond):
-    """Verify PIN via STM32 serial (CMD 0x23 type=2)."""
+    """Verify PIN via STM32 serial (CMD 0x23 type=2), see serial_pin_verify."""
     pin = str(params.get("code", "") or params.get("pin", ""))
     if not pin:
-        respond("verify_pin_respond", {"result": 1, "error": "missing code/pin parameter"})
+        respond("verify_pin_respond", {"result": 1, "error": "missing code/pin parameter",
+                                       "reason": "invalid_pin"})
         return
 
     log("PIN verify aangevraagd voor PIN={}".format(pin))

@@ -1767,14 +1767,6 @@ if [ -f "$EXT_SRC" ]; then
     chmod +x "$NOVABOT_ROOT/scripts/extended_commands.py"
     echo "  extended_commands.py gekopieerd naar scripts/"
 
-    # pin_verify_ros2.py — ROS2 action client voor PIN verify (aangeroepen door extended_commands.py)
-    PIN_VERIFY_SRC="$SCRIPT_DIR/pin_verify_ros2.py"
-    if [ -f "$PIN_VERIFY_SRC" ]; then
-        cp "$PIN_VERIFY_SRC" "$NOVABOT_ROOT/scripts/pin_verify_ros2.py"
-        chmod +x "$NOVABOT_ROOT/scripts/pin_verify_ros2.py"
-        echo "  pin_verify_ros2.py gekopieerd naar scripts/ (on-demand helper, geen daemon)"
-    fi
-
     # mow_zone_drive.py - rclpy drive-orchestrator voor mow_zone / return_to_dock
     # (aangeroepen door extended_commands.py). Zonder dit bestand shipt de build
     # de zone-maai commando's terwijl het script dat het rijden doet ontbreekt;

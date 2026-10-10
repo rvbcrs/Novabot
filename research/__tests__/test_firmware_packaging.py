@@ -22,7 +22,7 @@ BUILD = os.path.join(RESEARCH, "build_custom_firmware.sh")
 ONZE_SCRIPTS = [
     "auto_map_node.py", "camera_stream.py", "extended_commands.py",
     "lawn_edge_relay.py", "led_bridge.py", "mow_zone_drive.py",
-    "opennova_discovery.py", "pin_verify_ros2.py", "reload_nav_map.py",
+    "opennova_discovery.py", "reload_nav_map.py",
     "seam_fix_daemon.py", "terrain_scan.py", "unicom_mirror.py",
     "start_ext.sh",
 ]
