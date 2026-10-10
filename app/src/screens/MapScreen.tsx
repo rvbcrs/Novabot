@@ -143,6 +143,9 @@ function formatAreaLabel(areaSqMeters: number): string {
   return `${areaSqMeters.toFixed(1)} m²`;
 }
 
+/** Static estimate for mowing the whole zone (area / 102 m²/h). Not the live
+ *  remaining time of a running mow (cov_estimate_time on the home screen), so
+ *  the two carry different labels: estMow vs hmTimeLeft. */
 function formatEtaLabel(areaSqMeters: number): string {
   if (areaSqMeters <= 0) return '0.5 h';
   const estimatedHours = Math.max(0.5, areaSqMeters / 102);
@@ -1928,7 +1931,7 @@ export default function MapScreen() {
                                   </View>
                                 </View>
 
-                                {/* Big tile metrics — Size + Est. mow as prominent cards.
+                                {/* Big tile metrics — Size + estimated mowing time as prominent cards.
                                     Restored from the older swipe-up panel design that read
                                     cleaner than the chip strip. Smaller indicator chips
                                     (obstacles/channels/charger/mower) sit underneath. */}
