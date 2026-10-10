@@ -301,6 +301,29 @@ describe('regenerateLatestZipFromBackup', () => {
     expect(info['map3_work.csv'].map_size).toBeCloseTo(98.64);
   });
 
+  // PR #150: novabot_mapping rewrites map_info.json from charging_station.yaml
+  // after the sync_map restart, so the install writes the yaml's dock pose.
+  // Written from the channel start instead, a yaml 1.5 cm away never confirmed.
+  it('writes a verified dock pose into map_info.json', () => {
+    const SN = 'LFIN_REGEN_YAML';
+    mapRepo.create({
+      map_id: 'work', mower_sn: SN, map_name: 'map0', map_type: 'work',
+      map_area: JSON.stringify([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 5 }, { x: 0, y: 5 }]),
+    });
+    mapRepo.create({
+      map_id: 'unicom', mower_sn: SN, map_name: 'map0tocharge_unicom', map_type: 'unicom',
+      map_area: JSON.stringify([{ x: -1.21, y: 0.48 }, { x: -1.0, y: 0.4 }]),
+    });
+    vi.mocked(generateMapZipFromDb).mockImplementationOnce(() => buildRealZipWithCsvFile());
+
+    const out = regenerateLatestZipFromBackup(SN, { x: -1.225, y: 0.48, orientation: -2.9 });
+    const peekDir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-regen-yaml-'));
+    execSync(`unzip -o -q "${out}" -d "${peekDir}"`);
+    const info = JSON.parse(fs.readFileSync(path.join(peekDir, 'csv_file', 'map_info.json'), 'utf8'));
+    expect(info.charging_pose).toEqual({ x: -1.225, y: 0.48, orientation: -2.9 });
+    expect(regenerateLatestZipFromBackup(SN, { x: NaN, y: 0, orientation: 0 })).toBeNull();
+  });
+
   it('is idempotent: running twice produces the same map_info.json', () => {
     const SN = 'LFIN_REGEN_TWICE';
     mapRepo.create({
