@@ -501,6 +501,18 @@
         "sync_failed": "The mower could not fetch the files.",
         "regenerate_timeout": "The mower did not answer while building the mowing maps.",
         "regenerate_failed": "The mower could not build the mowing maps.",
+        "planner_timeout": "The mower's planner did not come back in time.",
+        "map_operation_busy": "Another map or re-anchor action is still running.",
+        "not_opennova": "Sending maps needs the OpenNova firmware on the mower.",
+        "mower_offline": "The mower is offline.",
+        "not_docked": "Put the mower on its dock first.",
+        "frame_unvalidated": "Re-anchor the mower first.",
+        "no_dock_anchor": "There is no dock channel, so the server has no dock reference. Repair the dock channel first.",
+        "dock_mismatch": "The dock positions stored on the mower and on the server disagree.",
+        "snapshot_failed": "The map files on the mower could not be read.",
+        "bundle_failed": "The map package could not be built.",
+        "frame_changed": "The mower's origin or dock file changed during the transfer. Re-anchor the mower.",
+        "install_mismatch": "The files on the mower differ from what was sent.",
         "unknown": "Unknown error."
       }
     },

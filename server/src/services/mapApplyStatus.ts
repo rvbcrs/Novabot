@@ -15,7 +15,11 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import { forwardToDashboard } from '../dashboard/socketHandler.js';
 
 export type MapApplyPhase = 'syncing' | 'regenerating' | 'settling';
-export type MapApplyError = 'sync_timeout' | 'sync_failed' | 'regenerate_timeout' | 'regenerate_failed' | 'planner_timeout' | 'map_operation_busy';
+export type MapApplyError = 'sync_timeout' | 'sync_failed' | 'regenerate_timeout' | 'regenerate_failed' | 'planner_timeout' | 'map_operation_busy'
+  // Refused before the mower is contacted; each needs a different action from the user.
+  | 'not_opennova' | 'mower_offline' | 'not_docked' | 'frame_unvalidated' | 'no_dock_anchor' | 'dock_mismatch' | 'snapshot_failed' | 'bundle_failed'
+  // The transfer ran, but the read-back did not confirm it.
+  | 'frame_changed' | 'install_mismatch';
 export const PHASE_KEY = 'map_apply_phase';
 export const ERROR_KEY = 'map_apply_error';
 

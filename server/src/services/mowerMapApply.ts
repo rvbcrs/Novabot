@@ -4,7 +4,7 @@ import unzipper from 'unzipper';
 import { mapRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { isOpenNovaMower } from './mowerFileCapability.js';
-import { beginMapApply, waitForPlannerBack, type MapApply } from './mapApplyStatus.js';
+import { beginMapApply, waitForPlannerBack, type MapApply, type MapApplyError } from './mapApplyStatus.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from './anchor.js';
 import { freshPositionState } from './positionTelemetry.js';
 import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending } from './frameValidation.js';
@@ -30,24 +30,32 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
       const anchor = getPolygonAnchor(sn);
       // A pending install may be retried even if frame verification is also
       // required. A verified CSV install releases only the installation block.
-      if (!isOpenNovaMower(sn) || !isDeviceOnline(sn) || !freshPositionState(sn).docked || (isFrameUnvalidated(sn) && !isMapInstallPending(sn)) || !anchor) { apply.fail('sync_failed'); return; }
+      const refusal: MapApplyError | null = !isOpenNovaMower(sn) ? 'not_opennova'
+        : !isDeviceOnline(sn) ? 'mower_offline'
+        : !freshPositionState(sn).docked ? 'not_docked'
+        : isFrameUnvalidated(sn) && !isMapInstallPending(sn) ? 'frame_unvalidated'
+        : !anchor ? 'no_dock_anchor' : null;
+      if (refusal || !anchor) { apply.fail(refusal ?? 'no_dock_anchor'); return; }
       const before = await readMowerMapSnapshot(sn, operation);
       const savedDock = snapshotDockPose(before);
       // After deleting all zones, the first new copy has no prior channel to
       // compare. The independent persisted dock still has to match its anchor.
       const noPriorChannel = before && !Object.keys((before.csv_files ?? {}) as object).some(n => /^map\d+tocharge_unicom\.csv$/.test(n));
       const matchesEmptyDock = noPriorChannel && savedDock && Math.hypot(savedDock.x - anchor.x, savedDock.y - anchor.y) <= 0.02;
-      if (!before || !freshPositionState(sn).docked || !isDeviceOnline(sn) || (!snapshotAnchorMatches(before, anchor) && !matchesEmptyDock)) { apply.fail('sync_failed'); return; }
+      if (!before) { apply.fail('snapshot_failed'); return; }
+      if (!isDeviceOnline(sn)) { apply.fail('mower_offline'); return; }
+      if (!freshPositionState(sn).docked) { apply.fail('not_docked'); return; }
+      if (!snapshotAnchorMatches(before, anchor) && !matchesEmptyDock) { apply.fail('dock_mismatch'); return; }
       if (offset) mapRepo.setPolygonOffset(sn, offset.x, offset.y);
       const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
       const dockHeading = Number(JSON.parse((before.csv_files as Record<string, string>)['map_info.json']).charging_pose.orientation);
       const zipPath = regenerateLatestZipFromBackup(sn, dockHeading);
-      if (!zipPath) { apply.fail('sync_failed'); return; }
+      if (!zipPath) { apply.fail('bundle_failed'); return; }
       const bytes = readFileSync(zipPath);
       const zip = await unzipper.Open.buffer(bytes);
       const expectedCsv = new Map<string, string>();
       for (const file of zip.files) if (file.type === 'File' && /^csv_file\/[^/]+$/.test(file.path)) expectedCsv.set(file.path.slice(9), (await file.buffer()).toString('utf8'));
-      if (!expectedCsv.size) { apply.fail('sync_failed'); return; }
+      if (!expectedCsv.size) { apply.fail('bundle_failed'); return; }
       if (!await installVerifiedMapZip(sn, { bytes, expectedCsv, before, anchor }, operation, apply)) return;
       clearMapInstallPending(sn);
       apply.done();
@@ -96,7 +104,8 @@ export async function installVerifiedMapZip(
   apply: MapApply,
 ): Promise<Record<string, unknown> | null> {
   const { bytes, expectedCsv, before, anchor } = input;
-  if (!freshPositionState(sn).docked || !isDeviceOnline(sn)) { apply.fail('sync_failed'); return null; }
+  if (!isDeviceOnline(sn)) { apply.fail('mower_offline'); return null; }
+  if (!freshPositionState(sn).docked) { apply.fail('not_docked'); return null; }
   markMapInstallPending(sn);
   syncSnapshots.set(operation.id, { sn, bytes });
   try {
@@ -113,7 +122,7 @@ export async function installVerifiedMapZip(
     const after = await readMowerMapSnapshot(sn, operation);
     if (after && (after.pos_json !== before.pos_json || after.charging_station_yaml !== before.charging_station_yaml)) {
       markFrameUnvalidated(sn, { preservePhotoDock: true });
-      apply.fail('sync_failed'); return null;
+      apply.fail('frame_changed'); return null;
     }
     const actualCsv = after?.csv_files as Record<string, string> | undefined;
     const actualX3 = after?.x3_csv_files as Record<string, string> | undefined;
@@ -122,7 +131,7 @@ export async function installVerifiedMapZip(
     const extra = [...Object.keys(actualCsv ?? {}), ...Object.keys(actualX3 ?? {})].filter(name => !expectedCsv.has(name));
     if (!after || !actualCsv || !actualX3 || changed.length || extra.length || !snapshotAnchorMatches(after, anchor)) {
       console.warn(`[AUTO-PUSH] ${sn}: kaartbestanden na installatie wijken af (anders: ${changed.join(', ') || '-'}; extra: ${extra.join(', ') || '-'}; anker ${snapshotAnchorMatches(after ?? {}, anchor) ? 'ok' : 'fout'})`);
-      apply.fail('sync_failed'); return null;
+      apply.fail('install_mismatch'); return null;
     }
     return after;
   } finally { syncSnapshots.delete(operation.id); }

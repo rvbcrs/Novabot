@@ -12,7 +12,8 @@ vi.mock('../../services/mowerMapOperation.js', () => ({
   readMowerMapSnapshot: vi.fn(),
 }));
 
-import { installVerifiedMapZip } from '../../services/mowerMapApply.js';
+import { applyMapsToMower, installVerifiedMapZip } from '../../services/mowerMapApply.js';
+import { deviceCache } from '../../mqtt/sensorData.js';
 import { readMowerMapSnapshot } from '../../services/mowerMapOperation.js';
 import type { MowerMapOperation } from '../../services/mowerMapOperation.js';
 import type { MapApply } from '../../services/mapApplyStatus.js';
@@ -59,12 +60,27 @@ it('still rejects a rewritten map_info.json that lost a zone', async () => {
   const after = { ...before, csv_files: { ...files, 'map_info.json': JSON.stringify(lost) }, x3_csv_files: { ...files } };
   const a = apply();
   expect(await installVerifiedMapZip(sn, input(), mower(after), a)).toBeNull();
-  expect(a.fail).toHaveBeenCalledWith('sync_failed');
+  expect(a.fail).toHaveBeenCalledWith('install_mismatch');
 });
 
 it('still rejects a polygon that came back different', async () => {
   const after = { ...before, csv_files: { ...files, 'map3_work.csv': '10,0\n14,0\n14,6\n10,6\n' }, x3_csv_files: { ...files } };
   const a = apply();
   expect(await installVerifiedMapZip(sn, input(), mower(after), a)).toBeNull();
-  expect(a.fail).toHaveBeenCalledWith('sync_failed');
+  expect(a.fail).toHaveBeenCalledWith('install_mismatch');
+});
+
+it('names a changed origin or dock yaml as a frame change', async () => {
+  const after = { ...before, pos_json: '{"origin":"moved"}' };
+  const a = apply();
+  expect(await installVerifiedMapZip(sn, input(), mower(after), a)).toBeNull();
+  expect(a.fail).toHaveBeenCalledWith('frame_changed');
+});
+
+// Field report (N2000, Oct 2026): a mower without any dock channel got the same
+// sync_failed as a failed transfer, and the owner spent a day looking elsewhere.
+it('says a push was refused because there is no dock anchor', async () => {
+  const lone = 'LFIN_NO_ANCHOR';
+  expect(await applyMapsToMower(lone)).toBe(false);
+  expect(deviceCache.get(lone)?.get('map_apply_error')).toBe('no_dock_anchor');
 });

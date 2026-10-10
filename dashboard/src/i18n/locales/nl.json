@@ -572,6 +572,18 @@
         "sync_failed": "De maaier kon de bestanden niet ophalen.",
         "regenerate_timeout": "De maaier antwoordde niet bij het maken van de maaikaarten.",
         "regenerate_failed": "De maaier kon de maaikaarten niet maken.",
+        "planner_timeout": "De planner van de maaier kwam niet op tijd terug.",
+        "map_operation_busy": "Er loopt nog een andere kaart- of herankeractie.",
+        "not_opennova": "Kaarten versturen vereist de OpenNova-firmware op de maaier.",
+        "mower_offline": "De maaier is offline.",
+        "not_docked": "Zet de maaier eerst op zijn dock.",
+        "frame_unvalidated": "Veranker de maaier eerst opnieuw.",
+        "no_dock_anchor": "Er is geen dockkanaal, dus de server heeft geen dockreferentie. Herstel eerst het dockkanaal.",
+        "dock_mismatch": "De dockposities op de maaier en op de server spreken elkaar tegen.",
+        "snapshot_failed": "De kaartbestanden op de maaier konden niet worden gelezen.",
+        "bundle_failed": "Het kaartpakket kon niet worden gemaakt.",
+        "frame_changed": "De oorsprong of het dockbestand van de maaier veranderde tijdens de overdracht. Veranker de maaier opnieuw.",
+        "install_mismatch": "De bestanden op de maaier wijken af van wat er is verstuurd.",
         "unknown": "Onbekende fout."
       }
     },

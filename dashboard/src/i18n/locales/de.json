@@ -469,6 +469,18 @@
         "sync_failed": "Der Mäher konnte die Dateien nicht abrufen.",
         "regenerate_timeout": "Der Mäher hat beim Erstellen der Mähkarten nicht geantwortet.",
         "regenerate_failed": "Der Mäher konnte die Mähkarten nicht erstellen.",
+        "planner_timeout": "Der Planer des Mähers kam nicht rechtzeitig zurück.",
+        "map_operation_busy": "Eine andere Karten- oder Neuverankerungsaktion läuft noch.",
+        "not_opennova": "Karten senden erfordert die OpenNova-Firmware auf dem Mäher.",
+        "mower_offline": "Der Mäher ist offline.",
+        "not_docked": "Stellen Sie den Mäher zuerst auf seine Ladestation.",
+        "frame_unvalidated": "Verankern Sie den Mäher zuerst neu.",
+        "no_dock_anchor": "Es gibt keinen Dockkanal, daher hat der Server keine Dockreferenz. Reparieren Sie zuerst den Dockkanal.",
+        "dock_mismatch": "Die auf dem Mäher und auf dem Server gespeicherten Dockpositionen widersprechen sich.",
+        "snapshot_failed": "Die Kartendateien auf dem Mäher konnten nicht gelesen werden.",
+        "bundle_failed": "Das Kartenpaket konnte nicht erstellt werden.",
+        "frame_changed": "Ursprung oder Dockdatei des Mähers haben sich während der Übertragung geändert. Verankern Sie den Mäher neu.",
+        "install_mismatch": "Die Dateien auf dem Mäher weichen vom Gesendeten ab.",
         "unknown": "Unbekannter Fehler."
       }
     },

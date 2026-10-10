@@ -469,6 +469,18 @@
         "sync_failed": "La tondeuse n'a pas pu récupérer les fichiers.",
         "regenerate_timeout": "La tondeuse n'a pas répondu lors de la création des cartes.",
         "regenerate_failed": "La tondeuse n'a pas pu créer les cartes.",
+        "planner_timeout": "Le planificateur de la tondeuse n'est pas revenu à temps.",
+        "map_operation_busy": "Une autre action de carte ou de réancrage est en cours.",
+        "not_opennova": "L'envoi des cartes nécessite le firmware OpenNova sur la tondeuse.",
+        "mower_offline": "La tondeuse est hors ligne.",
+        "not_docked": "Placez d'abord la tondeuse sur sa station.",
+        "frame_unvalidated": "Réancrez d'abord la tondeuse.",
+        "no_dock_anchor": "Il n'y a pas de passage vers la station, le serveur n'a donc pas de référence de station. Réparez d'abord le passage vers la station.",
+        "dock_mismatch": "Les positions de station enregistrées sur la tondeuse et sur le serveur se contredisent.",
+        "snapshot_failed": "Les fichiers de carte de la tondeuse n'ont pas pu être lus.",
+        "bundle_failed": "Le paquet de carte n'a pas pu être créé.",
+        "frame_changed": "L'origine ou le fichier de station de la tondeuse a changé pendant le transfert. Réancrez la tondeuse.",
+        "install_mismatch": "Les fichiers sur la tondeuse diffèrent de ceux envoyés.",
         "unknown": "Erreur inconnue."
       }
     },
