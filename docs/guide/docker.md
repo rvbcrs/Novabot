@@ -237,7 +237,7 @@ On in the standard compose. Turn it off if you do the rewrite in your router or 
 
 | Variable | Default | Description |
 |---|---|---|
-| `ENABLE_DNS` | `false` (the standard compose sets `true`) | Run dnsmasq that answers `*.lfibot.com` with `TARGET_IP`. Needs `"53:53/udp"` in `ports:`. |
+| `ENABLE_DNS` | `false` (the standard compose sets `true`) | Run dnsmasq that answers `*.lfibot.com` with `TARGET_IP`. Needs `"53:53/udp"` in `ports:`. A watchdog checks every 30 seconds that it still answers and restarts it if not (`[DNS watchdog]` in the container log). |
 | `UPSTREAM_DNS` | `8.8.8.8` | Where everything else is forwarded. |
 
 ### Home Assistant (optional)

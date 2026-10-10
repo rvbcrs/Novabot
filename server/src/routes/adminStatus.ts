@@ -617,21 +617,60 @@ adminStatusRouter.get('/dns-check', async (_req: AuthRequest, res: Response) => 
   res.json({ serverIp, domains: results });
 });
 
+// While this file exists the entrypoint's dnsmasq watchdog leaves dnsmasq
+// alone, so Stop stays stopped instead of being restarted half a minute later.
+// Same path as DNS_STOPPED_FLAG in docker-entrypoint.sh.
+const DNS_STOPPED_FLAG = '/tmp/opennova-dnsmasq.stopped';
+
+function setDnsStoppedFlag(stopped: boolean): void {
+  try {
+    if (stopped) fs.writeFileSync(DNS_STOPPED_FLAG, '');
+    else fs.rmSync(DNS_STOPPED_FLAG, { force: true });
+  } catch { /* /tmp not writable: only the watchdog coordination is lost */ }
+}
+
+function hasProcFs(): boolean {
+  try { return fs.existsSync('/proc/1/status'); } catch { return false; }
+}
+
+// Every dnsmasq PID, zombies included. The image has no procps (no pgrep or
+// pkill: they always failed there, so Stop never stopped anything), so read
+// /proc; only without /proc (e.g. macOS dev) ask pgrep.
+function dnsmasqPids(): string[] {
+  if (!hasProcFs()) {
+    let out = '';
+    try { out = execSync('pgrep -x dnsmasq', { encoding: 'utf8' }); } catch { return []; }
+    return out.split('\n').map((s) => s.trim()).filter(Boolean);
+  }
+  let entries: string[] = [];
+  try { entries = fs.readdirSync('/proc'); } catch { return []; }
+  return entries.filter((pid) => {
+    if (!/^\d+$/.test(pid)) return false;
+    try {
+      return fs.readFileSync(`/proc/${pid}/comm`, 'utf8').trim() === 'dnsmasq';
+    } catch {
+      return false; // /proc entry vanished
+    }
+  });
+}
+
+function killDnsmasq(signal: NodeJS.Signals): void {
+  for (const pid of dnsmasqPids()) {
+    try { process.kill(Number(pid), signal); } catch { /* already gone */ }
+  }
+}
+
 // A killed dnsmasq lingers as a <defunct> zombie because PID 1 (node, started
 // via `exec` in the entrypoint) does not reap inherited orphans. A zombie holds
 // no listening socket and serves no DNS, so it must NOT count as "running" —
-// otherwise the admin Stop button looks stuck (pgrep keeps matching the zombie
-// even after SIGKILL).
+// otherwise the admin Stop button looks stuck (the zombie keeps matching even
+// after SIGKILL).
 function dnsmasqLivePids(): string[] {
-  let out = '';
-  try { out = execSync('pgrep -x dnsmasq', { encoding: 'utf8' }); } catch { return []; }
-  const pids = out.split('\n').map((s) => s.trim()).filter(Boolean);
+  const pids = dnsmasqPids();
   if (pids.length === 0) return [];
   // /proc is Linux-only. Without it (e.g. macOS dev) trust pgrep; with it, drop
   // zombies by reading each PID's process State.
-  let hasProc = false;
-  try { hasProc = fs.existsSync('/proc/1/status'); } catch { hasProc = false; }
-  if (!hasProc) return pids;
+  if (!hasProcFs()) return pids;
   return pids.filter((pid) => {
     try {
       const m = /^State:\s*(\S)/m.exec(fs.readFileSync(`/proc/${pid}/status`, 'utf8'));
@@ -659,15 +698,23 @@ adminStatusRouter.post('/dnsmasq', (req: AuthRequest, res: Response) => {
       // Write dnsmasq config
       const config = `no-resolv\nserver=${upstreamDns}\naddress=/lfibot.com/${serverIp}\nlisten-address=0.0.0.0\nbind-interfaces\nno-hosts\n`;
       fs.writeFileSync('/etc/dnsmasq.conf', config);
+      // Hold the watchdog off while we swap dnsmasq, else it may start its own
+      // in the gap and ours fails on a taken port 53. Cleared in finally: Start
+      // asked for DNS on, so after a failed start the watchdog keeps trying.
+      setDnsStoppedFlag(true);
       // Kill any dnsmasq we previously started (e.g. the entrypoint's), then give
       // the kernel a moment to release port 53 before we rebind it.
-      try { execSync('pkill -x dnsmasq', { stdio: 'ignore' }); } catch { /* not running */ }
+      killDnsmasq('SIGTERM');
       try { execSync('sleep 0.5', { stdio: 'ignore' }); } catch { /* best effort */ }
       // CAPTURE stderr: dnsmasq daemonizes (exits 0) on success; on failure it
       // prints the REAL reason to stderr and exits non-zero. The old code used
       // stdio:'ignore' and then guessed "is it installed?" — which was almost
       // always wrong (the usual cause is port 53 already bound on the host).
-      execSync('dnsmasq', { stdio: ['ignore', 'pipe', 'pipe'] });
+      try {
+        execSync('dnsmasq', { stdio: ['ignore', 'pipe', 'pipe'] });
+      } finally {
+        setDnsStoppedFlag(false);
+      }
       console.log(`[DNS] dnsmasq started: *.lfibot.com → ${serverIp}`);
       res.json({ ok: true, running: true, serverIp });
     } catch (err) {
@@ -696,10 +743,12 @@ adminStatusRouter.post('/dnsmasq', (req: AuthRequest, res: Response) => {
     // the old code even returned running:false unconditionally. If a LIVE
     // process survives SIGTERM, escalate to SIGKILL; once only zombies (or
     // nothing) remain, it is truly stopped — the kernel has freed port 53.
-    try { execSync('pkill -x dnsmasq', { stdio: 'ignore' }); } catch { /* none running */ }
+    // The flag goes first, so the watchdog does not start it again.
+    setDnsStoppedFlag(true);
+    killDnsmasq('SIGTERM');
     try { execSync('sleep 0.3', { stdio: 'ignore' }); } catch { /* best effort */ }
     if (dnsmasqLivePids().length > 0) {
-      try { execSync('pkill -9 -x dnsmasq', { stdio: 'ignore' }); } catch { /* gone between checks */ }
+      killDnsmasq('SIGKILL');
       try { execSync('sleep 0.3', { stdio: 'ignore' }); } catch { /* best effort */ }
     }
     if (dnsmasqLivePids().length > 0) {

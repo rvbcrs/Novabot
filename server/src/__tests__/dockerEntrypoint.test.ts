@@ -62,6 +62,23 @@ describe('Docker entrypoint', () => {
     }
   });
 
+  it('supervises dnsmasq without procps and shares the stop flag with the admin route', () => {
+    // A hung dnsmasq (alive, not answering) sent a mower back to the LFI cloud.
+    // The entrypoint watchdog finds dnsmasq through /proc because pgrep/pkill
+    // are not in the image, and the admin Stop button holds it off through a
+    // flag file whose path both sides must agree on.
+    const entrypoint = readFileSync(entrypointPath, 'utf8');
+    const admin = readFileSync(resolve(repoRoot, 'server/src/routes/adminStatus.ts'), 'utf8');
+    const code = entrypoint.split(/\r?\n/).filter((line) => !line.trim().startsWith('#')).join('\n');
+
+    expect(code).toMatch(/dns_watchdog &/);
+    expect(code).not.toMatch(/\b(?:pgrep|pkill)\b/);
+    const shFlag = /DNS_STOPPED_FLAG=(\S+)/.exec(entrypoint)?.[1];
+    const tsFlag = /DNS_STOPPED_FLAG = '([^']+)'/.exec(admin)?.[1];
+    expect(shFlag).toBeTruthy();
+    expect(tsFlag).toBe(shFlag);
+  });
+
   it('does not include the native coverage generator in the default image', () => {
     const dockerfile = readFileSync(dockerfilePath, 'utf8');
 
