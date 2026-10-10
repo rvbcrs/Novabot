@@ -249,7 +249,12 @@ function boundsOf(pts: XY[]): string {
 async function bundleAndPush(sn: string): Promise<ApplyResult> {
   const { createBundleFromDb } = await import('./portableBackup.js');
   const { pushMapToMowerVerbatim } = await import('../mqtt/mapSync.js');
-  const bundle = await createBundleFromDb(sn, 'map_edit');
+  const { readMowerMapSnapshot } = await import('./mowerMapOperation.js');
+  const { snapshotDockPose } = await import('./dockPhotoReference.js');
+  // An edit does not move the dock: keep the pose the mower has saved, not the
+  // live docked position, which wanders past the 2 cm dock-anchor check.
+  const dockPose = snapshotDockPose(await readMowerMapSnapshot(sn).catch(() => null)) ?? undefined;
+  const bundle = await createBundleFromDb(sn, 'map_edit', dockPose);
   if (!bundle) {
     return { ok: false, reason: 'bundle_failed' };
   }

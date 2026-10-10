@@ -14,6 +14,10 @@ vi.mock('../../mqtt/mapSync.js', () => ({
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn(() => true),
 }));
+vi.mock('../../services/mowerMapOperation.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/mowerMapOperation.js')>()),
+  readMowerMapSnapshot: vi.fn(async () => null),
+}));
 
 import { mapRepo, mapEditsRepo } from '../../db/repositories/index.js';
 import { getEditGeometry, saveDraft, discardDrafts, applyEdits, revertEdits } from '../../services/mapEdit.js';
@@ -139,7 +143,7 @@ describe('mapEdit service: apply + revert', () => {
     expect(JSON.parse(mapRepo.findBySnAndCanonical(sn, 'map0')!.map_area!)[1].x).toBeCloseTo(20.5, 6);
     expect(mapEditsRepo.latestVersion(sn)).toBeTruthy();
     expect(mapEditsRepo.listDrafts(sn).length).toBe(0);
-    expect(vi.mocked(createBundleFromDb)).toHaveBeenCalledWith(sn, 'map_edit');
+    expect(vi.mocked(createBundleFromDb)).toHaveBeenCalledWith(sn, 'map_edit', undefined);
     expect(vi.mocked(pushMapToMowerVerbatim)).toHaveBeenCalledWith(sn, 'test.novabotmap');
   });
 
