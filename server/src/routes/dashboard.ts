@@ -2296,6 +2296,18 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
     });
     return;
   }
+  // The cascade below takes the zone's channels along, the dock channel too, so
+  // deleting the zone went around the guard above. A user lost the only dock
+  // channel that way, and with it re-anchoring and every map push (Oct 2026).
+  if (mapRepo.findDockChannelOwnedBy(row, sn)) {
+    res.status(409).json({
+      ok: false,
+      reason: 'dock_channel_zone',
+      error: T`Deze zone draagt het kanaal naar het laadstation. Wie de zone wist, wist ook dat kanaal, en daaraan is de hele kaart verankerd. Pas de zone aan in plaats van haar te wissen.`,
+      msgKey: 'mapDeleteErrDockChannelZone',
+    });
+    return;
+  }
 
   // Block delete when mower offline: otherwise the server-side DB row is
   // gone but the mower's csv_file/ still holds the map, so the next

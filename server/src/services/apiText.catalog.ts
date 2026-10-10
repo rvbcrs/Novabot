@@ -325,6 +325,11 @@ export const CATALOG: Catalog = {
     fr: "Il s'agit du canal entre la zone et la station de charge. La tondeuse l'écrit elle-même lorsque la position de charge est enregistrée et tous les autres polygones sont ancrés à son premier point, il ne peut donc pas être supprimé. Si la station de charge a été déplacée, utilisez plutôt Recalibrer la position de charge ou Réancrer.",
     de: "Dies ist der Kanal von der Zone zur Ladestation. Der Mäher schreibt ihn selbst, wenn die Ladeposition gespeichert wird, und jedes andere Polygon ist an seinem ersten Punkt verankert, daher kann er nicht gelöscht werden. Wurde die Ladestation versetzt, verwenden Sie stattdessen Ladeposition neu kalibrieren oder Neu verankern.",
   },
+  "Deze zone draagt het kanaal naar het laadstation. Wie de zone wist, wist ook dat kanaal, en daaraan is de hele kaart verankerd. Pas de zone aan in plaats van haar te wissen.": {
+    en: "This zone carries the channel to the charging station. Deleting the zone deletes that channel too, and the whole map is anchored to it. Edit the zone instead of deleting it.",
+    fr: "Cette zone porte le passage vers la station de charge. Supprimer la zone supprime aussi ce passage, auquel toute la carte est ancrée. Modifiez la zone au lieu de la supprimer.",
+    de: "Diese Zone trägt den Kanal zur Ladestation. Wer die Zone löscht, löscht auch diesen Kanal, und an ihm ist die ganze Karte verankert. Bearbeiten Sie die Zone, statt sie zu löschen.",
+  },
   "Download mislukt": {
     en: "Download failed",
     fr: "Échec du téléchargement",

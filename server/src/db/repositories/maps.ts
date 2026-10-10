@@ -495,6 +495,16 @@ export class MapRepository {
     return deleted;
   }
 
+  /** The dock channel that deleting this work row would cascade away, if any. */
+  findDockChannelOwnedBy(row: MapRow, mowerSn: string): MapRow | null {
+    if ((row.map_type ?? 'work') !== 'work') return null;
+    const prefix = extractCanonicalPrefix(row);
+    if (!prefix) return null;
+    const name = new RegExp(`^${prefix}tocharge_unicom(\\.csv)?$`);
+    return this.findAllByMowerSnAndType(mowerSn, 'unicom')
+      .find(r => [r.canonical_name, r.file_name, r.map_name].some(v => !!v && name.test(v))) ?? null;
+  }
+
   /**
    * Delete every row referencing `prefix` (e.g. `map1`) on this mower:
    * work map, obstacles, and all unicoms where the prefix appears as an
