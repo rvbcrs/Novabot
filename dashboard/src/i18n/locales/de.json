@@ -75,6 +75,7 @@
     "bladeRpm": "Messerdrehzahl",
     "elapsed": "Vergangen",
     "eta": "Restzeit",
+    "etaValue": "noch ~{{time}}",
     "mowSpeed": "Mähgeschwindigkeit",
     "area": "Fläche",
     "error": "Fehler",

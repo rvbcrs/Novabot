@@ -107,6 +107,7 @@
     "bladeRpm": "Blade speed",
     "elapsed": "Elapsed",
     "eta": "Time left",
+    "etaValue": "~{{time}} left",
     "mowSpeed": "Mow speed",
     "area": "Area",
     "error": "Error",

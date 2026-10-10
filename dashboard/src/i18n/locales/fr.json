@@ -75,6 +75,7 @@
     "bladeRpm": "Vitesse de lame",
     "elapsed": "Écoulé",
     "eta": "Temps restant",
+    "etaValue": "~{{time}} restant",
     "mowSpeed": "Vitesse de tonte",
     "area": "Surface",
     "error": "Erreur",

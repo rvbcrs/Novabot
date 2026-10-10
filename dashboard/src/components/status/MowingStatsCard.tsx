@@ -38,22 +38,13 @@ function deriveHeightCm(s: Record<string, string>): number | null {
   return wire + 2;
 }
 
-/** ETA remaining: cov_estimate_time in MINUTES (server unit 'min'). */
+/** cov_estimate_time (remaining) and cov_work_time (elapsed) are both MINUTES
+ *  (server unit 'min'): robot_decision divides the planner's seconds by 60. */
 function fmtMinutes(mins: number): string | null {
   if (!isFinite(mins) || mins <= 0) return null;
   if (mins < 60) return `${Math.round(mins)}m`;
   const h = Math.floor(mins / 60);
   const m = Math.round(mins - h * 60);
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
-
-/** Elapsed: cov_work_time in SECONDS (server sensor unit 's'). */
-function fmtSeconds(secs: number): string | null {
-  if (!isFinite(secs) || secs <= 0) return null;
-  const totalMin = Math.floor(secs / 60);
-  if (totalMin < 60) return `${totalMin}m`;
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin - h * 60;
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
@@ -82,7 +73,7 @@ export function MowingStatsCard({ sensors, compact, totalAreaM2 }: Props) {
   const progress = deriveProgress(s);
   const heightCm = deriveHeightCm(s);
   const bladeRpm = parseInt(s.blade_speed ?? '0', 10) || 0;
-  const elapsed = fmtSeconds(parseFloat(s.cov_work_time ?? ''));
+  const elapsed = fmtMinutes(parseFloat(s.cov_work_time ?? ''));
   const eta = fmtMinutes(parseFloat(s.cov_estimate_time ?? ''));
   const mowSpeed = s.mow_speed != null && s.mow_speed !== '' ? s.mow_speed : null;
   // Area = echte zone-oppervlakte (polygon-area, zoals de app), met gemaaid =
@@ -124,7 +115,7 @@ export function MowingStatsCard({ sensors, compact, totalAreaM2 }: Props) {
     chips.push({
       icon: <Hourglass className={iconSize} />,
       label: t('status.eta', 'Time left'),
-      value: `~${eta} left`,
+      value: t('status.etaValue', { time: eta, defaultValue: '~{{time}} left' }),
     });
   }
   // Area (gemaaid / totaal m²) ook in de compacte overlay tonen.

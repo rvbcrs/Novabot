@@ -178,6 +178,7 @@
     "bladeRpm": "Bladsnelheid",
     "elapsed": "Verstreken",
     "eta": "Resterend",
+    "etaValue": "nog ~{{time}}",
     "mowSpeed": "Maaisnelheid",
     "area": "Oppervlak",
     "error": "Fout",
