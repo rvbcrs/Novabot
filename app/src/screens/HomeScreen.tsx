@@ -2208,9 +2208,11 @@ export default function HomeScreen() {
                 </View>
               );
             })()}
-            {/* ETA chip — shown during active mowing. cov_estimate_time is
-                in minutes (firmware convention, verified 2026-04-20). We also
-                show elapsed cov_work_time so the user has both numbers.
+            {/* ETA chip — shown during active mowing. cov_estimate_time and
+                cov_work_time are both minutes: robot_decision divides the
+                planner's seconds by 60 (logs "cov_work_time(min)"). We also
+                show elapsed cov_work_time so the user has both numbers; stock
+                firmware leaves it at 0, which hides that chip.
                 Hidden when returning/docking/idle because the estimate is
                 stale or meaningless there. */}
             {(displayActivity === 'mowing') && (() => {
