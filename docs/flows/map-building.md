@@ -78,6 +78,16 @@ Obstacles use a separate BLE flow within the same mapping session:
 - Save sequence mirrors work maps: `save_map type:0` (sub) -> 3s delay -> `save_map type:1` (total).
 - See `CLAUDE.md` "BLE Mapping - OBSTACLE flow" for the full live capture.
 
+### Channel Flow (map to map)
+
+A channel between two work areas is recorded by driving from one into the other:
+
+- `start_assistant_build_map {type: 0}` (manual session on the existing maps), then `add_scan_map {mapName: <start zone>, type: 2}`. `type: 4` is edit mode, not a channel.
+- Stop with `stop_scan_map {value: true}`, then a single `save_map type:1` (no sub-map save).
+- The firmware names the file `map{A}tomap{B}_{N}_unicom.csv` from the zones the path crosses.
+- Zones that touch or overlap are already connected and need no channel. The firmware keeps only the channel points outside every work area in `csv_file`, so a channel between touching zones comes out empty.
+- `add_scan_map_respond` answers `result: 1` for any `/robot_decision/add_area` failure. A channel between zones that touched failed this way in the field; across a 0.95 m gap it recorded fine. The app warns before recording a channel between zones less than about 1 m apart.
+
 ## Automatic Mapping
 
 ```mermaid

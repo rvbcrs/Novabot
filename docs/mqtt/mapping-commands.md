@@ -83,8 +83,15 @@ Add a subsequent region (map1, map2, obstacle, unicom channel, etc.) to the curr
 |--------|---------|
 | `0` | Additional work area (map1, map2, ...) |
 | `1` | Obstacle polygon (see obstacle note below) |
-| `4` | Map-to-map unicom channel |
-| `8` | Map-to-charger unicom channel |
+| `2` | Map-to-map unicom channel (see channel note below) |
+| `4` | Edit mode (`MAPPING_EDIT_MODE`): redraw the boundary of an existing work area, sent with `mapName:"null"` |
+| `8` | Map-to-charger unicom channel (not verified) |
+
+!!! warning "Channel uses `type:2`; `type:4` is edit mode"
+    A live Novabot-app session that produced `map0tomap1_0_unicom.csv` and `map1tomap2_0_unicom.csv` (2026-04-17) sent `type:2` for the channels. An earlier decompile read `type:4`, but the firmware treats `type:4` as edit mode and merges the driven path into the work polygon instead of writing a channel (live capture 2026-06-21).
+
+!!! warning "No channel between zones that touch or lie less than about 1 m apart"
+    `add_scan_map_respond` returns `result:1` for any `/robot_decision/add_area` failure, with no reason. In a field report a channel between two zones that touched failed this way, while a channel across a 0.95 m gap recorded fine. Zones that touch or overlap are already connected and need no channel: the firmware keeps only the channel points outside every work area in `csv_file`, so such a channel comes out empty anyway. The OpenNova app warns before recording a channel between zones that touch or lie less than about 1 m apart, and does not ask for a channel between touching zones.
 
 !!! warning "Obstacle uses `type:1` and literal `mapName:"map"`"
     Live BLE capture 2026-04-19 shows the obstacle flow uses `type:1` (NOT `type:2`) and the literal string `mapName:"map"` (NOT the active map name) in both `add_scan_map` AND the `save_map` calls. The mower firmware derives the parent work-map from context and auto-indexes the obstacle files (`map0_0_obstacle.csv`, `map0_1_obstacle.csv`, ...). Stopping the obstacle scan uses `stop_scan_map {"value": false, ...}`.
