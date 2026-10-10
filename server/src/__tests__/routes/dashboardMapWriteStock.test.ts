@@ -183,3 +183,41 @@ describe('map create/update on stock firmware', () => {
     expect(mapRepo.findByMowerSn(SN)).toHaveLength(1);
   });
 });
+
+// Novabot-25m: een getekend obstakel in de uitrijbaan van het dock wordt gewoon
+// opgeslagen, maar het antwoord draagt een niet-blokkerende waarschuwing.
+describe('drawn obstacle in the dock exit lane', () => {
+  const DOCK_SN = 'LFIN_DOCK_LANE';
+  const lawn = [{ x: -10, y: -10 }, { x: 10, y: -10 }, { x: 10, y: 10 }, { x: -10, y: 10 }];
+  const square = (cx: number, cy: number) => [
+    { x: cx - 0.15, y: cy - 0.15 }, { x: cx + 0.15, y: cy - 0.15 }, { x: cx + 0.15, y: cy + 0.15 }, { x: cx - 0.15, y: cy + 0.15 },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fw.supported = true;
+    for (const m of mapRepo.findByMowerSn(DOCK_SN)) mapRepo.deleteWithCascade(m.map_id, DOCK_SN);
+    mapRepo.create({ map_id: 'lane-w0', mower_sn: DOCK_SN, map_type: 'work', file_name: 'map0_work.csv', map_area: JSON.stringify(lawn) });
+    mapRepo.create({
+      map_id: 'lane-u0', mower_sn: DOCK_SN, map_type: 'unicom', file_name: 'map0tocharge_unicom.csv',
+      map_area: JSON.stringify([{ x: 0, y: 0 }, { x: 0, y: -1 }, { x: 0, y: -3 }]),
+    });
+  });
+
+  it('saves the obstacle and warns when it lies in the lane', async () => {
+    const res = await request(server).post(`/api/dashboard/maps/${DOCK_SN}`)
+      .set('X-Lang', 'en').send({ mapArea: square(0.2, -1.5), mapType: 'obstacle' });
+    expect(res.status).toBe(200);
+    expect(res.body.map.canonicalName).toBe('map0_0_obstacle');
+    expect(res.body.warnings).toEqual([
+      { canonical: 'map0_0_obstacle', code: 'dock_corridor', message: expect.stringContaining('dock exit lane') },
+    ]);
+    expect(mapRepo.findBySnAndCanonical(DOCK_SN, 'map0_0_obstacle')).toBeTruthy();
+  });
+
+  it('no warning for an obstacle elsewhere', async () => {
+    const away = await request(server).post(`/api/dashboard/maps/${DOCK_SN}`).send({ mapArea: square(5, 5), mapType: 'obstacle' });
+    expect(away.status).toBe(200);
+    expect(away.body.warnings).toEqual([]);
+  });
+});

@@ -635,6 +635,11 @@ export const CATALOG: Catalog = {
     fr: "L'obstacle dépasse de {0}",
     de: "Hindernis ragt über {0} hinaus",
   },
+  "Dit obstakel ligt in de uitrijbaan van het dock (1,4 m breed, ook langs het dockkanaal). Bij het uitrijden of uitwijken kan de maaier er deels overheen rijden; houd die baan vrij of verplaats het obstakel.": {
+    en: "This obstacle lies in the dock exit lane (1.4 m wide, also along the dock channel). When leaving the dock or avoiding, the mower may drive partly over it; keep that lane clear or move the obstacle.",
+    fr: "Cet obstacle se trouve dans la voie de sortie de la station (1,4 m de large, aussi le long du canal de la station). En sortant ou en contournant, la tondeuse peut rouler en partie dessus ; gardez cette voie libre ou déplacez l'obstacle.",
+    de: "Dieses Hindernis liegt in der Ausfahrspur der Ladestation (1,4 m breit, auch entlang des Dockkanals). Beim Ausfahren oder Ausweichen kann der Mäher teilweise darüberfahren; halten Sie diese Spur frei oder verschieben Sie das Hindernis.",
+  },
   "Onbekende kaart {0}": {
     en: "Unknown map {0}",
     fr: "Carte inconnue {0}",

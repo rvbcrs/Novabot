@@ -12,6 +12,7 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 import { getMowerFileCapability } from './mowerFileCapability.js';
 import { db } from '../db/database.js';
 import { translator, type Translate } from './serverText.js';
+import { dockCorridorWarnings, type DockCorridorWarning } from './dockCorridor.js';
 
 const TAG = '[MAP-EDIT]';
 // 5mm RDP: removes duplicates + straight-run redundancy but keeps every real
@@ -34,6 +35,8 @@ export interface EditGeometry {
   maps: EditMapEntry[];
   pendingSync: boolean;
   hasVersions: boolean;
+  /** Niet-blokkerend: getekende/bewerkte obstakels (drafts) in de uitrijbaan van het dock. */
+  warnings: DockCorridorWarning[];
 }
 
 function parentMapOf(canonical: string): string | null {
@@ -55,7 +58,7 @@ function isPendingSync(sn: string): boolean {
   return deviceSettingsRepo.findBySn(sn).some(r => r.key === PENDING_KEY && r.value === '1');
 }
 
-export function getEditGeometry(sn: string): EditGeometry {
+export function getEditGeometry(sn: string, T: Translate = translator('en')): EditGeometry {
   const rows = mapRepo.findByMowerSn(sn);
   const drafts = new Map(mapEditsRepo.listDrafts(sn).map(d => [d.canonical_name, d]));
   const maps: EditMapEntry[] = [];
@@ -89,7 +92,13 @@ export function getEditGeometry(sn: string): EditGeometry {
       draft: { points: parseDraftArea(d.draft_area), deleted: d.deleted === 1, isNew: true },
     });
   }
-  return { maps, pendingSync: isPendingSync(sn), hasVersions: !!mapEditsRepo.latestVersion(sn) };
+  const draftObstacles = maps
+    .filter(m => m.mapType === 'obstacle' && m.draft && !m.draft.deleted && m.draft.points.length >= 3)
+    .map(m => ({ canonical: m.canonical, points: m.draft!.points }));
+  return {
+    maps, pendingSync: isPendingSync(sn), hasVersions: !!mapEditsRepo.latestVersion(sn),
+    warnings: dockCorridorWarnings(sn, draftObstacles, T),
+  };
 }
 
 export interface SaveDraftInput {

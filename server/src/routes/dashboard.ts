@@ -57,6 +57,7 @@ import { mirrorScheduleToPlan, removePlanForSchedule } from '../services/schedul
 import { getActiveAdvertisement, getCompetingServers } from '../services/mdnsAdvertiser.js';
 import { getDeviceHealth } from '../services/deviceHealth.js';
 import { getEditGeometry, saveDraft, discardDrafts, applyEdits, revertEdits } from '../services/mapEdit.js';
+import { dockCorridorWarnings } from '../services/dockCorridor.js';
 import {
   COVERAGE_PLANNER_RADIUS_KEY,
   DEFAULT_COVERAGE_PLANNER_RADIUS,
@@ -1942,6 +1943,10 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       mapMaxMin: storedBounds,
       createdAt: new Date().toISOString(),
     },
+    // Niet-blokkerend: een nieuw obstakel in de uitrijbaan van het dock (Novabot-25m).
+    warnings: typeSlug === 'obstacle'
+      ? dockCorridorWarnings(sn, [{ canonical: naming.canonical, points: storedPoints }], T)
+      : [],
   });
 
   // Auto-push naar maaier in de achtergrond
@@ -2559,7 +2564,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
 // ── Map editing (spec: 2026-06-10-map-obstacle-editing-design.md) ──────────
 dashboardRouter.get('/maps/:sn/edit/geometry', (req: Request, res: Response) => {
   try {
-    res.json(getEditGeometry(req.params.sn));
+    res.json(getEditGeometry(req.params.sn, reqT(req)));
   } catch (err) {
     console.error('[MAP-EDIT] geometry', req.params.sn, err);
     res.status(500).json({ ok: false, error: (err as Error).message });
