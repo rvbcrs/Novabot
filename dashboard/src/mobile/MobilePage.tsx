@@ -117,7 +117,9 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
     hasError,
     nickname: mower?.nickname ?? null,
     mowerIp: mower?.mowerIp ?? undefined,
-    headlightOn: s.headlight === '2',
+    // Stored as the last value sent: 2 from the camera toggle, the brightness
+    // (1-255) from Settings and the app joystick, 0 = off.
+    headlightOn: (parseInt(s.headlight ?? '', 10) || 0) > 0,
     manualSpeedLevel: parseInt(s.manual_controller_v ?? '0', 10) || 0,
     cameraAvailable: isOpenNovaFirmware(s.sw_version ?? s.version),
     bladesMaySpin: bladesMaySpin(s),

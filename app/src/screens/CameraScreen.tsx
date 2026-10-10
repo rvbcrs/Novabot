@@ -79,6 +79,15 @@ export default function CameraScreen() {
   const [lightOn, setLightOn] = useState(false);
   const [streamKey, setStreamKey] = useState(0);
 
+  // Show the headlight as the server stores it: the last value sent, which is
+  // 2 from this toggle or the brightness (1-255) from Mower Settings and the
+  // joystick. Anything above 0 is on.
+  const headlightValue = sensors?.headlight;
+  useEffect(() => {
+    const v = parseInt(headlightValue ?? '', 10);
+    if (Number.isFinite(v)) setLightOn(v > 0);
+  }, [headlightValue]);
+
   // Fetch mower's direct camera URL from server
   useEffect(() => {
     if (!mower?.online || !sn) {

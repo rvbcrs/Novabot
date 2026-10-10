@@ -27,6 +27,9 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
   const [hasError, setHasError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lightOn, setLightOn] = useState(headlightOn);
+  // Follow the server's value: it can arrive after mount, or change from
+  // Settings or the app.
+  useEffect(() => { setLightOn(headlightOn); }, [headlightOn]);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const activeRef = useRef(true);
   const blobUrlRef = useRef<string | null>(null);

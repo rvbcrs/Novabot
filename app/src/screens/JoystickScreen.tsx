@@ -137,6 +137,14 @@ export default function JoystickScreen() {
   const [speedLevel, setSpeedLevel] = useState(1);
   const [lightOn, setLightOn] = useState(false);
   const { brightness: headlightBrightness } = useHeadlightBrightness();
+  // Show the headlight as the server stores it: the last value sent (the
+  // brightness from here or Mower Settings, 2 from the camera toggle, 0 =
+  // off). Anything above 0 is on.
+  const headlightValue = mower?.sensors?.headlight;
+  useEffect(() => {
+    const v = parseInt(headlightValue ?? '', 10);
+    if (Number.isFinite(v)) setLightOn(v > 0);
+  }, [headlightValue]);
   // Modal state + last-used cutting height (user cm, 2-9, wire = cm-2)
   const [showBladeSheet, setShowBladeSheet] = useState(false);
   const [bladeHeight, setBladeHeight] = useState(5); // 5cm = level 3 = 50mm
