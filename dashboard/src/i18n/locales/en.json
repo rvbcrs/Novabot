@@ -281,7 +281,8 @@
     "mapInstallPending": "The map is still being put on the mower, or that install did not finish.",
     "reanchorRequiredBody": "The map was restored but the frame has not been validated. Re-anchor the mower on the charging station before mowing.",
     "dragWindow": "Drag to move",
-    "edgeCutHint": "Edge cut runs along the work-area boundary at the chosen cutting height. The map is fixed to {{map}}; leaving the dock is detected automatically.",
+    "edgeZones": "Zones",
+    "edgeZonesHint": "Zones are cut one after another. A zone other than the dock's drives its recorded channel first; after the last one the mower goes home.",
     "noOffset": "No offset"
   },
   "camera": {

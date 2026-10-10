@@ -33,7 +33,7 @@ import { useToast } from '../common/Toast';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { ReturnReasonModal } from './ReturnReasonModal';
 import { useReturnReason, RETURN_REASON_META } from './returnReason';
-import { isUnsupportedFirmwareError } from '../../api/client';
+import { isUnsupportedFirmwareError, startEdgeCuts } from '../../api/client';
 import { PatternPicker } from '../patterns/PatternPicker';
 import { loadPattern, transformToGps, type NormContour } from '../../utils/patternUtils.js';
 import { offsetPolygon } from '../../utils/polygonOffset.js';
@@ -155,6 +155,8 @@ export function MowerControls({
   // Mode: 'map' (start_navigation) | 'pattern' (start_run+pattern poly) |
   // 'edge' (extended start_edge_cut). Mirrors app StartMowSheet's mode picker.
   const [edgeMode, setEdgeMode] = useState(false);
+  // #148: the zones of an edge cut, cut one after another. map0 as before.
+  const [edgeZones, setEdgeZones] = useState<string[]>(['map0']);
 
   // Rain-check before manual start/resume (mirrors app StartMowSheet). When the
   // forecast shows rain within ~3h we surface a confirm modal with an optional
@@ -491,24 +493,16 @@ export function MowerControls({
     try {
       const heightCm = Math.max(2, Math.min(9, Math.round(cuttingHeight / 10)));
       const wireHeight = heightCm - 2;
-      const departFromDock = sensors?.recharge_status
-        ? parseInt(sensors.recharge_status, 10) > 0
-        : false;
-
       // Pre-set blade height (non-fatal)
       await sendCommand(sn, {
         set_para_info: { defaultCuttingHeight: wireHeight },
       }).catch(() => { /* ignore */ });
 
-      const result = await sendExtendedCommand(sn, {
-        start_edge_cut: {
-          mapName: 'map0',
-          bladeHeight: heightCm * 10,
-          departFromDock,
-        },
-      });
-      const detail = result.encrypted ? ` (encrypted, ${result.size}B)` : '';
-      toast(`✓ ${t('controls.startEdgeCut') ?? 'Edge cut'}${detail}`, 'success');
+      // The server starts the dock's zone from the dock and drives the
+      // channel to any other zone first; the zones run one after another.
+      const result = await startEdgeCuts(sn, edgeZones.length ? edgeZones : ['map0'], heightCm * 10);
+      if (!result.ok) throw new Error(result.error ?? '');
+      toast(`✓ ${t('controls.startEdgeCut') ?? 'Edge cut'}`, 'success');
       setExpanded(false);
       onStarted?.();
     } catch (err) {
@@ -521,7 +515,7 @@ export function MowerControls({
     } finally {
       setBusy(false);
     }
-  }, [sn, sensors, cuttingHeight, t, toast, onStarted]);
+  }, [sn, cuttingHeight, edgeZones, t, toast, onStarted]);
 
   const handleStart = useCallback(async () => {
     setBusy(true);
@@ -1192,11 +1186,28 @@ export function MowerControls({
                 {t('controls.startEdgeCut') ?? 'Edge cut'}
               </button>
             </div>
-            {/* ── Edge cut mode ── only height matters (mapName hardcoded 'map0') */}
+            {/* ── Edge cut mode ── the zones (#148) and the height */}
             {edgeMode && (
-              <p className="text-[10px] text-gray-400 leading-snug">
-                {t('controls.edgeCutHint', { map: 'map0' })}
-              </p>
+              <div>
+                <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('controls.edgeZones')}</label>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {maps.filter(m => m.mapType === 'work' && /^map\d+$/.test(m.canonicalName ?? '')).map(m => {
+                    const id = m.canonicalName as string;
+                    const on = edgeZones.includes(id);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setEdgeZones(z => on ? z.filter(x => x !== id) : [...z, id])}
+                        className={`text-xs px-2.5 py-1 rounded-full border ${on ? 'border-amber-500 bg-amber-600/20 text-amber-200' : 'border-gray-700 text-gray-400 hover:text-gray-200'}`}
+                      >
+                        {m.mapName || id}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[10px] text-gray-400 leading-snug">{t('controls.edgeZonesHint')}</p>
+              </div>
             )}
 
             {/* ── Pattern mode ── */}
@@ -1415,7 +1426,7 @@ export function MowerControls({
               </button>
               <button
                 onClick={edgeMode ? handleStartEdgeCut : handleStart}
-                disabled={busy || mowerBusy || (patternMode && !patternReady)}
+                disabled={busy || mowerBusy || (patternMode && !patternReady) || (edgeMode && edgeZones.length === 0)}
                 title={mowerBusy ? t('controls.busy') : undefined}
                 className={`flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-2 rounded text-white transition-colors font-medium disabled:opacity-40 ${
                   edgeMode ? 'bg-amber-600 hover:bg-amber-500'

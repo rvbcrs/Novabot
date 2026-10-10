@@ -397,6 +397,7 @@ export default {
   hmEdgeMowTitle: "Randmähen",
   hmEdgeMowMessage: "Der Mäher fährt entlang der Grenze Ihres Arbeitsbereichs, ideal für einen schnellen Randschnitt. Wählen Sie die Schnitthöhe und dann Start.",
   hmStartEdges: "Ränder starten",
+  edgeZones: "Zonen",
   hmSpotMow: "Punktmähen",
   hmSpotMowSub: "Einen kleinen Kreis von 2 m an der aktuellen Position des Mähers mähen",
   hmSpotMowNeedsGps: "GPS-Fix erforderlich, warte auf die Position des Mähers",

@@ -680,6 +680,7 @@ export default {
   hmEdgeMowTitle: "Randen maaien",
   hmEdgeMowMessage: "De maaier rijdt langs de grens van je werkgebied, handig om snel de randen bij te werken. Kies de maaihoogte en druk op Start.",
   hmStartEdges: "Randen starten",
+  edgeZones: "Zones",
   hmSpotMow: "Plek maaien",
   hmSpotMowSub: "Een kleine cirkel van 2 m maaien op de huidige positie van de maaier",
   hmSpotMowNeedsGps: "GPS-fix nodig, wachten op de positie van de maaier",

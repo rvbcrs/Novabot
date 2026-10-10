@@ -682,6 +682,7 @@ export default {
   hmEdgeMowTitle: "Edge mowing",
   hmEdgeMowMessage: "The mower will drive along the boundary of your work area, good for a quick edge trim. Pick the cutting height, then Start.",
   hmStartEdges: "Start edges",
+  edgeZones: "Zones",
   hmSpotMow: "Spot mow",
   hmSpotMowSub: "Mow a small 2m circle at the mower's current position",
   hmSpotMowNeedsGps: "Needs GPS fix, waiting for mower position",

@@ -521,6 +521,11 @@ export class ApiClient {
   /**
    * Send an MQTT command to a device via the dashboard API.
    */
+  /** Edge cut of the chosen zones, one after another (#148). bladeHeight in mm. */
+  async startEdgeCuts(sn: string, zones: string[], bladeHeight: number): Promise<{ ok: boolean; error?: string }> {
+    return this.request('POST', `/api/dashboard/edge-cut/${encodeURIComponent(sn)}`, { body: { zones, bladeHeight } });
+  }
+
   async sendCommand(
     sn: string,
     command: Record<string, unknown>,

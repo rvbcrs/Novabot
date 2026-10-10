@@ -397,6 +397,7 @@ export default {
   hmEdgeMowTitle: "Tonte des bordures",
   hmEdgeMowMessage: "La tondeuse longera la limite de votre zone de travail, idéal pour une finition rapide des bordures. Choisissez la hauteur de coupe, puis Démarrer.",
   hmStartEdges: "Démarrer les bordures",
+  edgeZones: "Zones",
   hmSpotMow: "Tonte localisée",
   hmSpotMowSub: "Tondre un petit cercle de 2 m à la position actuelle de la tondeuse",
   hmSpotMowNeedsGps: "Fix GPS requis, en attente de la position de la tondeuse",

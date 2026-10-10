@@ -352,7 +352,8 @@
     "mapInstallPending": "De kaart wordt nog op de maaier gezet, of die installatie is niet afgerond.",
     "reanchorRequiredBody": "De kaart is teruggezet maar het frame is nog niet gecontroleerd. Anker de maaier opnieuw op het laadstation voordat je gaat maaien.",
     "dragWindow": "Sleep om te verplaatsen",
-    "edgeCutHint": "Randmaaien volgt de grens van het werkgebied op de gekozen maaihoogte. De kaart staat vast op {{map}}; het vertrek van het laadstation wordt automatisch herkend.",
+    "edgeZones": "Zones",
+    "edgeZonesHint": "Zones worden na elkaar gerandmaaid. Voor een andere zone dan die van het dock rijdt de maaier eerst het opgenomen kanaal; na de laatste gaat hij naar huis.",
     "noOffset": "Geen verschuiving"
   },
   "camera": {

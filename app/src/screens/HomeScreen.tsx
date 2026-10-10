@@ -33,7 +33,7 @@ import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 import { fixQualityLabel } from '../utils/fixQuality';
 import { parseFinishedAreas, prefixedAreaId, parseCoveringPoints } from '../utils/coverPathProgress';
 import { MowerPickerChevron } from '../components/MowerPickerChevron';
-import { ApiClient, isUnsupportedFirmwareError, type MapData, type Schedule } from '../services/api';
+import { ApiClient, ApiError, isUnsupportedFirmwareError, type MapData, type Schedule } from '../services/api';
 import { getServerUrl, getToken } from '../services/auth';
 import { flushPendingMapSync } from '../services/pendingMapSync';
 import { DemoBanner } from '../components/DemoBanner';
@@ -749,6 +749,9 @@ export default function HomeScreen() {
     confirmLabel: string;
     /** Voor spot-mow: de GPS polygon die we al hebben berekend. */
     spotPolygon?: Array<{ latitude: number; longitude: number }>;
+    /** Voor edge-mow (#148): de zones om uit te kiezen. */
+    zones?: Array<{ id: string; label: string }>;
+    initialZones?: string[];
   }>(null);
   const [commandError, setCommandError] = useState('');
   const [showReanchor, setShowReanchor] = useState(false);
@@ -3016,13 +3019,15 @@ export default function HomeScreen() {
           title={heightPicker.title}
           message={heightPicker.message}
           confirmLabel={heightPicker.confirmLabel}
+          zones={heightPicker.zones}
+          initialZones={heightPicker.initialZones}
           initialHeightCm={mowSettings?.cuttingHeight != null
             ? mowSettings.cuttingHeight + 2
             : parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '', 10)
               ? parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '5', 10) + 2
               : 5}
           onCancel={() => setHeightPicker(null)}
-          onConfirm={async (heightCm) => {
+          onConfirm={async (heightCm, chosenZones) => {
             const picked = heightPicker;
             setHeightPicker(null);
             if (!mower) return;
@@ -3048,17 +3053,30 @@ export default function HomeScreen() {
                 // `/boundary_follow` action with a populated context.
                 // `wire = heightCm - 2` is the stock level encoding used by
                 // StartCoverageTask.blade_heights (mm = (level + 2) * 10).
-                await api.sendExtended(mower.sn, {
-                  start_edge_cut: {
-                    mapName: 'map0',
-                    // heightCm → mm (NTCP goal's blade_height is mm, clamped 20..90)
-                    bladeHeight: heightCm * 10,
-                    // Stock start_cov_task drives ~1m off the dock as preamble.
-                    // NTCP path bypasses robot_decision so we tell the handler
-                    // to do the same back-off when the mower is on the charger.
-                    departFromDock: mower.activity === 'charging',
-                  },
-                }).catch(() => { /* non-fatal, optimistic UI still set */ });
+                const zones = chosenZones.length ? chosenZones : ['map0'];
+                try {
+                  // #148: the server runs the zones one after another and
+                  // drives the channel to each zone that is not the dock's.
+                  await api.startEdgeCuts(mower.sn, zones, heightCm * 10);
+                } catch (e) {
+                  if (e instanceof ApiError && e.status === 404) {
+                    // A server from before #148: the old single-zone start.
+                    await api.sendExtended(mower.sn, {
+                      start_edge_cut: {
+                        mapName: zones[0],
+                        // heightCm → mm (NTCP goal's blade_height is mm, clamped 20..90)
+                        bladeHeight: heightCm * 10,
+                        // Stock start_cov_task drives ~1m off the dock as preamble.
+                        // NTCP path bypasses robot_decision so we tell the handler
+                        // to do the same back-off when the mower is on the charger.
+                        departFromDock: mower.activity === 'charging',
+                      },
+                    }).catch(() => { /* non-fatal, optimistic UI still set */ });
+                  } else {
+                    appAlertCompat.alert(t('hmEdgeMowTitle'), e instanceof Error ? e.message : String(e));
+                    return;
+                  }
+                }
                 setOptimisticActivity('edge_cutting');
               } else if (picked.mode === 'spot' && picked.spotPolygon) {
                 await api.sendCommand(mower.sn, {
@@ -3181,14 +3199,29 @@ export default function HomeScreen() {
             : t('hmEdgesOnlySub'),
           icon: 'ellipse-outline',
           disabled: edgeNeedsCustomFw,
-          onPress: () => {
+          onPress: async () => {
             if (edgeNeedsCustomFw) return;
+            // #148: choose the zones, like a normal mow. Without the list
+            // (server unreachable) it stays map0, as before.
+            let zones: Array<{ id: string; label: string }> = [];
+            try {
+              const url = await getServerUrl();
+              if (url) {
+                const res = await new ApiClient(url).fetchMaps(mower.sn);
+                zones = (res.maps ?? [])
+                  .filter((m: MapData) => m.mapType === 'work' && /^map\d+$/.test(m.canonicalName ?? ''))
+                  .map((m: MapData) => ({ id: m.canonicalName as string, label: m.mapName || (m.canonicalName as string) }))
+                  .sort((a, b) => Number(a.id.slice(3)) - Number(b.id.slice(3)));
+              }
+            } catch { /* no list: map0 */ }
             // User-spec: ook edge-mow vraagt om bevestiging + maaihoogte.
             setHeightPicker({
               mode: 'edge',
               title: t('hmEdgeMowTitle'),
               message: t('hmEdgeMowMessage'),
               confirmLabel: t('hmStartEdges'),
+              zones,
+              initialZones: [zones.find(z => z.id === 'map0')?.id ?? zones[0]?.id ?? 'map0'],
             });
           },
         });

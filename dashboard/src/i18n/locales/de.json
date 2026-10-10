@@ -249,7 +249,8 @@
     "reanchorRequiredBody": "Die Karte wurde wiederhergestellt, der Rahmen ist aber noch nicht geprüft. Verankern Sie den Mäher erneut an der Ladestation, bevor Sie mähen.",
     "previewSavedOnly": "Die Vorschau funktioniert nur für gespeicherte Arbeitsbereiche; Muster werden gemäht, lassen sich aber nicht in der Vorschau anzeigen.",
     "dragWindow": "Zum Verschieben ziehen",
-    "edgeCutHint": "Der Kantenschnitt folgt der Grenze des Arbeitsbereichs mit der gewählten Schnitthöhe. Die Karte ist fest auf {{map}} eingestellt; das Verlassen der Ladestation wird automatisch erkannt.",
+    "edgeZones": "Zonen",
+    "edgeZonesHint": "Die Zonen werden nacheinander gekantet. Für eine andere Zone als die des Docks fährt der Mäher zuerst den aufgezeichneten Kanal; nach der letzten fährt er heim.",
     "noOffset": "Kein Versatz"
   },
   "camera": {

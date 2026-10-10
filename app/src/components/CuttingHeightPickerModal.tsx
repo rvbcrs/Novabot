@@ -14,7 +14,11 @@ type Props = {
   initialHeightCm?: number;
   /** Knop-tekst voor bevestigen. Default "Start". */
   confirmLabel?: string;
-  onConfirm: (heightCm: number) => void;
+  /** Edge cut (#148): the zones to choose from. With more than one, chips let
+   *  the user pick one or more; they are cut one after another. */
+  zones?: Array<{ id: string; label: string }>;
+  initialZones?: string[];
+  onConfirm: (heightCm: number, zones: string[]) => void;
   onCancel: () => void;
 };
 
@@ -34,17 +38,25 @@ export default function CuttingHeightPickerModal({
   message,
   initialHeightCm = 5,
   confirmLabel,
+  zones,
+  initialZones,
   onConfirm,
   onCancel,
 }: Props) {
   const { t } = useI18n();
   const [height, setHeight] = useState(initialHeightCm);
+  const [picked, setPicked] = useState<string[]>(initialZones ?? []);
+  const showZones = (zones?.length ?? 0) > 1;
+  const toggleZone = (id: string) => setPicked(p => p.includes(id) ? p.filter(z => z !== id) : [...p, id]);
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
 
   useEffect(() => {
     if (visible) setHeight(initialHeightCm);
   }, [visible, initialHeightCm]);
+  useEffect(() => {
+    if (visible) setPicked(initialZones ?? []);
+  }, [visible, initialZones]);
 
   return (
     <Modal
@@ -87,6 +99,27 @@ export default function CuttingHeightPickerModal({
             </View>
           </View>
 
+          {showZones && (
+            <View style={styles.section}>
+              <Text style={styles.label}>{t('edgeZones')}</Text>
+              <View style={styles.zoneRow}>
+                {zones!.map(z => {
+                  const on = picked.includes(z.id);
+                  return (
+                    <TouchableOpacity
+                      key={z.id}
+                      style={[styles.zoneChip, on && styles.zoneChipOn]}
+                      onPress={() => toggleZone(z.id)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.zoneText, on && styles.zoneTextOn]}>{z.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={[styles.button, styles.cancelButton]}
@@ -96,8 +129,9 @@ export default function CuttingHeightPickerModal({
               <Text style={styles.cancelText}>{t('cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.button, styles.confirmButton]}
-              onPress={() => onConfirm(height)}
+              style={[styles.button, styles.confirmButton, showZones && picked.length === 0 && { opacity: 0.5 }]}
+              onPress={() => onConfirm(height, picked)}
+              disabled={showZones && picked.length === 0}
               activeOpacity={0.7}
             >
               <Ionicons name="play" size={16} color={colors.white} />
@@ -111,6 +145,31 @@ export default function CuttingHeightPickerModal({
 }
 
 const makeStyles = (c: Colors) => StyleSheet.create({
+  zoneRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  zoneChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
+  },
+  zoneChipOn: {
+    borderColor: c.emerald,
+    backgroundColor: c.emerald + '22',
+  },
+  zoneText: {
+    fontSize: 13,
+    color: c.textMuted,
+  },
+  zoneTextOn: {
+    color: c.text,
+    fontWeight: '600',
+  },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',

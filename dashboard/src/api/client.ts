@@ -787,6 +787,16 @@ export async function setSensorOverride(sn: string, fields: Record<string, strin
  * Soft-restart the mower's ROS stack (NOT an OS reboot). Refused with 409 while
  * the mower is actively mowing unless `force` is set.
  */
+/** Edge cut of the chosen zones, one after another (#148). bladeHeight in mm. */
+export async function startEdgeCuts(sn: string, zones: string[], bladeHeight: number): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${BASE}/edge-cut/${encodeURIComponent(sn)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ zones, bladeHeight }),
+  });
+  return res.json().catch(() => ({ ok: false }));
+}
+
 export async function softRestartMower(sn: string, force = false): Promise<{ ok?: boolean; error?: string; message?: string }> {
   const res = await apiFetch(`${BASE}/soft-restart/${encodeURIComponent(sn)}`, {
     method: 'POST',

@@ -249,7 +249,8 @@
     "reanchorRequiredBody": "La carte a été restaurée mais le référentiel n'a pas été validé. Réancrez la tondeuse sur la station de charge avant de tondre.",
     "previewSavedOnly": "L'aperçu ne fonctionne que pour les zones de travail enregistrées ; les motifs sont tondus mais ne peuvent pas être prévisualisés.",
     "dragWindow": "Faire glisser pour déplacer",
-    "edgeCutHint": "La coupe de bordure suit la limite de la zone de travail à la hauteur de coupe choisie. La carte est fixée sur {{map}} ; le départ de la station de charge est détecté automatiquement.",
+    "edgeZones": "Zones",
+    "edgeZonesHint": "Les zones sont tondues l'une après l'autre. Pour une zone autre que celle de la station, la tondeuse suit d'abord le passage enregistré ; après la dernière, elle rentre.",
     "noOffset": "Aucun décalage"
   },
   "camera": {
