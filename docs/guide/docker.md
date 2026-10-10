@@ -270,6 +270,7 @@ See [Notifications & Push](notifications.md).
 | `OTA_BASE_URL` | `http://TARGET_IP[:PORT]` | Base URL the mower downloads firmware from. Set it when the server sits behind a proxy or a changed port mapping, e.g. `http://192.168.1.50:8080`. |
 | `REMOTE_SUPPORT_RELAY_ENABLED` | `false` | Allow the remote support tunnel to be switched on from the admin panel. |
 | `LOG_LEVEL` | — | `verbose` logs every request and response. |
+| `JWT_EXPIRES_IN` | `30d` | How long a login stays valid, as a timespan (`30d`, `12h`) or in seconds (`3600`). An invalid value falls back to `30d`. |
 | `TERRAIN_CLASSIFY` | `1` | `0` disables terrain recognition (the on-demand ~700 MB SigLIP model). Use it on boards with 1 GB or less. |
 | `TERRAIN_MIN_FREE_MB` | `700` | The model is not loaded when the host has less than this much memory available; the batch is skipped and retried next session. |
 | `TERRAIN_MODEL_IDLE_MS` | `90000` | How long the model stays in memory after the last classification. `0` = never unload. |

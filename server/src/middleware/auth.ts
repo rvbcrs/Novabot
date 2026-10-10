@@ -39,8 +39,29 @@ export interface JwtPayload {
   email: string;
 }
 
+type ExpiresIn = NonNullable<jwt.SignOptions['expiresIn']>;
+
+/** Login lifetime from JWT_EXPIRES_IN. jsonwebtoken reads a bare number as
+ *  seconds but a bare numeric STRING as milliseconds ("3600" = 3.6 s), so
+ *  digits become a number. A value it cannot parse falls back to 30 days
+ *  instead of making every login throw. */
+export function resolveJwtExpiresIn(raw: string | undefined): ExpiresIn {
+  const value = raw?.trim();
+  if (!value) return '30d';
+  if (/^\d+$/.test(value)) return Number(value) > 0 ? Number(value) : '30d';
+  try {
+    jwt.sign({}, 'probe', { expiresIn: value as ExpiresIn });
+    return value as ExpiresIn;
+  } catch {
+    console.warn(`[AUTH] JWT_EXPIRES_IN="${value}" is not a valid lifetime (e.g. 30d, 12h, 3600); using 30d`);
+    return '30d';
+  }
+}
+
+const JWT_EXPIRES_IN = resolveJwtExpiresIn(process.env.JWT_EXPIRES_IN);
+
 export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
 /**
