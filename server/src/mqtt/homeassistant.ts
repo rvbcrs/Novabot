@@ -355,6 +355,9 @@ export async function handleLawnMowerCommand(sn: string, action: 'start_mowing' 
 // ── State publishing ─────────────────────────────────────────────
 
 const lastPublishTime = new Map<string, number>();
+/** Changes waiting for the next allowed publish, latest value per field (#155). */
+const pendingChanges = new Map<string, Map<string, string>>();
+const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** De state die HA voor een veld krijgt. Een sensor met ha_scale wordt hier
  *  geschaald zodat de waarde bij zijn unit past (cov_ratio 0,42 → 42 %).
@@ -383,19 +386,40 @@ export function forwardToHomeAssistant(
 ): void {
   if (!haClient || !connected || !sn) return;
 
-  // Throttle: skip als laatste publish minder dan THROTTLE_MS geleden was
-  const now = Date.now();
-  const lastTime = lastPublishTime.get(sn) ?? 0;
-  if (now - lastTime < THROTTLE_MS) return;
-  lastPublishTime.set(sn, now);
+  // updateDeviceData meldt een wijziging maar één keer (daarna staat de waarde
+  // al in de cache). Een wijziging binnen het throttle-venster weggooien liet HA
+  // dus voorgoed op de oude waarde staan: "Driving" terwijl de maaier gedockt
+  // op "User recharge" stond (#155). Bewaar per veld de laatste waarde en stuur
+  // die mee met de volgende publish; valt er geen bericht meer binnen, dan
+  // stuurt een timer aan het eind van het venster ze alsnog.
+  if (changes?.size) {
+    const pending = pendingChanges.get(sn) ?? new Map<string, string>();
+    for (const [field, value] of changes) pending.set(field, value);
+    pendingChanges.set(sn, pending);
+  }
+  const wait = (lastPublishTime.get(sn) ?? 0) + THROTTLE_MS - Date.now();
+  if (wait > 0) {
+    if (pendingChanges.has(sn) && !flushTimers.has(sn)) {
+      flushTimers.set(sn, setTimeout(() => { flushTimers.delete(sn); flushToHomeAssistant(sn, null); }, wait));
+    }
+    return;
+  }
+  flushToHomeAssistant(sn, payload);
+}
+
+function flushToHomeAssistant(sn: string, payload: Buffer | null): void {
+  if (!haClient || !connected) return;
+  lastPublishTime.set(sn, Date.now());
 
   // Publiceer ruwe JSON op raw topic
-  const cmd = parseCommand(payload);
-  if (cmd) {
+  const cmd = payload ? parseCommand(payload) : null;
+  if (cmd && payload) {
     haClient.publish(`novabot/${sn}/raw/${cmd.command}`, payload.toString(), { retain: true });
   }
 
   // Publiceer individuele gewijzigde velden
+  const changes = pendingChanges.get(sn);
+  pendingChanges.delete(sn);
   if (changes) {
     for (const [field, displayValue] of changes) {
       const sensor = SENSORS.find(s => s.field === field);
@@ -410,6 +434,16 @@ export function forwardToHomeAssistant(
 
   // En de afgeleide lawn_mower activiteit (publiceert alleen bij verandering)
   publishMowerActivity(sn);
+}
+
+/** Tests only: route publishes to a fake client (null disconnects). */
+export function _useHaClientForTest(client: { publish: (topic: string, value: string) => void } | null): void {
+  haClient = client as unknown as MqttClient | null;
+  connected = !!client;
+  lastPublishTime.clear();
+  pendingChanges.clear();
+  for (const t of flushTimers.values()) clearTimeout(t);
+  flushTimers.clear();
 }
 
 // ── Online/offline status ────────────────────────────────────────
