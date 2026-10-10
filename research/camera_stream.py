@@ -283,6 +283,7 @@ class CameraManager:
             return True
 
         success = False
+        client = None
         try:
             from std_srvs.srv import SetBool
             client = node.create_client(SetBool, service_path)
@@ -303,6 +304,14 @@ class CameraManager:
                 print(f"[CAMERA:{self.key}] start_camera service niet beschikbaar", flush=True)
         except Exception as e:
             print(f"[CAMERA:{self.key}] start_camera (rclpy) fout: {e}", flush=True)
+        finally:
+            # One client per call, and the stale-frame watchdog calls this every
+            # 10 s while someone watches a camera that sends nothing: free it.
+            if client is not None:
+                try:
+                    node.destroy_client(client)
+                except Exception:
+                    pass
 
         if allow_fallback and not success:
             try:
