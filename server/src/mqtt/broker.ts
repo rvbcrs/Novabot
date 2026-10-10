@@ -10,6 +10,7 @@ import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { isMapMqttPacketBlocked } from './mapCommandGuard.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
+import { edgeCutGate } from '../services/edgeCutGuard.js';
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond, emitMapsChanged } from '../dashboard/socketHandler.js';
@@ -588,6 +589,17 @@ export async function startMqttBroker(): Promise<void> {
           });
           try {
             const parsed = JSON.parse(decrypted);
+            // #147: a stop or "go home" from the Novabot app during an edge cut
+            // stops the edge goal first; the packet is held until that landed.
+            const edge = edgeCutGate(sn, parsed, deviceCache.get(sn)?.get('edge_active') === '1');
+            if (edge.stopNow) {
+              console.log(`${C.cyan}[EDGE] ${sn}: edge cut running, stop_boundary_follow before app ${Object.keys(parsed)[0]}${C.reset}`);
+              publishToExtended(sn, { stop_boundary_follow: {} });
+            }
+            if (edge.delayMs > 0) {
+              const release = callback;
+              callback = (error) => { setTimeout(() => release(error), edge.delayMs); };
+            }
             if (parsed.ota_upgrade_cmd) {
               const originalTz = parsed.ota_upgrade_cmd.tz;
               const originalType = parsed.ota_upgrade_cmd.type;

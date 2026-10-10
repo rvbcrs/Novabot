@@ -36,6 +36,7 @@ import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSy
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceCache } from './sensorData.js';
+import { edgeCutGate } from '../services/edgeCutGuard.js';
 
 const TAG = '[MAP-SYNC]';
 
@@ -250,6 +251,18 @@ export function publishToDevice(
 
   if (!aedesBroker) {
     console.error(`${TAG} Broker niet geinitialiseerd`);
+    return;
+  }
+
+  // #147: stop a running edge cut before a stop or "go home", and hold the
+  // command until that stop landed (services/edgeCutGuard.ts).
+  const edge = edgeCutGate(sn, command, deviceCache.get(sn)?.get('edge_active') === '1');
+  if (edge.stopNow) {
+    console.log(`${TAG} ${sn}: edge cut running, stop_boundary_follow before ${Object.keys(command)[0]}`);
+    publishToExtended(sn, { stop_boundary_follow: {} });
+  }
+  if (edge.delayMs > 0) {
+    setTimeout(() => publishToDevice(sn, command, opts), edge.delayMs);
     return;
   }
 
