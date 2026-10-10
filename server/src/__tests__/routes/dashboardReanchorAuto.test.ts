@@ -151,7 +151,7 @@ beforeEach(() => {
     expect(operation.reanchor).toBe(true); check();
     beforeMove?.();
     if (input.action === 'reverse') {
-      expect(input.distance).toBe(1);
+      expect(input.distance).toBe(1.15);
       feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - 1 });
       return { startPose: LEFT_FROM };
     }
