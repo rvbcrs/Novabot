@@ -1,5 +1,5 @@
-// Soft restart = restart the mower's ROS stack via the firmware `soft_restart`
-// command (systemctl restart novabot_launch.service). This is NOT an OS reboot:
+// Soft restart = restart the mower's ROS stack via the `soft_restart` command of
+// extended_commands.py (systemctl restart novabot_launch.service). This is NOT an OS reboot:
 // it cycles iox-roudi + all ROS nodes, which RESETS the iceoryx shared-memory
 // pool — the fix for the chunk leak that crash-loops novabot_mapping and
 // surfaces as Error 140 — while mqtt_node keeps running so the mower stays
@@ -8,7 +8,7 @@
 // (dependency-free + unit-tested) in softRestartPolicy.ts.
 import { deviceCache } from '../mqtt/sensorData.js';
 import { translator, type Translate } from './serverText.js';
-import { publishToDevice, getNextCmdNum } from '../mqtt/mapSync.js';
+import { publishToExtended } from '../mqtt/mapSync.js';
 import {
   isBusyWorkStatus,
   evalAutoRecover,
@@ -27,10 +27,13 @@ export function softRestartBlockedReason(sn: string, T: Translate = translator('
   return null;
 }
 
-/** Dispatch the firmware soft_restart command (MQTT). The caller owns the
- *  safety gate (softRestartBlockedReason) unless an explicit force override. */
+/** Dispatch soft_restart to extended_commands.py (MQTT). mqtt_node has no
+ *  handler for it, so on the native channel the restart never happened (from
+ *  June to October 2026 the dashboard button and the Error 140 auto-recovery
+ *  did nothing). The caller owns the safety gate (softRestartBlockedReason)
+ *  unless an explicit force override. */
 export function sendSoftRestart(sn: string): void {
-  publishToDevice(sn, { soft_restart: { cmd_num: getNextCmdNum(sn) } });
+  publishToExtended(sn, { soft_restart: {} });
 }
 
 // ── Auto-recovery monitor ───────────────────────────────────────────────────

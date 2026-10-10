@@ -81,7 +81,7 @@ import { startSourceDockCycle, sourceDockCycle } from '../services/sourceDockCyc
 import { startDockReturn, dockReturn } from '../services/dockReturnCycle.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
-import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
+import { MOW_PARA_SETTLE_MS, edgeObstacleLevel } from '../services/mowingService.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
 import {
   startAutoMap, stopAutoMap, getStatus as getAutoMapStatus,
@@ -233,7 +233,7 @@ dashboardRouter.get('/server-update', async (req: Request, res: Response) => {
 }
 
 // POST /api/dashboard/soft-restart/:sn — restart the mower's ROS stack via the
-// firmware `soft_restart` command (systemctl restart novabot_launch.service).
+// extended_commands `soft_restart` command (systemctl restart novabot_launch.service).
 // NOT an OS reboot: it resets iox-roudi (clears the iceoryx shm leak behind
 // Error 140) and keeps mqtt_node alive so the mower stays online. Refused with
 // 409 while the mower is actively mowing/working unless `{ force: true }`.
@@ -4211,7 +4211,7 @@ dashboardRouter.get('/weather/:lat/:lng', async (req: Request, res: Response) =>
 
 // ── Rain Sessions (actieve regenpauze sessies) ──────────────────
 
-import { getActiveRainSessions } from '../services/rainMonitor.js';
+import { getActiveRainSessions, rainPauseEnabled } from '../services/rainMonitor.js';
 import { getWeatherForecast } from '../services/weatherService.js';
 
 // GET /api/dashboard/rain-sessions/:sn — actieve rain sessions voor een maaier
@@ -4361,7 +4361,9 @@ dashboardRouter.get('/rain-forecast/:sn', async (req: Request, res: Response) =>
         mm: h.precipitation,
         prob: h.precipitationProbability,
       }));
-    res.json({ available: true, clearAt, upcoming });
+    // pauseEnabled: false = regenpauze staat uit, app/dashboard slaan de
+    // regenwaarschuwing bij starten/hervatten dan over.
+    res.json({ available: true, clearAt, upcoming, pauseEnabled: rainPauseEnabled(sn) });
   } catch {
     res.json({ available: false });
   }
@@ -4565,6 +4567,12 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   const movementKey = EXTENDED_MOVEMENT_KEYS.find((k) => k in command);
   if (movementKey) {
     disarmEdgeWatch(sn, `handmatig ${movementKey} via extended-route`);
+  }
+  // #142: de app en het dashboard starten randmaaien via deze route, niet via
+  // startEdgeCut(); zet de per-maaier rand-obstakelstand er hier bij.
+  const edge = command.start_edge_cut as Record<string, unknown> | undefined;
+  if (edge && typeof edge === 'object' && edge.obstacleLevel === undefined && edgeObstacleLevel(sn) === 1) {
+    edge.obstacleLevel = 1;
   }
   publishExtendedCommand(sn, command);
   res.json({ ok: true, command: Object.keys(command)[0] });
