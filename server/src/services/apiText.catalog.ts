@@ -1185,6 +1185,16 @@ export const CATALOG: Catalog = {
     fr: "zipPath est requis",
     de: "zipPath ist erforderlich",
   },
+  "zonder nacht-, vorst- of regencheck: geen GPS-positie van het laadstation": {
+    en: "without the night, frost or rain check: the charging station has no GPS position",
+    fr: "sans contrôle nuit, gel ou pluie : la station de charge n'a pas de position GPS",
+    de: "ohne Nacht-, Frost- oder Regenprüfung: die Ladestation hat keine GPS-Position",
+  },
+  "zonder nacht-, vorst- of regencheck: weerbericht niet opgehaald ({0})": {
+    en: "without the night, frost or rain check: weather forecast not fetched ({0})",
+    fr: "sans contrôle nuit, gel ou pluie : prévisions météo non récupérées ({0})",
+    de: "ohne Nacht-, Frost- oder Regenprüfung: Wettervorhersage nicht abgerufen ({0})",
+  },
   "{0} (gebied={1} hoogte={2} cm)": {
     en: "{0} (area={1} height={2}cm)",
     fr: "{0} (zone={1} hauteur={2} cm)",

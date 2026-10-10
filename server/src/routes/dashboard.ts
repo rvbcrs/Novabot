@@ -25,7 +25,7 @@ import { safeFirmwarePath, isFirmwareFileName, firmwareSourceAllowed, MANIFEST_H
 import os from 'os';
 import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
-import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
+import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason, isScheduleWarning } from '../services/scheduleRunner.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
@@ -3918,6 +3918,8 @@ function scheduleRowToDto(r: ScheduleRow, lang: Lang) {
     lastResultAt: r.last_result_at ?? null,
     lastResult: r.last_result ?? null,
     lastResultReason: renderScheduleReason(lang, r.last_result_reason),
+    // Gestart, maar met iets te melden (zonder weercheck): ook tonen.
+    lastResultWarning: isScheduleWarning(r.last_result, r.last_result_reason),
     edgeDays: parseEdgeDays(r.edge_days),
     // Richting die de VOLGENDE run daadwerkelijk gebruikt. Bij alternate
     // rotatie is dat base + trigger_count×step — de kaarten toonden eerst

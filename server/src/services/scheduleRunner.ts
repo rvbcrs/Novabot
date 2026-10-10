@@ -171,6 +171,20 @@ export function renderScheduleReason(lang: Lang, stored: string | null | undefin
   }
 }
 
+/**
+ * A started run stores only technical detail (plain text), which the clients
+ * do not show. A human reason (a Msg) on a started run is a warning the user
+ * should see: it started without the weather check because that could not run.
+ */
+export function isScheduleWarning(result: string | null | undefined, stored: string | null | undefined): boolean {
+  if (result !== 'started' || !stored?.startsWith('{')) return false;
+  try {
+    return isMsg(JSON.parse(stored));
+  } catch {
+    return false;
+  }
+}
+
 function logScheduleDecision(row: ScheduleRow, ok: boolean, outcome: string, reason?: string | Msg): void {
   const detail = reason === undefined ? undefined : isMsg(reason) ? renderNested('en', reason) : reason;
   const stored = reason === undefined ? null : isMsg(reason) ? JSON.stringify(reason) : reason;
@@ -496,17 +510,22 @@ function checkSchedules() {
 
     // Weercheck als regen (per schema), nacht of vorst (per maaier) aan staat;
     // anders direct starten.
+    //
+    // Kan de check niet (geen GPS-positie van het laadstation, of het
+    // weerbericht faalt), dan start de beurt toch, zoals sinds de eerste
+    // versie. Maar niet stil: de reden komt op het schema, in de MQTT-log en
+    // als event, anders lijkt de nachtbewaking gewoon kapot.
     const guards = rainSettingsRepo.getEffective(row.mower_sn);
     if (row.rain_pause || guards.nightGuard || guards.frostGuard) {
       const gps = getChargerGps(row.mower_sn);
       if (!gps) {
-        console.log(`[ScheduleRunner] ${row.schedule_id}: geen GPS coördinaten, start zonder weercheck`);
-        triggerSchedule(row);
+        triggerWithoutWeatherCheck(row, 'no_gps', M`zonder nacht-, vorst- of regencheck: geen GPS-positie van het laadstation`);
         continue;
       }
       checkWeatherAndTrigger(row, gps, guards).catch(err => {
         console.error(`[ScheduleRunner] Weather check failed for ${row.schedule_id}:`, err);
-        triggerSchedule(row);
+        const why = err instanceof Error ? err.message : String(err);
+        triggerWithoutWeatherCheck(row, 'forecast_failed', M`zonder nacht-, vorst- of regencheck: weerbericht niet opgehaald (${why})`);
       });
     } else {
       triggerSchedule(row);
@@ -549,6 +568,16 @@ async function checkWeatherAndTrigger(
   triggerSchedule(row);
 }
 
+/** Start zonder weercheck omdat die niet kon; `why` gaat als reden mee. */
+function triggerWithoutWeatherCheck(row: ScheduleRow, reason: 'no_gps' | 'forecast_failed', why: Msg) {
+  emitScheduleEvent('weather:unchecked', {
+    scheduleId: row.schedule_id,
+    mowerSn: row.mower_sn,
+    reason,
+  });
+  triggerSchedule(row, why);
+}
+
 /**
  * Resolve a schedule's stored map selection to the firmware `area` value.
  *
@@ -585,7 +614,12 @@ export function computeScheduleArea(
   return area > 0 ? area : 1;
 }
 
-function triggerSchedule(row: ScheduleRow) {
+/**
+ * `warning`: iets wat de gebruiker over een geslaagde start moet weten (de
+ * weercheck kon niet). Dat wordt dan de reden op het schema in plaats van de
+ * technische details, die alleen naar de console gaan.
+ */
+function triggerSchedule(row: ScheduleRow, warning?: Msg) {
   // Bereken effectieve richting (met alternerende rotatie).
   // Rotatie draait op trigger_count, NIET op work_records: de maaier stuurt
   // geen scheduleId mee in saveCutGrassRecord bij runner-gestarte mows, dus
@@ -614,7 +648,10 @@ function triggerSchedule(row: ScheduleRow) {
     // Alleen bij een geslaagde start doorschuiven — een regen-skip of busy-
     // afwijzing mag de volgende richting niet opschuiven.
     scheduleRepo.incrementTriggerCount(row.schedule_id);
-    logScheduleDecision(row, true, 'STARTED', `area=${area} height=${row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM}cm dir=${effectiveDirection}°`);
+    const startDetail = `area=${area} height=${row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM}cm dir=${effectiveDirection}°`;
+    if (warning) console.log(`[ScheduleRunner] ${row.schedule_id}: ${startDetail}`);
+    // Met waarschuwing als 'error' in de MQTT-log, zodat hij opvalt.
+    logScheduleDecision(row, !warning, 'STARTED', warning ?? startDetail);
 
     // Elke geslaagde geplande start VERVANGT de watcher-state voor deze
     // maaier: een eventueel nog hangende arm van een eerdere (bv. ambigu
