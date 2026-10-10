@@ -1,6 +1,55 @@
 {
   "releases": [
     {
+      "version": "2026.1011.0006",
+      "date": "2026-10-10",
+      "sections": {
+        "dashboard": [
+          "Choose the zones of an edge cut",
+          "No rain warning on start or resume when rain pause is off",
+          "Dock channel in Settings, Recovery",
+          "Warn when a drawn or edited obstacle lies in the dock exit lane",
+          "Translate the time-left value and read elapsed as minutes",
+          "Show why a map edit was refused"
+        ],
+        "app": [
+          "Warn before recording a channel between touching or close zones",
+          "Label the zone estimate and the live time left differently",
+          "Measure zone gaps and treat touching zones as connected"
+        ],
+        "firmware": [
+          "Mow_zone drives to a zone and cuts its edge",
+          "The STOP button, a PIN lock or a lifted mower ends an edge cut",
+          "Free the start-camera client after each call",
+          "Verify_pin says when the motor board does not answer, drop the unused ROS2 PIN script",
+          "Restart the camera when its frames stop while someone watches"
+        ],
+        "server": [
+          "Edge cut of chosen zones, one after another",
+          "Only a plain serial number gets a saved-trail file",
+          "Keep the last session's trail until the next mow, also across a restart",
+          "A change inside HA_THROTTLE_MS is sent later instead of dropped",
+          "A stop or \"go home\" during an edge cut stops the edge goal first",
+          "Show on the schedule card when a run started without the weather check",
+          "Show the headlight as on for any stored value above 0",
+          "Add rainPauseEnabled, which the rain forecast route already uses",
+          "Say so when a run starts without the weather guards",
+          "Restart dnsmasq when it exits or stops answering",
+          "Warn when an obstacle lies in the dock exit lane",
+          "Publish cov_ratio as a percentage",
+          "Cov_work_time is minutes, not seconds",
+          "Remote PIN verify waits for the mower and says why it failed",
+          "Create a missing dock channel from the saved dock pose",
+          "Refuse to delete the zone that carries the dock channel",
+          "Say why a map push was refused instead of sync_failed",
+          "Login lifetime from JWT_EXPIRES_IN",
+          "Send soft_restart to extended_commands, where its handler lives",
+          "Reverse into the middle of the docking window when re-anchoring",
+          "… plus 2 kleinere wijzigingen"
+        ]
+      }
+    },
+    {
       "version": "2026.1009.2157",
       "date": "2026-10-09",
       "sections": {
@@ -230,31 +279,6 @@
           "Learn serial numbers the factory table misses from the user's cloud login",
           "Timezone comment",
           "Plain values, no env substitution, built-in DNS on, options commented with examples"
-        ]
-      }
-    },
-    {
-      "version": "2026.0918.1210",
-      "date": "2026-09-18",
-      "sections": {
-        "dashboard": [
-          "Click a timeline block to edit that schedule",
-          "Say so while the mower path is being fetched"
-        ],
-        "admin": [
-          "Preview map_ids for every slot, not only map0-2"
-        ],
-        "firmware": [
-          "Don't overwrite the dock pose on every map push"
-        ],
-        "server": [
-          "The Novabot app and the dashboard share one scheduler",
-          "Answer the mower's schedule poll the way it is asked",
-          "Try the device ports once more after a timeout",
-          "No bridge warning on container_network once the sidecar advertises",
-          "Don't count the dock approach circle as a split zone",
-          "The mDNS sidecar needs nothing configured",
-          "An mDNS sidecar, so a bridged container can be discovered"
         ]
       }
     }
