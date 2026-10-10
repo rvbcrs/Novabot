@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   resumeRainSession: vi.fn(),
   cancelRainSession: vi.fn(),
   emitScheduleEvent: vi.fn(),
+  findActiveRainSchedule: vi.fn(),
+  getEffective: vi.fn(),
 }));
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -21,12 +23,15 @@ vi.mock('../../mqtt/mapSync.js', () => ({
 vi.mock('../../dashboard/socketHandler.js', () => ({ emitScheduleEvent: mocks.emitScheduleEvent }));
 vi.mock('../../services/weatherService.js', () => ({ getWeatherForecast: vi.fn(), shouldPauseForRain: vi.fn() }));
 vi.mock('../../db/repositories/index.js', () => ({
-  scheduleRepo: { resumeRainSession: mocks.resumeRainSession, cancelRainSession: mocks.cancelRainSession },
-  mapRepo: {}, rainSettingsRepo: {},
+  scheduleRepo: {
+    resumeRainSession: mocks.resumeRainSession, cancelRainSession: mocks.cancelRainSession,
+    findActiveRainSchedule: mocks.findActiveRainSchedule,
+  },
+  mapRepo: {}, rainSettingsRepo: { getEffective: mocks.getEffective },
 }));
 
 import { deviceCache } from '../../mqtt/sensorData.js';
-import { _resumeSession } from '../../services/rainMonitor.js';
+import { _resumeSession, rainPauseEnabled } from '../../services/rainMonitor.js';
 import type { RainSessionRow } from '../../db/repositories/schedules.js';
 
 const SN = 'LFIN1231000211';
@@ -59,5 +64,20 @@ describe('rain resume (#112)', () => {
     expect(mocks.publishToDevice).not.toHaveBeenCalled();
     expect(mocks.cancelRainSession).toHaveBeenCalledWith('s1');
     expect(mocks.emitScheduleEvent).toHaveBeenCalledWith('rain:cancelled', expect.objectContaining({ reason: 'no_parked_task' }));
+  });
+});
+
+// The start warning in the app and dashboard follows this: off in the settings
+// and no schedule with rain pause = the monitor never pauses, so no warning.
+describe('rainPauseEnabled', () => {
+  it('is off only when the setting is off and no schedule pauses for rain', () => {
+    mocks.findActiveRainSchedule.mockReturnValue(undefined);
+    mocks.getEffective.mockReturnValue({ enabled: false });
+    expect(rainPauseEnabled(SN)).toBe(false);
+    mocks.getEffective.mockReturnValue({ enabled: true });
+    expect(rainPauseEnabled(SN)).toBe(true);
+    mocks.getEffective.mockReturnValue({ enabled: false });
+    mocks.findActiveRainSchedule.mockReturnValue({ schedule_id: 'sch1' });
+    expect(rainPauseEnabled(SN)).toBe(true);
   });
 });

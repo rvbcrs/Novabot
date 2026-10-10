@@ -97,6 +97,7 @@ import {
   startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch,
 } from '../../services/scheduleRunner.js';
 import { mapRepo, scheduleRepo } from '../../db/repositories/index.js';
+import { deviceSettingsRepo } from '../../db/repositories/deviceSettings.js';
 
 const app = express();
 app.use(express.json());
@@ -214,6 +215,17 @@ describe('mowing area limit at both command entry points (#114)', () => {
     const r = await request(server).post('/api/dashboard/extended/AREA_LIMIT').send(command);
     expect(r.status).toBe(200);
     expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/AREA_LIMIT', command);
+  });
+
+  // #142: the app and the dashboard start an edge cut through this route, not
+  // through startEdgeCut(), so the per-mower edge obstacle level must be added here.
+  it('adds the edge obstacle level to a manual start_edge_cut', async () => {
+    deviceSettingsRepo.upsert('EDGE_LOW', 'edge_obstacle_level', '1');
+    const r = await request(server).post('/api/dashboard/extended/EDGE_LOW')
+      .send({ start_edge_cut: { mapName: 'map0', bladeHeight: 40 } });
+    expect(r.status).toBe(200);
+    expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/EDGE_LOW',
+      { start_edge_cut: { mapName: 'map0', bladeHeight: 40, obstacleLevel: 1 } });
   });
 });
 

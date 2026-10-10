@@ -58,6 +58,12 @@ export function isRainIgnoredForSession(sn: string): boolean {
   return ignoreSessionSet.has(sn);
 }
 
+/** Zou de monitor deze maaier voor regen pauzeren? Zelfde poort als in
+ *  checkActiveMowers. Uit = de startwaarschuwing in app/dashboard is zinloos. */
+export function rainPauseEnabled(sn: string): boolean {
+  return !!scheduleRepo.findActiveRainSchedule(sn) || rainSettingsRepo.getEffective(sn).enabled;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 /** Haal charger GPS coördinaten op voor een maaier SN */
