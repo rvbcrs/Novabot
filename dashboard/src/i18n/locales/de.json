@@ -231,6 +231,10 @@
       "not_localized": "der Mäher konnte seine Position nicht bestimmen; fahren Sie eine Runde und starten Sie erneut",
       "invalid_map": "unbekannte Zone",
       "drive_script_missing": "das Fahrskript fehlt auf dem Mäher",
+      "no_route_to_zone": "kein aufgezeichneter Kanal und keine angrenzende Zone führt zu dieser Zone",
+      "no_channel_to_zone": "kein aufgezeichneter Kanal führt zu dieser Zone",
+      "no_entry_point": "kein Ziel in der nächsten Zone zum Anfahren",
+      "unicom_empty": "der aufgezeichnete Kanal zu dieser Zone ist leer",
       "no_unicom": "zu dieser Zone wurde kein Kanal aufgezeichnet"
     },
     "stopMowingTitle": "Mähen stoppen?",

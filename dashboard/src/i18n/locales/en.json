@@ -264,6 +264,10 @@
       "not_localized": "the mower could not work out where it is; drive it a lap and try again",
       "invalid_map": "unknown zone",
       "drive_script_missing": "the drive script is missing on the mower",
+      "no_route_to_zone": "no recorded channel or touching zone leads to this zone",
+      "no_channel_to_zone": "no recorded channel leads to this zone",
+      "no_entry_point": "no spot inside the next zone to drive to",
+      "unicom_empty": "the recorded channel to this zone is empty",
       "no_unicom": "no channel to this zone has been recorded"
     },
     "stopMowingTitle": "Stop mowing?",

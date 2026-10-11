@@ -1376,8 +1376,9 @@ export function MowerControls({
               </div>
             )}
 
-            {/* Path direction stepper (both modes) — matches app StartMowSheet: 0–180° in 15° steps */}
-            <div>
+            {/* Path direction stepper (both modes) — matches app StartMowSheet: 0–180° in 15° steps.
+                Not for an edge cut: it follows the boundary, there are no lanes. */}
+            {!edgeMode && <div>
               <label className="text-[9px] text-gray-500 uppercase tracking-wide block mb-1">{t('controls.pathDirection')}</label>
               <div className="flex items-center gap-2">
                 <button
@@ -1403,7 +1404,7 @@ export function MowerControls({
                   className="w-9 h-9 rounded-full bg-gray-800 hover:bg-gray-700 active:bg-gray-600 flex items-center justify-center text-emerald-400 text-lg font-semibold"
                 >+</button>
               </div>
-            </div>
+            </div>}
 
             {/* Actions */}
             <div className="flex items-center gap-2 pt-2 border-t border-gray-700">

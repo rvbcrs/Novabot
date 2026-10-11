@@ -335,6 +335,10 @@
       "not_localized": "de maaier kon zijn positie niet bepalen; rijd hem een rondje en probeer opnieuw",
       "invalid_map": "onbekende zone",
       "drive_script_missing": "het rijscript ontbreekt op de maaier",
+      "no_route_to_zone": "geen opgenomen kanaal of rakende zone leidt naar deze zone",
+      "no_channel_to_zone": "geen opgenomen kanaal leidt naar deze zone",
+      "no_entry_point": "geen plek in de volgende zone om naartoe te rijden",
+      "unicom_empty": "het opgenomen kanaal naar deze zone is leeg",
       "no_unicom": "er is geen kanaal naar deze zone opgenomen"
     },
     "stopMowingTitle": "Maaien stoppen?",

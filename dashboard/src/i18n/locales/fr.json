@@ -231,6 +231,10 @@
       "not_localized": "la tondeuse n'a pas pu déterminer sa position ; faites-lui faire un tour et réessayez",
       "invalid_map": "zone inconnue",
       "drive_script_missing": "le script de conduite manque sur la tondeuse",
+      "no_route_to_zone": "aucun passage enregistré ni zone voisine ne mène à cette zone",
+      "no_channel_to_zone": "aucun passage enregistré ne mène à cette zone",
+      "no_entry_point": "aucun point dans la zone suivante vers lequel rouler",
+      "unicom_empty": "le passage enregistré vers cette zone est vide",
       "no_unicom": "aucun couloir vers cette zone n'a été enregistré"
     },
     "stopMowingTitle": "Arrêter la tonte ?",
