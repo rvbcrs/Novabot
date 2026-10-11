@@ -2683,6 +2683,7 @@ fi
 FW_PATHS=(
     "research/camera_stream.py"
     "research/extended_commands.py"
+    "research/mow_zone_drive.py"
     "research/discovery_loop.py"
     "research/led_bridge.py"
     "research/firmware/STM32"
