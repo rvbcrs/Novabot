@@ -1,6 +1,18 @@
 {
   "releases": [
     {
+      "version": "2026.1011.2012",
+      "date": "2026-10-11",
+      "sections": {
+        "dashboard": [
+          "No mowing direction for an edge cut, readable zone route errors"
+        ],
+        "firmware": [
+          "An edge cut reaches a zone that touches the last one"
+        ]
+      }
+    },
+    {
       "version": "2026.1011.0006",
       "date": "2026-10-10",
       "sections": {
@@ -238,47 +250,6 @@
           "Rain resume continues the parked task; drop dead height keys from set_para_info",
           "Tab menu readable in light mode",
           "The status badge text sits inside its badge"
-        ]
-      }
-    },
-    {
-      "version": "2026.0918.2309",
-      "date": "2026-09-18",
-      "sections": {
-        "dashboard": [
-          "A drawn zone gets a teal outline instead of a dash",
-          "A drawn zone has a dashed outline on the map",
-          "Bell icons for dock_drift and firmware_required",
-          "Event types know dock_drift and firmware_required",
-          "Position-on-the-dock card in the diagnostics drawer",
-          "Keep the covered lanes on screen while a task is parked on the dock"
-        ],
-        "app": [
-          "A withdrawn build shows a red, non-dismissible update banner",
-          "Double-tap crash, five-zone cap, preview stripes, resume on the Map tab"
-        ],
-        "admin": [
-          "Translate the Factory list step name"
-        ],
-        "firmware": [
-          "Mqtt_node_monitor killed every healthy mqtt_node after ten minutes",
-          "The port probe must find OpenNova, not just an open port"
-        ],
-        "server": [
-          "Regenerate per-slot grids only after sync_map has finished",
-          "Track the update through the reboot and show each phase",
-          "A withdrawn custom build becomes a required update",
-          "Detect a charging station or map frame that moved, from the docked position",
-          "Record and show where a zone came from",
-          "Resume a lost mowing task from the lane it stopped in",
-          "One mowing session instead of the last 5000 points",
-          "Say why a scheduled run did not happen",
-          "STM32 decompile output and its Ghidra script",
-          "One click between the dashboard and the admin panel",
-          "Say when a serial is missing from the factory list",
-          "Learn serial numbers the factory table misses from the user's cloud login",
-          "Timezone comment",
-          "Plain values, no env substitution, built-in DNS on, options commented with examples"
         ]
       }
     }
