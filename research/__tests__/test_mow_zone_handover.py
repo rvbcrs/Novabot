@@ -362,10 +362,12 @@ class EdgeDriver(FakeDriver):
 
     def nav_to(self, x, y, yaw=None, timeout=120.0):
         self.calls.append(("nav_to",))
+        self._loc = (x, y)
         return True, ""
 
     def follow_path(self, pts):
         self.calls.append(("follow_path",))
+        self._loc = pts[-1]
         return True, ""
 
 
@@ -394,7 +396,7 @@ def test_edge_of_a_zone_without_a_route_is_refused():
                "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
     drv = EdgeDriver(localized=None)
     rc, seen = run_edge(drv, "map6")
-    assert rc == 1 and seen[-1] == ("error", "no_channel_to_zone"), seen
+    assert rc == 1 and seen[-1] == ("error", "no_route_to_zone"), seen
     assert drv.calls == [("reload_map",)]   # nothing moved, nothing started
 
 
@@ -407,6 +409,40 @@ def test_edge_of_another_zone_drives_the_channel_first():
     assert rc == 0 and seen[-1] == ("edge_ready",), seen
     assert ("following_unicom",) in seen and ("follow_path",) in drv.calls
     assert not any(c[0] == "start_cov" for c in drv.calls)
+
+
+SQ7 = [(10, 0), (20, 0), (20, 10), (10, 10)]     # map7, shares map0's east side
+SQ8 = [(40, 0), (50, 0), (50, 10), (40, 10)]     # map8, shares map6's east side
+
+
+def test_touching_zones_are_connected():
+    assert mzd.zones_touch(SQ0, SQ7)
+    assert not mzd.zones_touch(SQ0, SQ6)
+    # a gap narrower than TOUCH_GAP_M still counts as touching
+    assert mzd.zones_touch(SQ0, [(10.2, 0), (20, 0), (20, 10), (10.2, 10)])
+
+
+# Field report (custom-47): touching zones have no recorded channel, so every
+# zone but the dock's got no_channel_to_zone. A touch step is a planner drive.
+def test_edge_of_a_touching_zone_without_a_channel_enters_it():
+    with_maps({"map0_work.csv": SQ0, "map7_work.csv": SQ7,
+               "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
+    drv = EdgeDriver(localized=None)
+    rc, seen = run_edge(drv, "map7")
+    assert rc == 0 and seen[-1] == ("edge_ready",), seen
+    assert ("entering_zone",) in seen and ("nav_to",) in drv.calls
+    assert mzd.point_in_poly(drv._loc[0], drv._loc[1], SQ7)   # ended inside map7
+
+
+def test_edge_route_chains_a_channel_and_a_touching_zone():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map8_work.csv": SQ8,
+               "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)],
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    assert [(k, z) for k, _f, z in mzd.edge_route("map0", "map8")] == [("channel", "map6"), ("touch", "map8")]
+    drv = EdgeDriver(localized=None)
+    rc, seen = run_edge(drv, "map8")
+    assert rc == 0 and seen[-1] == ("edge_ready",), seen
+    assert drv.calls.index(("follow_path",)) < len(drv.calls) - 1 and drv.calls[-1] == ("nav_to",)
 
 
 if __name__ == "__main__":

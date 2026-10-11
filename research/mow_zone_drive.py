@@ -976,6 +976,102 @@ def _channel_files(from_slot, to_slot):
     return channel_route(from_slot, to_slot, channel_graph(names))
 
 
+# Zones that touch or overlap are connected without a recorded channel: the
+# firmware only records one between separated zones, and nav2's map has the
+# touching ones joined. An edge cut of such a zone was refused with
+# no_channel_to_zone (field report, custom-47: only the dock's zone worked).
+# A touch step is driven by the planner (nav_to), into the next zone.
+TOUCH_GAP_M = 0.3
+TOUCH_SAMPLE_M = 0.25      # boundary points kept for the touch test
+ENTER_DEPTH_M = 0.8        # how far into the next zone a touch step aims
+
+
+def _sparse(poly, step=TOUCH_SAMPLE_M):
+    """Boundary points about `step` apart (the CSVs hold one every few cm)."""
+    out = []
+    for p in poly:
+        if not out or _dist(out[-1], p) >= step:
+            out.append(p)
+    return out
+
+
+def zones_touch(a, b, gap=TOUCH_GAP_M):
+    """Do two work polygons overlap, or come within `gap` of each other?"""
+    if len(a) < 3 or len(b) < 3:
+        return False
+    if (max(x for x, _ in a) + gap < min(x for x, _ in b) or max(x for x, _ in b) + gap < min(x for x, _ in a) or
+            max(y for _, y in a) + gap < min(y for _, y in b) or max(y for _, y in b) + gap < min(y for _, y in a)):
+        return False
+    sa, sb = _sparse(a), _sparse(b)
+    if any(point_in_poly(x, y, b) for x, y in sa) or any(point_in_poly(x, y, a) for x, y in sb):
+        return True
+    # Sampled points lie at most TOUCH_SAMPLE_M apart, so allow half of that.
+    limit = gap + TOUCH_SAMPLE_M / 2
+    return any(_dist(p, q) <= limit for p in sa for q in sb)
+
+
+def _work_polys():
+    base = _csv_base()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        names = []
+    polys = {}
+    for f in names:
+        m = re.fullmatch(r"(map\d+)_work\.csv", f)
+        if m:
+            polys[m.group(1)] = read_xy_csv(os.path.join(base, f))
+    return polys
+
+
+def edge_route(from_slot, to_slot):
+    """Fewest steps from one zone to another for an edge cut: recorded
+    channels ("channel", file, zone) and touching zones ("touch", None, zone).
+    A recorded channel wins where both connect the same pair. [] if none."""
+    if not from_slot or not to_slot or from_slot == to_slot:
+        return []
+    base = _csv_base()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        names = []
+    channels = channel_graph(names) if USE_TRANSIT else {}
+    polys = _work_polys()
+    seen = {from_slot}
+    queue = [(from_slot, [])]
+    while queue:
+        node, path = queue.pop(0)
+        steps = [("channel", f, z) for z, f in sorted(channels.get(node, {}).items())]
+        steps += [("touch", None, z) for z in sorted(polys)
+                  if z != node and z not in channels.get(node, {}) and z in polys and node in polys
+                  and zones_touch(polys[node], polys[z])]
+        for kind, fname, nxt in steps:
+            if nxt in seen:
+                continue
+            hop = path + [(kind, fname, nxt)]
+            if nxt == to_slot:
+                return hop
+            seen.add(nxt)
+            queue.append((nxt, hop))
+    return []
+
+
+def _entry_point(poly, robot, depth=ENTER_DEPTH_M):
+    """A point inside `poly` near the robot: from the nearest boundary point a
+    little way towards the middle."""
+    if len(poly) < 3 or robot is None:
+        return None
+    near = min(_sparse(poly), key=lambda p: _dist(p, robot))
+    cx = sum(x for x, _ in poly) / len(poly)
+    cy = sum(y for _, y in poly) / len(poly)
+    length = math.hypot(cx - near[0], cy - near[1]) or 1.0
+    for d in (depth, depth / 2, depth * 1.5, depth * 2.5):
+        t = (near[0] + (cx - near[0]) / length * d, near[1] + (cy - near[1]) / length * d)
+        if point_in_poly(t[0], t[1], poly):
+            return t
+    return (cx, cy) if point_in_poly(cx, cy, poly) else None
+
+
 def _cover(drv, map_ids, cutterhigh, direction):
     """Coverage through robot_decision (keeps the normal state machine)."""
     phase("covering")
@@ -1020,6 +1116,88 @@ def clear_parked_task(drv):
     log(f"after quit_mapping_mode: status={drv.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)}")
 
 
+def _drive_channel_hop(drv, base, fname, robot, hop, total):
+    """Drive one recorded channel from where the mower is. (ok, msg, robot)."""
+    pts = read_xy_csv(os.path.join(base, fname))
+    if len(pts) < 2:
+        return False, "unicom_empty", robot
+    if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
+        pts = list(reversed(pts))   # start at the robot's end
+    # Drop the points BEHIND the mower (between it and the dock end).
+    # After the ~1m undock the mower sits ~1m along the line but still
+    # near the dock; without trimming, the controller first heads back
+    # to the dock end, hits the dock (lethal cost 255 in the costmap)
+    # and aborts with "collision ahead". Starting the path at the
+    # nearest point makes it drive forward from where it actually is.
+    # The same holds at every hop: the mower lands somewhere along the
+    # next channel, not at its recorded start.
+    pts = _trim_to_nearest(pts, robot)
+    # Aanloop naar het begin van het kanaal door de planner, niet
+    # door ons: een rechte lijn vanaf een willekeurige plek loopt
+    # zo tegen het dock of een struik. Zie Driver.nav_to.
+    gap = _dist(robot, pts[0])
+    if gap > LEAD_IN_MAX_M:
+        log(f"transit hop {hop + 1}/{total}: {gap:.1f} m aanloop naar "
+            f"{pts[0]}, laat de planner dat doen")
+        aankomst = (math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0])
+                    if len(pts) > 1 else None)
+        ok, msg = drv.nav_to(pts[0][0], pts[0][1], yaw=aankomst)
+        if not ok:
+            log(f"transit hop {hop + 1}/{total} aanloop faalde: {msg}")
+            return False, msg, robot
+        robot = drv.robot_xy() or robot
+        pts = _trim_to_nearest(read_xy_csv(os.path.join(base, fname)), robot)
+        if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
+            pts = list(reversed(pts))
+            pts = _trim_to_nearest(pts, robot)
+    pts = densify(_lead_in(pts, robot))
+    ok, msg = drv.follow_path(pts)
+    if not ok:
+        log(f"transit hop {hop + 1}/{total} ({fname}) failed: {msg}")
+        return False, msg, robot
+    robot = drv.robot_xy() or pts[-1]
+    log(f"transit hop {hop + 1}/{total} done, robot={robot}")
+    return True, "", robot
+
+
+def _edge_transit(drv, base, robot, from_slot, to_slot, already_in):
+    """Edge cut (#148): get into the target zone over recorded channels and
+    touching zones, then PHASE edge_ready. extended_commands.py then starts
+    the edge cut of that zone from where the mower stands."""
+    # Still within the dock disc after the departure: the route starts in the
+    # dock's zone.
+    route_from = _dock_zone() if from_slot == "dock" else from_slot
+    hops = [] if already_in else edge_route(route_from, to_slot)
+    if not already_in and route_from != to_slot and not hops:
+        phase("error", "no_route_to_zone")
+        return 1
+    if hops:
+        log(f"edge route {route_from} -> {to_slot}: {hops}")
+        phase("following_unicom" if any(k == "channel" for k, _f, _z in hops) else "entering_zone")
+        drv.set_params([(n, r) for (n, r, _d) in TRANSIT_PARAMS])
+        drv.log_applied_params([n for (n, _r, _d) in TRANSIT_PARAMS])
+        try:
+            for i, (kind, fname, zone) in enumerate(hops):
+                if kind == "channel":
+                    ok, msg, robot = _drive_channel_hop(drv, base, fname, robot, i, len(hops))
+                else:
+                    target = _entry_point(read_xy_csv(os.path.join(base, f"{zone}_work.csv")), robot)
+                    if target is None:
+                        ok, msg = False, "no_entry_point"
+                    else:
+                        log(f"edge hop {i + 1}/{len(hops)}: into touching {zone} at {target}")
+                        ok, msg = drv.nav_to(target[0], target[1])
+                        robot = drv.robot_xy() or target
+                if not ok:
+                    phase("error", msg)
+                    return 1
+        finally:
+            drv.set_params([(n, d) for (n, _r, d) in TRANSIT_PARAMS])
+            log("restored controller params")
+    phase("edge_ready")
+    return 0
+
+
 def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
     """Outbound: undock -> follow the unicom to the target zone -> coverage.
 
@@ -1027,8 +1205,9 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
     edge_ready instead of starting coverage; extended_commands.py starts the
     edge cut of the zone the mower now stands in. An edge cut has no firmware
     task that drives to the zone for us, and a free-planned approach is what
-    took mowers through the hedge, so a zone without a recorded route is
-    refused instead of guessed."""
+    took mowers through the hedge, so the route uses recorded channels and
+    zones that touch (a planner step into the next zone, inside the lawn the
+    map holds). A zone reachable neither way is refused instead of guessed."""
     # A live task already owns the wheels (e.g. the app's start_navigation
     # fallback won the race while this process was still starting). Reloading
     # the map and quitting that task left the coverage running without
@@ -1057,14 +1236,14 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
         # start it again is what produced "Cannot start a new task when last
         # task is executing" (live .244, 2026-09-14).
         home = _dock_zone()
-        if not _channel_files(home, to_slot):
-            if edge and to_slot != home:
-                log(f"edge: on the dock, no channel {home}->{to_slot}")
-                phase("error", "no_channel_to_zone")
+        if edge:
+            if to_slot != home and not edge_route(home, to_slot):
+                log(f"edge: on the dock, no channel or touching zones {home}->{to_slot}")
+                phase("error", "no_route_to_zone")
                 return 1
-            if not edge:
-                log(f"on the dock, no channel {home}->{to_slot}: the firmware runs the whole task")
-                return _cover(drv, map_ids, cutterhigh, direction)
+        elif not _channel_files(home, to_slot):
+            log(f"on the dock, no channel {home}->{to_slot}: the firmware runs the whole task")
+            return _cover(drv, map_ids, cutterhigh, direction)
         # A channel to drive: the firmware departs, then we take over.
         if drv.localize_via_firmware(map_ids, cutterhigh, direction) is None:
             phase("error", "not_localized")
@@ -1085,10 +1264,9 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
     target_poly = read_xy_csv(os.path.join(base, f"{to_slot}_work.csv"))
     already_in = bool(robot and len(target_poly) >= 3 and
                       point_in_poly(robot[0], robot[1], target_poly))
-    # Still within the dock disc after the departure: for an edge cut the route
-    # starts in the dock's zone (coverage leaves this to the firmware).
-    route_from = _dock_zone() if (edge and from_slot == "dock") else from_slot
-    uni = _channel_files(route_from, to_slot) if not already_in else []
+    if edge:
+        return _edge_transit(drv, base, robot, from_slot, to_slot, already_in)
+    uni = _channel_files(from_slot, to_slot) if not already_in else []
     if uni:
         log(f"transit route {from_slot} -> {to_slot}: {' + '.join(uni)}")
         phase("following_unicom")
@@ -1096,61 +1274,16 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
         drv.log_applied_params([n for (n, _r, _d) in TRANSIT_PARAMS])
         try:
             for hop, fname in enumerate(uni):
-                pts = read_xy_csv(os.path.join(base, fname))
-                if len(pts) < 2:
-                    phase("error", "unicom_empty")
-                    return 1
-                if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
-                    pts = list(reversed(pts))   # start at the robot's end
-                # Drop the points BEHIND the mower (between it and the dock end).
-                # After the ~1m undock the mower sits ~1m along the line but still
-                # near the dock; without trimming, the controller first heads back
-                # to the dock end, hits the dock (lethal cost 255 in the costmap)
-                # and aborts with "collision ahead". Starting the path at the
-                # nearest point makes it drive forward from where it actually is.
-                # The same holds at every hop: the mower lands somewhere along the
-                # next channel, not at its recorded start.
-                pts = _trim_to_nearest(pts, robot)
-                # Aanloop naar het begin van het kanaal door de planner, niet
-                # door ons: een rechte lijn vanaf een willekeurige plek loopt
-                # zo tegen het dock of een struik. Zie Driver.nav_to.
-                gap = _dist(robot, pts[0])
-                if gap > LEAD_IN_MAX_M:
-                    log(f"transit hop {hop + 1}/{len(uni)}: {gap:.1f} m aanloop naar "
-                        f"{pts[0]}, laat de planner dat doen")
-                    aankomst = (math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0])
-                                if len(pts) > 1 else None)
-                    ok, msg = drv.nav_to(pts[0][0], pts[0][1], yaw=aankomst)
-                    if not ok:
-                        log(f"transit hop {hop + 1}/{len(uni)} aanloop faalde: {msg}")
-                        phase("error", msg)
-                        return 1
-                    robot = drv.robot_xy() or robot
-                    pts = _trim_to_nearest(read_xy_csv(os.path.join(base, fname)), robot)
-                    if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
-                        pts = list(reversed(pts))
-                        pts = _trim_to_nearest(pts, robot)
-                pts = densify(_lead_in(pts, robot))
-                ok, msg = drv.follow_path(pts)
+                ok, msg, robot = _drive_channel_hop(drv, base, fname, robot, hop, len(uni))
                 if not ok:
-                    log(f"transit hop {hop + 1}/{len(uni)} ({fname}) failed: {msg}")
                     phase("error", msg)
                     return 1
-                robot = drv.robot_xy() or pts[-1]
-                log(f"transit hop {hop + 1}/{len(uni)} done, robot={robot}")
         finally:
             drv.set_params([(n, d) for (n, _r, d) in TRANSIT_PARAMS])
             log("restored controller params")
     else:
         log(f"transit skipped (route={bool(uni)} already_in={already_in})")
-        if edge and not already_in and route_from != to_slot:
-            phase("error", "no_channel_to_zone")
-            return 1
 
-    if edge:
-        # The mower stands in the target zone; the edge cut starts from here.
-        phase("edge_ready")
-        return 0
     # 3. coverage through robot_decision (keeps the normal state machine)
     return _cover(drv, map_ids, cutterhigh, direction)
 
