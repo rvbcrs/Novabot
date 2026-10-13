@@ -1366,7 +1366,10 @@ export default function HomeScreen() {
   const lastPreviewRefreshAt = useRef<number>(0);
   useEffect(() => {
     if (!mower || demo.enabled) return;
-    if (mower.activity === 'mowing' || mower.activity === 'mapping') return;
+    // Only before a run: during one (also paused, driving to a zone or right
+    // after Start) this refilled the lanes with a preview or the previous
+    // run's plan, clipped to the new zone to a sliver (#157).
+    if ((mower.activity !== 'idle' && mower.activity !== 'charging') || freshSession) return;
     // Mower offline → GEEN refresh trigger. Zonder deze guard stuurt de app
     // oneindig generate_preview commands naar een mower die niet antwoordt,
     // wat de server logs totaal volspamde (bewezen live 2026-04-21).
@@ -1424,7 +1427,7 @@ export default function HomeScreen() {
     })();
 
     return () => { cancelled = true; };
-  }, [mower?.activity, mower?.sn, mower?.online, mowSettings?.pathDirection, startedMapIds, demo.enabled]);
+  }, [mower?.activity, mower?.sn, mower?.online, mowSettings?.pathDirection, startedMapIds, demo.enabled, freshSession]);
 
   // Mower bounce animation (subtle bob when active)
   const bounceAnim = useRef(new Animated.Value(0)).current;

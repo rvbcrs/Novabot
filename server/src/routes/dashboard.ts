@@ -947,6 +947,9 @@ dashboardRouter.delete('/trail/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   clearGpsTrail(sn);
   clearLocalTrail(sn);
+  // The app clears the trail when it starts a run: the cached plan is the
+  // previous run's and was drawn as the new one (#157).
+  plannedPathCache.delete(sn);
   res.json({ ok: true });
 });
 
