@@ -1,6 +1,23 @@
 {
   "releases": [
     {
+      "version": "2026.1013.1529",
+      "date": "2026-10-13",
+      "sections": {
+        "dashboard": [
+          "Offer a newer custom firmware build",
+          "Update the server from the banner"
+        ],
+        "app": [
+          "No stale mowing plan on the home map after a start",
+          "Edge cut from a dock beside the lawn; a stop reaches the zone drive (#142, #147)"
+        ],
+        "server": [
+          "Check the current hour too"
+        ]
+      }
+    },
+    {
       "version": "2026.1011.2012",
       "date": "2026-10-11",
       "sections": {
@@ -228,28 +245,6 @@
         "server": [
           "Error 130 (localization collapsed) is a gps_weak event with a readable message",
           "The dock anchor is only ever map0tocharge_unicom; deleting that channel is refused"
-        ]
-      }
-    },
-    {
-      "version": "2026.0919.1353",
-      "date": "2026-09-19",
-      "sections": {
-        "dashboard": [
-          "Night/frost guards, mowing totals with blade reminder, and Report a problem"
-        ],
-        "app": [
-          "Mute notification categories per phone in Settings → Notifications",
-          "Report a problem opens a prefilled GitHub issue; Advanced toggle in Start Mowing",
-          "Week/month/year mowing totals and a blade-change reminder in History",
-          "Skip scheduled runs at night or in frost (Mower Settings → Weather & time)",
-          "Manual Check for updates button in Settings"
-        ],
-        "server": [
-          "Schedule routes no longer send a partial set_para_info",
-          "Rain resume continues the parked task; drop dead height keys from set_para_info",
-          "Tab menu readable in light mode",
-          "The status badge text sits inside its badge"
         ]
       }
     }
