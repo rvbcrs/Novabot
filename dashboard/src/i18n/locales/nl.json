@@ -15,7 +15,16 @@
     "pushed": " (gepusht {{when}})",
     "howTo": "Hoe updaten",
     "dismiss": "Verbergen",
-    "instructions": "Pull en herstart de OpenNova-container op je host:"
+    "instructions": "Pull en herstart de OpenNova-container op je host:",
+    "updateNow": "Nu updaten",
+    "confirmTitle": "Updaten naar v{{latest}}",
+    "confirmBody": "De server haalt de nieuwe versie op en herstart zichzelf. Dat duurt ongeveer een minuut; deze pagina herlaadt als hij terug is.",
+    "confirmMowing_one": "Er is een maaier aan het werk. Die maait gewoon door, maar de server is ongeveer een minuut weg, en zones die nog in een randmaai-wachtrij staan vervallen.",
+    "confirmMowing_other": "Er zijn {{count}} maaiers aan het werk. Die maaien gewoon door, maar de server is ongeveer een minuut weg, en zones die nog in een randmaai-wachtrij staan vervallen.",
+    "updating": "Bezig met updaten… de server herstart; deze pagina herlaadt als de nieuwe versie antwoordt.",
+    "slow": "De update duurt langer dan verwacht. Herlaad deze pagina over een minuut, of kijk naar de container op je host.",
+    "failed": "De update is niet gestart",
+    "enableButton": "Wil je vanaf deze knop updaten, voeg dan de Docker-socket toe aan de opennova-service in docker-compose.yml: - /var/run/docker.sock:/var/run/docker.sock (daarmee krijgt de container zeggenschap over Docker op deze machine)."
   },
   "header": {
     "dashboard": "Dashboard",

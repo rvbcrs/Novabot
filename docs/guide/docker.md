@@ -346,6 +346,32 @@ docker compose logs -f --tail 50
 
 `up -d` recreates only what changed. The database is migrated on start.
 
+### Updating from the dashboard
+
+When Docker Hub has a newer version, the dashboard shows a banner. To update
+with a button instead of the terminal, mount the Docker socket into the
+`opennova` service (the line is already in the example compose file, commented
+out):
+
+```yaml
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Then `docker compose up -d` once. The banner now has **Update now**. The
+server starts a short-lived `docker:cli` helper that runs `docker compose pull`
+and `docker compose up -d` for the OpenNova services in your compose project,
+with your own compose file, so your settings stay as they are. Other services
+in the same project are not touched. The server is away for about a minute and
+the page reloads when the new version answers. A mower that is mowing carries
+on; the dashboard warns you first.
+
+The socket gives the container control over Docker on the host. If you do not
+want that, leave the line out and update from the terminal. The button only
+works for a compose install; a plain `docker run` keeps the terminal
+instructions.
+
 ## Troubleshooting
 
 Start with **Why is it not coming online?** in the admin panel. Then:

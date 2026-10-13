@@ -15,7 +15,16 @@
     "pushed": " (veröffentlicht {{when}})",
     "howTo": "Anleitung",
     "dismiss": "Ausblenden",
-    "instructions": "Container auf dem Host aktualisieren und neu starten:"
+    "instructions": "Container auf dem Host aktualisieren und neu starten:",
+    "updateNow": "Jetzt aktualisieren",
+    "confirmTitle": "Auf v{{latest}} aktualisieren",
+    "confirmBody": "Der Server lädt die neue Version und startet sich neu. Das dauert etwa eine Minute; diese Seite lädt neu, sobald er zurück ist.",
+    "confirmMowing_one": "Ein Mäher ist im Einsatz. Er mäht weiter, aber der Server ist etwa eine Minute weg, und Zonen, die noch in einer Kantenschnitt-Warteschlange stehen, entfallen.",
+    "confirmMowing_other": "{{count}} Mäher sind im Einsatz. Sie mähen weiter, aber der Server ist etwa eine Minute weg, und Zonen, die noch in einer Kantenschnitt-Warteschlange stehen, entfallen.",
+    "updating": "Aktualisierung läuft… der Server startet neu; diese Seite lädt neu, sobald die neue Version antwortet.",
+    "slow": "Die Aktualisierung dauert länger als erwartet. Laden Sie diese Seite in einer Minute neu oder prüfen Sie den Container auf Ihrem Host.",
+    "failed": "Die Aktualisierung wurde nicht gestartet",
+    "enableButton": "Um über diese Schaltfläche zu aktualisieren, fügen Sie dem opennova-Dienst in docker-compose.yml den Docker-Socket hinzu: - /var/run/docker.sock:/var/run/docker.sock (damit erhält der Container die Kontrolle über Docker auf diesem Rechner)."
   },
   "header": {
     "dashboard": "Dashboard",

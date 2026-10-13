@@ -15,7 +15,16 @@
     "pushed": " (publié {{when}})",
     "howTo": "Comment mettre à jour",
     "dismiss": "Masquer",
-    "instructions": "Mettez à jour et redémarrez le conteneur OpenNova sur votre hôte :"
+    "instructions": "Mettez à jour et redémarrez le conteneur OpenNova sur votre hôte :",
+    "updateNow": "Mettre à jour",
+    "confirmTitle": "Mettre à jour vers v{{latest}}",
+    "confirmBody": "Le serveur télécharge la nouvelle version et redémarre. Cela prend environ une minute ; cette page se recharge à son retour.",
+    "confirmMowing_one": "Une tondeuse est au travail. Elle continue de tondre, mais le serveur est absent environ une minute, et les zones encore en attente de tonte de bordure sont abandonnées.",
+    "confirmMowing_other": "{{count}} tondeuses sont au travail. Elles continuent de tondre, mais le serveur est absent environ une minute, et les zones encore en attente de tonte de bordure sont abandonnées.",
+    "updating": "Mise à jour… le serveur redémarre ; cette page se recharge quand la nouvelle version répond.",
+    "slow": "La mise à jour prend plus de temps que prévu. Rechargez cette page dans une minute, ou vérifiez le conteneur sur votre hôte.",
+    "failed": "La mise à jour n'a pas démarré",
+    "enableButton": "Pour mettre à jour depuis ce bouton, ajoutez le socket Docker au service opennova dans docker-compose.yml : - /var/run/docker.sock:/var/run/docker.sock (cela donne au conteneur le contrôle de Docker sur cette machine)."
   },
   "header": {
     "dashboard": "Tableau de bord",

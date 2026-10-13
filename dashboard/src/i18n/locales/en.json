@@ -15,7 +15,16 @@
     "pushed": " (pushed {{when}})",
     "howTo": "How to update",
     "dismiss": "Dismiss",
-    "instructions": "Pull and restart the OpenNova container on your host:"
+    "instructions": "Pull and restart the OpenNova container on your host:",
+    "updateNow": "Update now",
+    "confirmTitle": "Update to v{{latest}}",
+    "confirmBody": "The server pulls the new version and restarts itself. That takes about a minute; this page reloads when it is back.",
+    "confirmMowing_one": "A mower is out on a job. It carries on mowing, but the server is away for about a minute, and zones still waiting in an edge-cut queue are dropped.",
+    "confirmMowing_other": "{{count}} mowers are out on a job. They carry on mowing, but the server is away for about a minute, and zones still waiting in an edge-cut queue are dropped.",
+    "updating": "Updating… the server restarts; this page reloads when the new version answers.",
+    "slow": "The update is taking longer than expected. Reload this page in a minute, or check the container on your host.",
+    "failed": "The update did not start",
+    "enableButton": "To update from this button instead, add the Docker socket to the opennova service in docker-compose.yml: - /var/run/docker.sock:/var/run/docker.sock (it gives the container control over Docker on this machine)."
   },
   "header": {
     "dashboard": "Dashboard",

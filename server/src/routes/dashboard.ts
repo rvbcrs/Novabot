@@ -83,6 +83,7 @@ import { startSourceDockCycle, sourceDockCycle } from '../services/sourceDockCyc
 import { startDockReturn, dockReturn } from '../services/dockReturnCycle.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
+import { deriveMowerActivity } from '../mqtt/mowerActivity.js';
 import { MOW_PARA_SETTLE_MS, edgeObstacleLevel, startEdgeCuts } from '../services/mowingService.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
 import {
@@ -217,10 +218,30 @@ dashboardRouter.get('/server-update', async (req: Request, res: Response) => {
   const T = reqT(req);
   try {
     const { checkServerUpdate } = await import('./adminStatus.js');
-    res.json(await checkServerUpdate());
+    const { selfUpdateStatus } = await import('../services/selfUpdate.js');
+    res.json({ ...await checkServerUpdate(), selfUpdate: await selfUpdateStatus(), mowing: mowersAtWork() });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : T`Updatecontrole mislukt` });
   }
+});
+
+/** Mowers out on a job: an update restarts the server, the dashboard warns first. */
+function mowersAtWork(): string[] {
+  const out: string[] = [];
+  for (const [sn, cache] of deviceCache) {
+    if (!sn.startsWith('LFIN') || !isDeviceOnline(sn)) continue;
+    const activity = deriveMowerActivity(Object.fromEntries(cache), { online: true });
+    if (['mowing', 'edge_cutting', 'returning', 'mapping'].includes(activity)) out.push(sn);
+  }
+  return out;
+}
+
+// POST /api/dashboard/server-update/apply — "Update now": a helper container
+// pulls the new image and recreates the OpenNova services (services/selfUpdate.ts).
+dashboardRouter.post('/server-update/apply', async (_req: Request, res: Response) => {
+  const { startSelfUpdate } = await import('../services/selfUpdate.js');
+  const result = await startSelfUpdate();
+  res.status(result.ok ? 200 : 409).json(result);
 });
 
 // Load persisted device settings into in-memory sensor cache at startup.

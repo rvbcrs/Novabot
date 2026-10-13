@@ -57,6 +57,11 @@ services:
       # OTA_BASE_URL: http://192.168.1.50:8080
     volumes:
       - ./data:/data
+      # ── Optional: "Update now" button in the dashboard ───────────────
+      # Lets the server pull its new image and restart itself. This gives the
+      # container control over Docker on this machine; leave it off if that
+      # is not what you want, and update from the terminal instead.
+      # - /var/run/docker.sock:/var/run/docker.sock
 
   # Advertises opennova.local on your LAN so mowers with custom firmware find
   # the server by name. Nothing to configure. On Docker Desktop it exits by

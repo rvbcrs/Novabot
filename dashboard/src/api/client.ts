@@ -1367,6 +1367,16 @@ export interface ServerUpdateInfo {
   latest: string | null;
   updateAvailable: boolean;
   lastUpdatedAt: string | null;
+  /** "Update now" works here (Docker socket mounted, compose install). */
+  selfUpdate?: { available: boolean; reason?: string };
+  /** Mowers out on a job right now: warn before the server restarts. */
+  mowing?: string[];
+}
+
+/** Start the update: a helper container pulls the new image and recreates the server. */
+export async function applyServerUpdate(): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${BASE}/server-update/apply`, { method: 'POST' });
+  return res.json().catch(() => ({ ok: false }));
 }
 
 /**

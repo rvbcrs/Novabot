@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowUpCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { getServerUpdate, type ServerUpdateInfo } from '../api/client';
+import { getServerUpdate, applyServerUpdate, type ServerUpdateInfo } from '../api/client';
+import { useDialog } from '../components/common/Dialog';
 
 const POLL_MS = 10 * 60 * 1000; // match the admin panel; server caches 5 min
 const DISMISS_KEY = 'novabot.update.dismissed';
@@ -19,6 +20,27 @@ export function UpdateBanner() {
     try { return localStorage.getItem(DISMISS_KEY) || ''; } catch { return ''; }
   });
   const [showHow, setShowHow] = useState(false);
+  const dialog = useDialog();
+  // 'updating' = the helper runs; the page reloads once the new version answers.
+  const [phase, setPhase] = useState<'idle' | 'updating' | 'slow' | 'failed'>('idle');
+  const [failure, setFailure] = useState('');
+  const fromVersion = useRef('');
+
+  useEffect(() => {
+    if (phase !== 'updating') return;
+    const started = Date.now();
+    let wentDown = false;
+    const id = setInterval(() => {
+      // While the container is replaced the request fails; that is expected.
+      // Back after being away counts too: a pinned tag or :beta restarts on
+      // the same version number.
+      getServerUpdate().then(i => {
+        if (wentDown || (i.current && i.current !== fromVersion.current)) window.location.reload();
+      }).catch(() => { wentDown = true; });
+      if (Date.now() - started > 5 * 60_000) { setPhase('slow'); clearInterval(id); }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [phase]);
 
   useEffect(() => {
     let alive = true;
@@ -34,6 +56,24 @@ export function UpdateBanner() {
 
   if (!info || !info.updateAvailable || !info.latest) return null;
   if (info.latest === dismissed) return null;
+
+  const updateNow = async () => {
+    const mowing = info.mowing ?? [];
+    const ok = await dialog.confirm({
+      title: t('update.confirmTitle', { latest: info.latest }),
+      message: mowing.length
+        ? `${t('update.confirmMowing', { count: mowing.length })}\n\n${t('update.confirmBody')}`
+        : t('update.confirmBody'),
+      confirmLabel: t('update.updateNow'),
+      variant: mowing.length ? 'warning' : 'info',
+    });
+    if (!ok) return;
+    fromVersion.current = info.current;
+    const result = await applyServerUpdate().catch(() => ({ ok: false, error: '' }));
+    if (result.ok) { setPhase('updating'); return; }
+    setFailure(result.error ?? '');
+    setPhase('failed');
+  };
 
   const dismiss = () => {
     setDismissed(info.latest!);
@@ -52,6 +92,14 @@ export function UpdateBanner() {
         <span className="font-semibold">{t('update.title')}</span>
         <span className="text-violet-200/80">{detail}</span>
         <div className="ml-auto flex items-center gap-2">
+          {info.selfUpdate?.available && phase !== 'updating' && (
+            <button
+              onClick={updateNow}
+              className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors"
+            >
+              {t('update.updateNow')}
+            </button>
+          )}
           <button
             onClick={() => setShowHow(v => !v)}
             className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium transition-colors"
@@ -68,9 +116,17 @@ export function UpdateBanner() {
           </button>
         </div>
       </div>
+      {phase !== 'idle' && (
+        <p className={`mt-1 pl-6 text-xs ${phase === 'failed' ? 'text-red-300' : 'text-violet-200/90'}`}>
+          {phase === 'updating' ? t('update.updating') : phase === 'slow' ? t('update.slow') : `${t('update.failed')}${failure ? `: ${failure}` : ''}`}
+        </p>
+      )}
       {showHow && (
         <div className="mt-2 pl-6">
           <p className="text-xs text-violet-200/80 mb-1">{t('update.instructions')}</p>
+          {!info.selfUpdate?.available && (
+            <p className="text-xs text-violet-200/70 mb-1">{t('update.enableButton')}</p>
+          )}
           <pre className="text-[11px] font-mono bg-black/40 border border-violet-700/40 rounded-md px-3 py-2 text-emerald-300 overflow-x-auto">docker compose pull
 docker compose up -d</pre>
         </div>
