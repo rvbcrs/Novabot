@@ -37,6 +37,17 @@ describe('firmware advisory', () => {
     expect(adviseVersion('v6.0.2-custom-44', null).required).toBe(false);
   });
 
+  it('offers a newer custom build as optional; never to stock, never a downgrade', () => {
+    const a = adviseVersion('v6.0.2-custom-40', manifest);
+    expect(a).toMatchObject({ required: false, updateAvailable: true, reason: null });
+    expect(a.target?.version).toBe('v6.0.2-custom-45');
+    expect(adviseVersion('v6.0.2-custom-44', manifest)).toMatchObject({ required: true, updateAvailable: true });
+    expect(adviseVersion('v6.0.2-custom-45', manifest).updateAvailable).toBe(false);
+    expect(adviseVersion('v6.0.2-custom-46', manifest)).toMatchObject({ updateAvailable: false, target: null });
+    expect(adviseVersion('v6.0.2', manifest).updateAvailable).toBe(false);
+    expect(adviseVersion('v5.7.1', manifest).updateAvailable).toBe(false);
+  });
+
   it('knows when the target is already on this server', () => {
     otaVersionRepo.create({ version: 'v6.0.2-custom-45', device_type: 'mower', download_url: 'http://s/45.deb' });
     expect(adviseVersion('v6.0.2-custom-43', manifest).target?.downloaded).toBe(true);

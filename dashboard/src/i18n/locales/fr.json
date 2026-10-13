@@ -1317,6 +1317,13 @@
     "downloading": "(téléchargement de la mise à jour…)",
     "action": "Mettre à jour"
   },
+  "firmwareUpdate": {
+    "title": "Le firmware {{target}} est disponible",
+    "detail": "(la tondeuse utilise {{current}})",
+    "action": "Mettre à jour",
+    "fetching": "Téléchargement de la mise à jour sur ce serveur…",
+    "fetchFailed": "La mise à jour n'a pas pu être téléchargée sur ce serveur. Réessayez plus tard, ou utilisez l'onglet Firmware du panneau d'administration."
+  },
   "drawer": {
     "dockDrift": {
       "title": "Position sur la station",

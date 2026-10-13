@@ -1353,6 +1353,13 @@
     "downloading": "(downloading the update…)",
     "action": "Update now"
   },
+  "firmwareUpdate": {
+    "title": "Firmware {{target}} is available",
+    "detail": "(the mower runs {{current}})",
+    "action": "Update",
+    "fetching": "Downloading the update to this server…",
+    "fetchFailed": "The update could not be downloaded to this server. Try again later, or use the Firmware tab in the admin panel."
+  },
   "drawer": {
     "dockDrift": {
       "title": "Position on the dock",

@@ -1317,6 +1317,13 @@
     "downloading": "(Update wird heruntergeladen…)",
     "action": "Jetzt aktualisieren"
   },
+  "firmwareUpdate": {
+    "title": "Firmware {{target}} ist verfügbar",
+    "detail": "(der Mäher läuft mit {{current}})",
+    "action": "Aktualisieren",
+    "fetching": "Das Update wird auf diesen Server heruntergeladen…",
+    "fetchFailed": "Das Update konnte nicht auf diesen Server heruntergeladen werden. Versuchen Sie es später erneut oder nutzen Sie den Tab Firmware im Admin-Bereich."
+  },
   "drawer": {
     "dockDrift": {
       "title": "Position auf der Ladestation",

@@ -38,6 +38,8 @@ export interface Manifest {
 
 export interface FirmwareAdvisory {
   required: boolean;
+  /** the manifest has a newer custom build; optional unless `required` */
+  updateAvailable: boolean;
   /** what the mower runs */
   current: string | null;
   reason: string | null;
@@ -89,13 +91,19 @@ function newestMower(manifest: Manifest): ManifestEntry | null {
 
 /** Pure: the verdict for one reported version against a manifest. */
 export function adviseVersion(version: string | null, manifest: Manifest | null): FirmwareAdvisory {
-  const none: FirmwareAdvisory = { required: false, current: version, reason: null, target: null };
-  if (!version || !manifest || customBuildNumber(version) == null) return none;
+  const none: FirmwareAdvisory = { required: false, updateAvailable: false, current: version, reason: null, target: null };
+  const build = customBuildNumber(version);
+  if (!version || !manifest || build == null) return none;
   const reason = manifest.withdrawn?.[version] ?? null;
   const target = newestMower(manifest);
-  if (!reason || !target || target.version === version) return none;
+  if (!target || target.version === version) return none;
+  const newer = (customBuildNumber(target.version) ?? 0) > build;
+  if (!reason && !newer) return none;
   const local = otaVersionRepo.listAll().find(v => v.version === target.version && v.device_type === 'mower');
-  return { required: true, current: version, reason, target: { version: target.version, description: target.description ?? '', downloaded: !!local, versionId: local?.id ?? null } };
+  return {
+    required: !!reason, updateAvailable: newer, current: version, reason,
+    target: { version: target.version, description: target.description ?? '', downloaded: !!local, versionId: local?.id ?? null },
+  };
 }
 
 // sensorData pulls the whole broker chain in at import time; the pure parts
@@ -140,7 +148,7 @@ export async function ensureTargetDownloaded(entry: ManifestEntry): Promise<bool
       md5, sha256: crypto.createHash('sha256').update(buf).digest('hex'), size: buf.length,
       signature: null, signing_key_id: null, release_notes: entry.description ?? null,
     });
-    console.log(`[FW-ADVISORY] ${entry.version} downloaded for a required update (${(buf.length / 1048576).toFixed(1)} MB)`);
+    console.log(`[FW-ADVISORY] ${entry.version} downloaded (${(buf.length / 1048576).toFixed(1)} MB)`);
     return true;
   } catch (e) {
     console.warn('[FW-ADVISORY] download failed:', e instanceof Error ? e.message : e);

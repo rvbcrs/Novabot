@@ -920,6 +920,20 @@ dashboardRouter.get('/firmware-advisory/:sn', async (req: Request, res: Response
   res.json({ ok: true, ...adv });
 });
 
+// POST /api/dashboard/firmware-advisory/:sn/fetch — the optional update: pull
+// the newer build into this server when the user asks for it, not before.
+dashboardRouter.post('/firmware-advisory/:sn/fetch', async (req: Request, res: Response) => {
+  const adv = await firmwareAdvisory(req.params.sn);
+  if (!adv.target) { res.status(409).json({ ok: false, error: 'no newer firmware' }); return; }
+  if (!adv.target.downloaded) {
+    const entry = (await getManifest())?.firmwares.find(f => f.version === adv.target!.version);
+    if (!entry || !await ensureTargetDownloaded(entry)) { res.status(502).json({ ok: false, error: 'download failed' }); return; }
+    adv.target.downloaded = true;
+    adv.target.versionId = otaVersionRepo.listAll().find(v => v.version === entry.version && v.device_type === 'mower')?.id ?? null;
+  }
+  res.json({ ok: true, ...adv });
+});
+
 // GET /api/dashboard/dock-drift/:sn — does the mower park where it used to?
 // Daily median offset of the docked (RTK Fixed) position from the first
 // dockings; a walk means the station's antenna or the map frame moved.

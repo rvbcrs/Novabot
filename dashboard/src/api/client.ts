@@ -1570,12 +1570,19 @@ export async function fetchDockDrift(sn: string, days = 90): Promise<DockDriftDt
 // ── Firmware advisory: the mower's custom build was withdrawn ──────────
 export interface FirmwareAdvisoryDto {
   required: boolean;
+  /** a newer custom build exists; optional unless `required` */
+  updateAvailable?: boolean;
   current: string | null;
   reason: string | null;
   target: { version: string; description: string; downloaded: boolean; versionId: number | null } | null;
 }
 export async function fetchFirmwareAdvisory(sn: string): Promise<FirmwareAdvisoryDto> {
   return (await get(`${BASE}/firmware-advisory/${encodeURIComponent(sn)}`)).json() as Promise<FirmwareAdvisoryDto>;
+}
+/** Pull the advised build into this server (optional update: only on request). */
+export async function fetchFirmwareUpdate(sn: string): Promise<FirmwareAdvisoryDto & { ok: boolean }> {
+  const res = await apiFetch(`${BASE}/firmware-advisory/${encodeURIComponent(sn)}/fetch`, { method: 'POST' });
+  return res.json();
 }
 
 /** Clear the mower's current error the way the firmware allows it: a task
