@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "2026.1013.2326",
+      "date": "2026-10-13",
+      "sections": {
+        "server": [
+          "The last zone can be deleted, dock channel and all",
+          "Judge a moved station by the RTK position, not the map position"
+        ]
+      }
+    },
+    {
       "version": "2026.1013.1529",
       "date": "2026-10-13",
       "sections": {
@@ -235,16 +245,6 @@
         "server": [
           "Finished_area is one text sensor, not a measurement",
           "An obstacle keeps its name when the mower re-uploads"
-        ]
-      }
-    },
-    {
-      "version": "2026.0919.1559",
-      "date": "2026-09-19",
-      "sections": {
-        "server": [
-          "Error 130 (localization collapsed) is a gps_weak event with a readable message",
-          "The dock anchor is only ever map0tocharge_unicom; deleting that channel is refused"
         ]
       }
     }
