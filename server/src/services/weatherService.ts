@@ -80,20 +80,28 @@ export async function getWeatherForecast(lat: number, lng: number): Promise<Weat
 
 /**
  * Bepaal of maaien gepauzeerd moet worden op basis van weersvoorspelling.
- * Kijkt naar de komende `hoursAhead` uren.
+ * Kijkt naar het lopende uur en de komende `hoursAhead` uren.
+ *
+ * Open-Meteo's uurwaarden gelden voor het VOORAFGAANDE uur: het slot van 15:00
+ * is de regen van 14:00 tot 15:00. Het lopende uur zit dus in het eerste slot
+ * ná nu. Met de standaard 0,5 u viel dat slot tussen :00 en :29 buiten het
+ * venster, en werd regen die nu valt niet gezien (#156).
  */
 export function shouldPauseForRain(
   forecast: WeatherForecast,
   thresholdMm: number,
   thresholdProbability: number,
   hoursAhead: number,
+  now = Date.now(),
 ): boolean {
-  const now = Date.now();
-  const cutoff = now + hoursAhead * 60 * 60 * 1000;
+  const HOUR = 60 * 60 * 1000;
+  // Slot T dekt (T - 1 u, T]; het overlapt [now, now + hoursAhead] als
+  // now <= T < now + hoursAhead + 1 u.
+  const cutoff = now + hoursAhead * HOUR + HOUR;
 
   for (const h of forecast.hourly) {
     if (h.epochMs < now) continue;
-    if (h.epochMs > cutoff) break;
+    if (h.epochMs >= cutoff) break;
 
     if (h.precipitation >= thresholdMm || h.precipitationProbability >= thresholdProbability) {
       return true;
