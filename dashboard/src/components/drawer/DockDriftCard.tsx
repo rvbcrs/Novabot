@@ -52,10 +52,13 @@ export function DockDriftCard({ sn }: { sn: string | null }) {
   }
 
   const cm = (m: number) => Math.round(m * 100);
-  const latestCm = cm(data.latest.dist);
+  // The RTK offset says whether the station moved; the map offset on the dock
+  // is ~1.3 m off after a restart until the mower drives (server dockDrift.ts).
+  const off = (d: { dist: number; gpsDist: number | null }) => d.gpsDist ?? d.dist;
+  const latestCm = cm(off(data.latest));
   const color = COLOR[data.status];
   const days = data.daily;
-  const maxCm = Math.max(FAIL_CM + 5, ...days.map(d => cm(d.dist)));
+  const maxCm = Math.max(FAIL_CM + 5, ...days.map(d => cm(off(d))));
 
   // One bar per day; the two thresholds as faint lines behind them.
   const W = 240, H = 48;
@@ -73,7 +76,7 @@ export function DockDriftCard({ sn }: { sn: string | null }) {
         <line x1={0} x2={W} y1={yOf(WARN_CM)} y2={yOf(WARN_CM)} stroke={COLOR.warn} strokeWidth="0.5" opacity="0.5" vectorEffect="non-scaling-stroke" />
         <line x1={0} x2={W} y1={yOf(FAIL_CM)} y2={yOf(FAIL_CM)} stroke={COLOR.fail} strokeWidth="0.5" opacity="0.5" vectorEffect="non-scaling-stroke" />
         {days.map((d, i) => {
-          const c = cm(d.dist);
+          const c = cm(off(d));
           const fill = c >= FAIL_CM ? COLOR.fail : c >= WARN_CM ? COLOR.warn : COLOR.ok;
           return <rect key={d.ts} x={i * gap} y={yOf(c)} width={barW} height={H - yOf(c)} fill={fill} opacity="0.9"><title>{`${d.ts}: ${c} cm`}</title></rect>;
         })}
@@ -84,7 +87,6 @@ export function DockDriftCard({ sn }: { sn: string | null }) {
       </div>
       <p className="text-[11px] mt-1.5" style={{ color }}>
         {data.status === 'ok' ? t('drawer.dockDrift.ok') : t('drawer.dockDrift.moved', { cm: latestCm })}
-        {data.latest.gpsDist != null && data.status !== 'ok' && ` ${t('drawer.dockDrift.gps', { cm: cm(data.latest.gpsDist) })}`}
       </p>
     </div>
   );

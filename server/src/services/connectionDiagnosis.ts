@@ -15,7 +15,7 @@
  * something to infer.
  */
 import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
-import { computeDockDrift } from './dockDrift.js';
+import { computeDockDrift, stationOffset } from './dockDrift.js';
 import { adviseVersion, getManifest } from './firmwareAdvisory.js';
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
@@ -1003,7 +1003,7 @@ export async function diagnoseConnection(
       if (drift.status === 'unknown' || !drift.latest || !drift.referenceAt) {
         push({ id: 'dock_drift', group: 'ready', status: 'unknown', evidence: T`nog te weinig dockingen gezien om de positie te vergelijken` });
       } else {
-        const cm = Math.round(drift.latest.dist * 100);
+        const cm = Math.round(stationOffset(drift.latest) * 100);
         const since = drift.referenceAt.slice(0, 10);
         push({
           id: 'dock_drift',

@@ -17,13 +17,13 @@ describe('dock drift', () => {
 
     const walking = computeDockDrift([
       row('2026-09-01', 0, 0), row('2026-09-02', 0.01, 0), row('2026-09-03', 0, 0.01),
-      row('2026-09-12', 0.06, 0.03),
+      row('2026-09-12', 0.06, 0.03, 52.00000063, 5.0),   // the station moved ~7 cm
     ]);
     expect(walking.status).toBe('warn');
     expect(walking.referenceAt).toBe('2026-09-01 10:00:00');
     expect(Math.round(walking.latest!.dist * 100)).toBe(7);
 
-    const gone = computeDockDrift([row('2026-09-01', 0, 0), row('2026-09-02', 0, 0), row('2026-09-20', 0.20, 0)]);
+    const gone = computeDockDrift([row('2026-09-01', 0, 0), row('2026-09-02', 0, 0), row('2026-09-20', 0.20, 0, 52.0000018, 5.0)]);
     expect(gone.status).toBe('fail');
   });
 
@@ -42,5 +42,25 @@ describe('dock drift', () => {
 
   it('needs at least two stints', () => {
     expect(computeDockDrift([row('2026-09-01', 0, 0)]).status).toBe('unknown');
+  });
+});
+
+describe('dock drift judges the station by RTK (live LFIN2230700238)', () => {
+  // The map position on the dock sat ~1.3 m off after a restart while the RTK
+  // position stayed within a few cm: the station never moved, mowing was fine.
+  it('a wandering map position with a steady RTK position is ok', () => {
+    const d = computeDockDrift([row('2026-09-23', 0, 0), row('2026-09-24', 0, 0), row('2026-09-25', 0, 0),
+      row('2026-10-13', -1.29, 0.42, 52.0000001, 5.0)]);
+    expect(d.latest!.dist).toBeGreaterThan(1.3);
+    expect(d.status).toBe('ok');
+  });
+  it('a moved RTK position warns, also with the map position in place', () => {
+    const d = computeDockDrift([row('2026-09-01', 0, 0), row('2026-09-02', 0, 0),
+      row('2026-09-09', 0, 0, 52.0000018, 5.0)]);   // ~20 cm north
+    expect(d.status).toBe('fail');
+  });
+  it('without GPS in the samples the map offset still counts', () => {
+    const noGps = (day: string, x: number) => ({ ...row(day, x, 0), lat: null, lng: null });
+    expect(computeDockDrift([noGps('2026-09-01', 0), noGps('2026-09-02', 0), noGps('2026-09-09', 0.2)]).status).toBe('fail');
   });
 });

@@ -233,7 +233,7 @@ export function dispatchDockDriftEvent(sn: string, driftCm: number, sinceIso: st
     sn,
     'dock_drift',
     TITLE_BY_TYPE.dock_drift,
-    `The mower parks ${driftCm} cm away from where it did on ${sinceIso.slice(0, 10)}. The station's antenna or the map frame moved; check the station and the zone edges.`,
+    `The mower stands ${driftCm} cm from where it stood on the dock on ${sinceIso.slice(0, 10)}, measured by RTK. The charging station or its antenna has probably moved; check it, and re-anchor if it stands right.`,
     { drift_cm: driftCm, since: sinceIso },
   ));
 }

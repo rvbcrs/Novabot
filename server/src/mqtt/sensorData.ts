@@ -17,7 +17,7 @@ import { scheduleRepo } from '../db/repositories/schedules.js';
 import { mapRepo } from '../db/repositories/maps.js';
 import { mowProgressRepo } from '../db/repositories/mowProgress.js';
 import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
-import { computeDockDrift, median, DOCK_DRIFT_WARN_M } from '../services/dockDrift.js';
+import { computeDockDrift, median, stationOffset } from '../services/dockDrift.js';
 import { dispatchDockDriftEvent } from '../notifications/eventDetector.js';
 import { pointInPolygon } from '../maps/editGeometry.js';
 import { detectAndDispatch, resetEventState } from '../notifications/eventDetector.js';
@@ -868,10 +868,10 @@ function commitDockStint(sn: string, now = Date.now()): void {
   try {
     dockSamplesRepo.insert(sn, median(st.xs), median(st.ys), lat, lng, st.xs.length);
     const drift = computeDockDrift(dockSamplesRepo.listSince(sn, 90));
-    if (drift.latest && drift.latest.dist >= DOCK_DRIFT_WARN_M && drift.referenceAt
+    if (drift.latest && (drift.status === 'warn' || drift.status === 'fail') && drift.referenceAt
         && now - (dockDriftNotifiedAt.get(sn) ?? 0) > DOCK_STINT_MAX_MS) {
       dockDriftNotifiedAt.set(sn, now);
-      dispatchDockDriftEvent(sn, Math.round(drift.latest.dist * 100), drift.referenceAt);
+      dispatchDockDriftEvent(sn, Math.round(stationOffset(drift.latest) * 100), drift.referenceAt);
     }
   } catch (e) {
     console.warn(`[DOCK-DRIFT] ${sn}: sample not stored:`, e instanceof Error ? e.message : e);

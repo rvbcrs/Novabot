@@ -4,6 +4,17 @@
  * map position must repeat to a few centimetres. When it walks over days,
  * the station's antenna (the RTK base) moved, or the map frame did, and the
  * zones no longer lie where they were driven.
+ *
+ * Whether the station moved is the RTK position's question, not the map
+ * position's. The map position on the dock is the localisation's estimate,
+ * and that sits about 1.3 m off after a restart until the mower has driven
+ * (live LFIN2230700238, Sept/Oct 2026: map offset 0.04-1.46 m day to day,
+ * the RTK position within 5 cm). Judging by the map position warned every
+ * day about a station that never moved. The map offset is the fallback for
+ * samples without GPS.
+ * ponytail: a map frame that shifted for good with the station in place is
+ * not caught here; deliberate frame changes reset the samples anyway
+ * (markFrameUnvalidated).
  */
 import type { DockSampleRow } from '../db/repositories/dockSamples.js';
 
@@ -32,6 +43,12 @@ export interface DockDrift {
   /** One point per day: the median offset of that day's stints. */
   daily: DockDriftPoint[];
   status: 'ok' | 'warn' | 'fail' | 'unknown';
+}
+
+/** How far the mower stands from its reference spot on the dock: the RTK
+ *  offset, or the map offset for a sample without GPS. */
+export function stationOffset(p: DockDriftPoint): number {
+  return p.gpsDist ?? p.dist;
 }
 
 export function median(values: number[]): number {
@@ -80,8 +97,8 @@ export function computeDockDrift(samples: DockSampleRow[]): DockDrift {
   // (half on the dock, no fix) must not raise the alarm.
   const latest = daily[daily.length - 1] ?? null;
   const status = !latest ? 'unknown'
-    : latest.dist >= DOCK_DRIFT_FAIL_M ? 'fail'
-    : latest.dist >= DOCK_DRIFT_WARN_M ? 'warn'
+    : stationOffset(latest) >= DOCK_DRIFT_FAIL_M ? 'fail'
+    : stationOffset(latest) >= DOCK_DRIFT_WARN_M ? 'warn'
     : 'ok';
   return { referenceAt: ref[0].ts, reference, latest, daily, status };
 }
