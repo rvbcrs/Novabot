@@ -2343,7 +2343,10 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
   // The cascade below takes the zone's channels along, the dock channel too, so
   // deleting the zone went around the guard above. A user lost the only dock
   // channel that way, and with it re-anchoring and every map push (Oct 2026).
-  if (mapRepo.findDockChannelOwnedBy(row, sn)) {
+  // The last zone may go: nothing is left hanging off the anchor, and that is
+  // how the stock app starts over (its delete takes the zone's channels along).
+  const otherZones = mapRepo.findByMowerSn(sn).some(r => r.map_id !== row.map_id && (r.map_type ?? 'work') === 'work');
+  if (otherZones && mapRepo.findDockChannelOwnedBy(row, sn)) {
     res.status(409).json({
       ok: false,
       reason: 'dock_channel_zone',

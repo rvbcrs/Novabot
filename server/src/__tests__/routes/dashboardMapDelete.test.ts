@@ -179,6 +179,26 @@ describe('DELETE map route — follow-up commands to the mower', () => {
     expect(mapRepo.findByMowerSn(SN).map(m => m.map_id)).toEqual(expect.arrayContaining(['del-map0', 'del-dock0']));
   });
 
+  // Field report (Eric, Oct 2026): a single test zone could not be deleted to
+  // start over. With no other zone nothing hangs off the dock channel, and the
+  // stock app's delete takes the zone's channels along too.
+  it('laat de laatste zone wel wissen, met haar dok-kanaal', async () => {
+    mapRepo.deleteWithCascade('del-map1', SN);
+    mapRepo.create({
+      map_id: 'del-map0', mower_sn: SN, map_name: 'test', canonical_name: 'map0', file_name: 'map0.csv',
+      map_area: JSON.stringify([{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }]), map_type: 'work',
+    });
+    mapRepo.create({
+      map_id: 'del-dock0', mower_sn: SN, map_name: 'charge', canonical_name: 'map0tocharge_unicom',
+      file_name: 'map0tocharge_unicom.csv', map_area: JSON.stringify([{ x: 1, y: 1 }, { x: 2, y: 1 }]), map_type: 'unicom',
+    });
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map0`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2])
+      .toMatchObject({ map_name: 'map0', map_type: 1 });
+    expect(mapRepo.findByMowerSn(SN)).toHaveLength(0);
+  });
+
   it('stuurt map_type mee: zonder dat veld wist de firmware niets', async () => {
     await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     const payload = vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2] as
