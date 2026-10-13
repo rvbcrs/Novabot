@@ -213,7 +213,12 @@ def current_zone_slot(xy):
     """Return 'dock', 'mapN', or None for a map-frame position."""
     if xy is None:
         return None
-    if _dist(xy, (0.0, 0.0)) <= DOCK_RADIUS:
+    # The anchor IS the dock; the origin only roughly (the pos.json origin is
+    # the charger's GPS, 0.5-0.8 m from the anchor on the mowers measured).
+    # A docked mower must always read as "dock": that is what routes it to
+    # the firmware's own departure instead of a nav2 drive off the dock.
+    anchor = _dock_anchor()
+    if _dist(xy, (0.0, 0.0)) <= DOCK_RADIUS or (anchor and _dist(xy, anchor) <= DOCK_RADIUS):
         return "dock"
     base = _csv_base()
     try:
@@ -870,21 +875,88 @@ def _zone_containing(xy):
     return None
 
 
+DOCK_ZONE_NEAR_M = 2.0   # a dock beside its zone, not in it, still belongs to it
+
+
+def _dock_channel():
+    """(zone, first point) of the dock channel: mapNtocharge_unicom.csv, the
+    lowest N first. Usually map0, but a garden whose first zone was deleted
+    has its channel under another one (the server takes any mapNtocharge too,
+    services/anchor.ts). Only map0 counted here, so such a mower had no dock
+    zone and every edge cut but the dock's ended in no_route_to_zone (#142)."""
+    for base in (f"{MAPS_HOME}/x3_csv_file", f"{MAPS_HOME}/csv_file"):
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        hits = sorted((int(m.group(1)), f) for f in names
+                      for m in [re.fullmatch(r"map(\d+)tocharge_unicom\.csv", f)] if m)
+        for n, f in hits:
+            pts = read_xy_csv(os.path.join(base, f))
+            if pts:
+                return f"map{n}", pts[0]
+    return None, None
+
+
 def _dock_anchor():
-    """Where the charging station stands: the FIRST point of
-    map0tocharge_unicom.csv, which is what the firmware writes as the anchor."""
-    for p in (f"{MAPS_HOME}/x3_csv_file/map0tocharge_unicom.csv",
-              f"{MAPS_HOME}/csv_file/map0tocharge_unicom.csv"):
-        pts = read_xy_csv(p)
-        if pts:
-            return pts[0]
-    return None
+    """Where the charging station stands: the FIRST point of the dock channel,
+    which is what the firmware writes as the anchor."""
+    return _dock_channel()[1]
+
+
+def _dist_to_poly(p, poly):
+    """Distance from a point to a polygon's boundary."""
+    best = float("inf")
+    for a, b in zip(poly, poly[1:] + poly[:1]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)))
+        best = min(best, _dist(p, (a[0] + t * dx, a[1] + t * dy)))
+    return best
 
 
 def _dock_zone():
-    """Zone the charging station stands in: the polygon around the dock anchor."""
+    """Zone the charging station belongs to: the polygon around the dock
+    anchor; for a dock just outside every zone the zone its channel is named
+    after, else the nearest zone within DOCK_ZONE_NEAR_M."""
+    zone, anchor = _dock_channel()
+    if not anchor:
+        return None
+    inside = _zone_containing(anchor)
+    if inside:
+        return inside
+    polys = {z: p for z, p in _work_polys().items() if len(p) >= 3}
+    if zone in polys:
+        return zone
+    near = sorted((_dist_to_poly(anchor, p), z) for z, p in polys.items())
+    return near[0][1] if near and near[0][0] <= DOCK_ZONE_NEAR_M else None
+
+
+NEAR_ZONE_M = 2.0        # a robot this close to a zone's border starts from it
+NEAR_DOCK_M = 3.0        # still at the dock after the firmware's 1 m departure
+
+
+def _start_zone(robot, from_slot):
+    """The zone a route starts from. "dock" is the dock's zone. A robot in no
+    polygon at all (a dock pad beside the lawn, a departure that ended past
+    the border) starts from the zone within NEAR_ZONE_M, else from the dock's
+    zone while it is still near the dock. Mowing never noticed this: with no
+    start zone it hands the task to the firmware. An edge cut has nothing to
+    fall back on and was refused with no_route_to_zone (#142, live: on
+    LFIN1231000211 the anchor is 6 cm outside map0)."""
+    if from_slot == "dock":
+        return _dock_zone()
+    if from_slot:
+        return from_slot
+    if robot is None:
+        return None
+    polys = {z: p for z, p in _work_polys().items() if len(p) >= 3}
+    near = sorted((_dist_to_poly(robot, p), z) for z, p in polys.items())
+    if near and near[0][0] <= NEAR_ZONE_M:
+        return near[0][1]
     anchor = _dock_anchor()
-    return _zone_containing(anchor) if anchor else None
+    if anchor and _dist(robot, anchor) <= NEAR_DOCK_M:
+        return _dock_zone()
+    return None
 
 
 def find_stale_mow_drives(proc_root="/proc", self_pid=None):
@@ -1166,9 +1238,14 @@ def _edge_transit(drv, base, robot, from_slot, to_slot, already_in):
     the edge cut of that zone from where the mower stands."""
     # Still within the dock disc after the departure: the route starts in the
     # dock's zone.
-    route_from = _dock_zone() if from_slot == "dock" else from_slot
+    route_from = _start_zone(robot, from_slot)
     hops = [] if already_in else edge_route(route_from, to_slot)
+    log(f"edge transit: robot={robot} from={from_slot} start zone={route_from} "
+        f"to={to_slot} already_in={already_in} hops={[(k, z) for k, _f, z in hops]}")
     if not already_in and route_from != to_slot and not hops:
+        log(f"edge: no route from {route_from} to {to_slot}; dock zone={_dock_zone()} "
+            f"anchor={_dock_anchor()} zones={sorted(_work_polys())} "
+            f"channels={sorted(f for f in os.listdir(base) if f.endswith('_unicom.csv')) if os.path.isdir(base) else []}")
         phase("error", "no_route_to_zone")
         return 1
     if hops:
@@ -1236,9 +1313,11 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
         # start it again is what produced "Cannot start a new task when last
         # task is executing" (live .244, 2026-09-14).
         home = _dock_zone()
+        log(f"on the dock: dock zone={home} anchor={_dock_anchor()} to={to_slot} edge={edge}")
         if edge:
             if to_slot != home and not edge_route(home, to_slot):
-                log(f"edge: on the dock, no channel or touching zones {home}->{to_slot}")
+                log(f"edge: on the dock, no channel or touching zones {home}->{to_slot}; "
+                    f"zones={sorted(_work_polys())}")
                 phase("error", "no_route_to_zone")
                 return 1
         elif not _channel_files(home, to_slot):
@@ -1266,7 +1345,7 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
                       point_in_poly(robot[0], robot[1], target_poly))
     if edge:
         return _edge_transit(drv, base, robot, from_slot, to_slot, already_in)
-    uni = _channel_files(from_slot, to_slot) if not already_in else []
+    uni = _channel_files(_start_zone(robot, from_slot), to_slot) if not already_in else []
     if uni:
         log(f"transit route {from_slot} -> {to_slot}: {' + '.join(uni)}")
         phase("following_unicom")

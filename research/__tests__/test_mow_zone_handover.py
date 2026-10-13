@@ -93,6 +93,27 @@ def test_no_anchor_means_no_dock_zone():
     assert mzd._dock_zone() is None
 
 
+def test_dock_channel_under_another_zone():
+    # #142: the first zone was deleted, the dock channel is map2tocharge.
+    with_maps({"map2_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map2tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
+    assert mzd._dock_anchor() == (0.5, 0.7)
+    assert mzd._dock_zone() == "map2"
+
+
+def test_dock_just_outside_its_zone():
+    # Named after map0, standing 0.4 m outside it: still map0.
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": [(-0.4, 5), (1, 5)]})
+    assert mzd._dock_zone() == "map0"
+    # Named after a zone without a polygon: the nearest zone within 2 m...
+    with_maps({"map6_work.csv": SQ6, "map1tocharge_unicom.csv": [(41.5, 5), (39, 5)]})
+    assert mzd._dock_zone() == "map6"
+    # ...and none when nothing is that close.
+    with_maps({"map6_work.csv": SQ6, "map1tocharge_unicom.csv": [(45, 5), (39, 5)]})
+    assert mzd._dock_zone() is None
+
+
 RAMON = [   # de echte kanalen op LFIN2230700238, 2026-09-14
     "map0tocharge_unicom.csv",
     "map0tomap3_0_unicom.csv",
@@ -443,6 +464,59 @@ def test_edge_route_chains_a_channel_and_a_touching_zone():
     rc, seen = run_edge(drv, "map8")
     assert rc == 0 and seen[-1] == ("edge_ready",), seen
     assert drv.calls.index(("follow_path",)) < len(drv.calls) - 1 and drv.calls[-1] == ("nav_to",)
+
+
+# #142 second round (Walter, custom-48): the fixes above did not help him,
+# and LFIN1231000211 shows why: its dock anchor lies 6 cm OUTSIDE map0. Then
+# the dock had no zone, every edge cut but the dock's was refused before it
+# moved, and mowing hid it by handing the task to the firmware.
+DOCK_PAD = [(-0.06, 5.0), (2.0, 5.0)]    # map0tocharge: anchor just outside SQ0
+
+
+def test_dock_is_detected_by_the_anchor_too():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": [(2.0, 0.5), (3, 3)]})
+    assert mzd.current_zone_slot((2.1, 0.6)) == "dock"     # 2.1 m from the origin
+    assert mzd.current_zone_slot((0.1, 0.1)) == "dock"     # the origin still counts
+    assert mzd.current_zone_slot((5.0, 5.0)) == "map0"
+
+
+def test_edge_from_a_dock_pad_beside_the_lawn_drives_the_channel():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": DOCK_PAD,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    assert mzd._dock_zone() == "map0"
+    drv = EdgeDriver(localized=None)
+    rc, seen = run_edge(drv, "map6")
+    assert rc == 0 and seen[-1] == ("edge_ready",), seen
+    assert ("localize",) in drv.calls and ("follow_path",) in drv.calls
+
+
+class DepartsOutside(EdgeDriver):
+    """The firmware's 1 m departure ended past the border: in no polygon and
+    more than DOCK_RADIUS from the anchor."""
+    def localize_via_firmware(self, *a):
+        self.calls.append(("localize",))
+        self._loc = (-1.5, 5.0)
+        return self._loc
+
+
+def test_edge_after_a_departure_that_ends_outside_every_zone():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": DOCK_PAD,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    assert mzd.current_zone_slot((-1.5, 5.0)) is None
+    drv = DepartsOutside(localized=None)
+    rc, seen = run_edge(drv, "map6")
+    assert rc == 0 and seen[-1] == ("edge_ready",), seen
+    assert ("follow_path",) in drv.calls
+
+
+def test_start_zone_near_the_dock_without_a_zone_in_reach():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK_PAD})
+    assert mzd._start_zone((-2.5, 5.0), None) == "map0"   # 2.5 m out, still at the dock
+    assert mzd._start_zone((-4.0, 5.0), None) is None
+    assert mzd._start_zone((5.0, 5.0), "map0") == "map0"
+    assert mzd._start_zone((0.0, 0.0), "dock") == "map0"
 
 
 if __name__ == "__main__":

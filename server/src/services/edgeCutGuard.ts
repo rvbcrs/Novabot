@@ -17,6 +17,19 @@ export const ENDS_EDGE_CUT = new Set([
   'start_run', 'start_navigation',
 ]);
 
+/** mow_zone_drive phases in which the drive itself holds the wheels (nav2
+ *  FollowPath / NavigateToPose, outside robot_decision). stop_navigation does
+ *  not reach those; only stop_mow_zone ends them. "covering" and later are the
+ *  firmware's task again. */
+const ZONE_DRIVE_PHASES = new Set(['starting', 'localizing', 'following_unicom', 'entering_zone']);
+
+/** An ending command while mow_zone_drive drives: kill that drive too, or the
+ *  mower keeps going to the zone and starts there (#147 after #148). */
+export function endsZoneDrive(command: Record<string, unknown>, mowZonePhase: string | undefined): boolean {
+  const name = Object.keys(command)[0];
+  return !!name && ENDS_EDGE_CUT.has(name) && ZONE_DRIVE_PHASES.has(mowZonePhase ?? '');
+}
+
 /** How long ending commands wait after stop_boundary_follow. */
 export const EDGE_STOP_SETTLE_MS = 6_000;
 /** After a stop, no new round for this long, so the re-sent commands go through. */

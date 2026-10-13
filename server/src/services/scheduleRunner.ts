@@ -395,7 +395,7 @@ function checkEdgeWatchers(): void {
     // mow_zone_drive breaks off the firmware's drive home itself when it takes
     // the wheels; while it is busy the server stays out. "done" = coverage was
     // handed to the firmware.
-    const zoneDriveBusy = !['', 'done', 'error'].includes(cache?.get('mow_zone_phase') ?? '');
+    const zoneDriveBusy = !['', 'done', 'error', 'stopped'].includes(cache?.get('mow_zone_phase') ?? '');
 
     // Direct: the mow just finished and the firmware starts its drive home.
     // Break that off (stop_to_charge, the stop button of the app and the

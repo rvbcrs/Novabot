@@ -305,7 +305,9 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // `covering` fall back to the normal report_state_robot detection above,
   // and `done`/`error` simply stop matching here so the state clears itself
   // once the next phase update arrives.
-  const isFollowingUnicom = s.mow_zone_phase === 'following_unicom' && !isOnDock;
+  // entering_zone (custom-48): the planner step into a touching zone, the same
+  // transit as far as the user is concerned.
+  const isFollowingUnicom = (s.mow_zone_phase === 'following_unicom' || s.mow_zone_phase === 'entering_zone') && !isOnDock;
 
   // Mapping detection mirrors MappingScreen (the authoritative one): trust
   // msg + task_mode, and treat the post-save echo (Work:FINISHED / Work:WAIT)

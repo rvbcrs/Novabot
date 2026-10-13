@@ -36,7 +36,7 @@ import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSy
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceCache } from './sensorData.js';
-import { edgeCutGate } from '../services/edgeCutGuard.js';
+import { edgeCutGate, endsZoneDrive } from '../services/edgeCutGuard.js';
 
 const TAG = '[MAP-SYNC]';
 
@@ -260,6 +260,10 @@ export function publishToDevice(
   if (edge.stopNow) {
     console.log(`${TAG} ${sn}: edge cut running, stop_boundary_follow before ${Object.keys(command)[0]}`);
     publishToExtended(sn, { stop_boundary_follow: {} });
+  }
+  if (endsZoneDrive(command, deviceCache.get(sn)?.get('mow_zone_phase'))) {
+    console.log(`${TAG} ${sn}: zone drive running, stop_mow_zone before ${Object.keys(command)[0]}`);
+    publishToExtended(sn, { stop_mow_zone: {} });
   }
   if (edge.delayMs > 0) {
     setTimeout(() => publishToDevice(sn, command, opts), edge.delayMs);

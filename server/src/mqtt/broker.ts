@@ -10,7 +10,7 @@ import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { isMapMqttPacketBlocked } from './mapCommandGuard.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { edgeCutGate } from '../services/edgeCutGuard.js';
+import { edgeCutGate, endsZoneDrive } from '../services/edgeCutGuard.js';
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond, emitMapsChanged } from '../dashboard/socketHandler.js';
@@ -595,6 +595,10 @@ export async function startMqttBroker(): Promise<void> {
             if (edge.stopNow) {
               console.log(`${C.cyan}[EDGE] ${sn}: edge cut running, stop_boundary_follow before app ${Object.keys(parsed)[0]}${C.reset}`);
               publishToExtended(sn, { stop_boundary_follow: {} });
+            }
+            if (endsZoneDrive(parsed, deviceCache.get(sn)?.get('mow_zone_phase'))) {
+              console.log(`${C.cyan}[EDGE] ${sn}: zone drive running, stop_mow_zone before app ${Object.keys(parsed)[0]}${C.reset}`);
+              publishToExtended(sn, { stop_mow_zone: {} });
             }
             if (edge.delayMs > 0) {
               const release = callback;
