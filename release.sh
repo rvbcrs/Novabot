@@ -2,6 +2,7 @@
 # Release script: run tests, bump patch version, build + push Docker image.
 # Tests run FIRST — a failing test aborts before any commit, tag or push.
 set -e
+. "$(dirname "$0")/tools/quiet-build.sh"
 
 cd "$(dirname "$0")"
 

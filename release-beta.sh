@@ -12,6 +12,7 @@
 #     docker buildx imagetools create \                  # retag the SAME tested bytes, no rebuild
 #       -t rvbcrs/opennova:latest rvbcrs/opennova:beta
 set -e
+. "$(dirname "$0")/tools/quiet-build.sh"
 cd "$(dirname "$0")"
 
 # ── Pick a node >=18 (vitest needs it; system /usr/local/bin/node may be v8) ──

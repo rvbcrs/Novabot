@@ -15,6 +15,7 @@
 #   - eas-cli installed (npm install -g eas-cli) — used in --local mode, no credits.
 #   - JDK 17+ and Android SDK on PATH.
 set -e
+. "$(dirname "$0")/tools/quiet-build.sh"
 
 cd "$(dirname "$0")"
 

@@ -18,6 +18,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/../tools/quiet-build.sh"
 
 # GNU ar — resolved ONCE, hardcoded to the bundled project binary. Used for BOTH
 # unpacking the input .deb (ar x) AND packing the output .deb (ar cr). This is

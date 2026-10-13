@@ -20,6 +20,7 @@
 # The app appears in TestFlight ~10-15 min after upload.
 
 set -e
+. "$(dirname "$0")/../../tools/quiet-build.sh"
 
 TEAM_ID="KN3YQ3Z9SN"
 WORKSPACE="ios/OpenNova.xcworkspace"
@@ -40,6 +41,7 @@ echo ""
 # ── Step 2: Archive ──────────────────────────────────────────────────
 echo "→ Step 2/3: Archiving (this takes a few minutes)..."
 xcodebuild \
+  -jobs "${BUILD_JOBS:-2}" \
   -workspace "$WORKSPACE" \
   -scheme "$SCHEME" \
   -configuration Release \
@@ -78,6 +80,7 @@ cat > "$EXPORT_OPTIONS" << 'PLIST'
 PLIST
 
 xcodebuild \
+  -jobs "${BUILD_JOBS:-2}" \
   -exportArchive \
   -archivePath "$ARCHIVE_PATH" \
   -exportPath "$EXPORT_PATH" \
