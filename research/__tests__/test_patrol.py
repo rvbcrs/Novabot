@@ -299,6 +299,39 @@ def test_drive_hops_drives_a_channel_and_reports_where_it_ended():
     assert ok and msg == "" and robot[0] > 30
 
 
+class StaleAfterApproach(HopDriver):
+    """nav2 drives the approach, but no fresh pose comes back afterwards."""
+
+    def __init__(self):
+        super().__init__()
+        self.paths, self.stale = [], False
+
+    def robot_xy(self, timeout=6.0):
+        return None if self.stale else self._loc
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        result = super().nav_to(x, y, yaw, timeout)
+        self.stale = True
+        return result
+
+    def follow_path(self, pts):
+        self.paths.append(list(pts))
+        return super().follow_path(pts)
+
+
+def test_a_stale_pose_after_the_approach_starts_the_channel_where_nav2_drove_to():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = StaleAfterApproach()
+    ok, _msg, robot = mzd._drive_channel_hop(drv, mzd._csv_base(), "map0tomap6_0_unicom.csv",
+                                             (2.0, 5.0), 0, 1)
+    assert ok and drv.calls[0] == ("nav_to", 9, 5), drv.calls
+    # The channel starts where nav2 drove to, not back at (2.0, 5.0), where the
+    # mower stood before the approach.
+    assert drv.paths[0][0] == (9.0, 5.0), drv.paths[0][:3]
+    assert robot == (31.0, 5.0), robot
+
+
 # ── Task 3: patrol mode ─────────────────────────────────────────────────────
 
 DOCK = [(0.5, 0.7), (2, 3)]   # map0tocharge_unicom: anchor inside SQ0
@@ -835,10 +868,12 @@ class RunDriver(DepartureDriver):
 
 
 DEPARTURE_RUN = [(mzd.TASK_MODE_COVERAGE, ws) for ws in (50, 53, 56, 59)]   # .. INIT_SUCCESS
+WALTER_DOCK = {"map0tocharge_unicom.csv": [(0.16, 0.01), (2.0, 3.0)]}      # anchor (0.16, 0.01)
 
 
 def test_a_departure_that_did_not_move_the_mower_is_not_handed_over():
-    docked = (0.10346326455538557, 0.08879976553824738)   # Walter's pose, before and after
+    with_maps(WALTER_DOCK)
+    docked = (0.10346326455538557, 0.08879976553824738)   # Walter's pose on the pile, before and after
     drv = RunDriver(DEPARTURE_RUN, before=docked, after=docked)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -861,9 +896,29 @@ def test_a_departure_that_moved_the_mower_hands_over_where_it_stands():
 
 def test_a_departure_without_a_frame_before_is_not_held_to_the_distance():
     # After a boot there is no map frame before the start: nothing to compare.
+    with_maps(WALTER_DOCK)
     drv = RunDriver(DEPARTURE_RUN, before=None, after=(0.30, 0.09))
     code, pos = depart(drv, sleep=lambda s: None)
     assert code is None and pos == (0.30, 0.09), pos
+
+
+def test_a_mower_off_the_pile_is_not_held_to_the_distance():
+    # A mow restarted right after a stopped departure: inside the 1.2 m dock
+    # disc but 0.9 m from the anchor. Off the pile the firmware's departure
+    # does not move it, so it hands over where it stands.
+    with_maps(WALTER_DOCK)
+    off_pile = (1.06, 0.01)
+    drv = RunDriver(DEPARTURE_RUN, before=off_pile, after=off_pile)
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos == off_pile, pos
+
+
+def test_without_a_dock_anchor_the_mower_is_not_held_to_the_distance():
+    with_maps({})
+    docked = (0.10, 0.09)
+    drv = RunDriver(DEPARTURE_RUN, before=docked, after=docked)
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos == docked, pos
 
 
 class Done:
@@ -1098,9 +1153,32 @@ def test_robot_xy_takes_the_transform_that_arrives_while_it_spins():
 def test_robot_xy_accepts_a_transform_from_just_before_the_call():
     # tf lags the wall clock a little: half a second old is still the pose now.
     buf = FakeTfBuffer(tf_at(2.0, 3.0, time.time() - 0.2))
-    with probe_spins(lambda: None):
+    spins = []
+    with probe_spins(lambda: spins.append(1)):
         assert tf_driver(buf).robot_xy(timeout=1.0) == (2.0, 3.0)
-    assert buf.lookups == 1, buf.lookups
+    assert len(spins) == 1, spins   # taken on the first spin, no wait for a new sample
+
+
+def test_robot_xy_takes_a_new_sample_whose_stamp_lags_the_wall_clock():
+    # Freshness by the wall clock alone would refuse every pose if the tf stamps
+    # ran 2 s behind it. A sample that arrives during the call proves the
+    # buffer is live, whatever its stamp says.
+    buf = FakeTfBuffer(tf_at(1.46, 0.10, time.time() - 30.0))
+    spins = []
+
+    def spin():
+        spins.append(1)
+        if len(spins) == 2:
+            buf.held = tf_at(5.27, 18.6, time.time() - 2.0)
+    with probe_spins(spin):
+        assert tf_driver(buf).robot_xy(timeout=1.0) == (5.27, 18.6)
+    assert len(spins) == 2, spins
+    # The same lag with no new sample: a dead buffer, not the pose now.
+    buf = FakeTfBuffer(tf_at(5.27, 18.6, time.time() - 2.0))
+    out = io.StringIO()
+    with probe_spins(lambda: time.sleep(0.01)), contextlib.redirect_stdout(out):
+        assert tf_driver(buf).robot_xy(timeout=0.3) is None
+    assert out.getvalue().count("robot_xy: no fresh map->base_link") == 1, out.getvalue()
 
 
 def test_robot_xy_without_a_map_frame_is_none_and_quiet():

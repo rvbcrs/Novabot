@@ -87,6 +87,9 @@ DEPARTURE_START_S = 20.0
 # Moved less than this between the start and the handover: the mower never left
 # the dock (QUIT_PILE drives 1.0 m).
 DEPARTURE_MIN_MOVE_M = 0.5
+# Within this of the dock anchor before the start: on the pile, so the firmware's
+# departure has to move it. Off the pile QUIT_PILE does not move it at all.
+ON_PILE_M = 0.5
 
 
 def task_executing(task_mode, work_status):
@@ -392,31 +395,42 @@ class Driver:
         self._recharge = int(m.recharge_status)
 
     def robot_xy(self, timeout=6.0):
-        """Read map -> base_link as it is now. Returns (x, y), or None when no
-        transform stamped at or after the call (less FRESH_POSE_S) arrives
-        within `timeout`, which doubles as a not-localized guard: callers
-        refuse to move on None.
+        """Read map -> base_link as it is now. Returns (x, y), or None when
+        within `timeout` no transform arrives that is newer than the one the
+        buffer held at the call, nor stamped at or after the call (less
+        FRESH_POSE_S). None doubles as a not-localized guard: callers refuse to
+        move on None.
 
         Only the main node spins while nav2 drives, so the probe's buffer still
         holds the transform from before the drive, and one spin does not
         refresh it: in Walter's log (#142, custom-49) the pose after every
         transit hop equalled the pose before it to 15 decimals. So keep
-        spinning until the buffer has caught up. The mower's ROS clock is wall
-        time, so the stamps compare with time.time()."""
+        spinning until the buffer has caught up. A sample that arrives during
+        the call proves the buffer is live whatever its stamp says, so a tf
+        clock that lags the wall clock does not refuse every pose."""
+        def newest():
+            try:
+                t = buf.lookup_transform("map", "base_link", rclpy.time.Time())
+            except Exception:
+                return None
+            return (t.header.stamp.sec + t.header.stamp.nanosec * 1e-9,
+                    (t.transform.translation.x, t.transform.translation.y))
+
         t0 = time.time()
         probe = self._probe()
         buf = self._tf_buf
+        held = newest()   # before any spin: what the buffer holds at the call
+        noted = held[0] if held else float("-inf")
         deadline = t0 + timeout
         latest = None
         while time.time() < deadline:
             rclpy.spin_once(probe, timeout_sec=0.1)
-            try:
-                t = buf.lookup_transform("map", "base_link", rclpy.time.Time())
-            except Exception:
+            got = newest()
+            if got is None:
                 continue
-            latest = t.header.stamp.sec + t.header.stamp.nanosec * 1e-9
-            if latest >= t0 - FRESH_POSE_S:
-                return (t.transform.translation.x, t.transform.translation.y)
+            latest = got[0]
+            if latest > noted or latest >= t0 - FRESH_POSE_S:
+                return got[1]
         if latest is not None:
             # No transform at all is the normal state after a boot and the
             # callers say so; a stale one is worth a line.
@@ -923,16 +937,20 @@ class Driver:
         exception) stops and clears it on its way out (_release_departure).
 
         Only a departure that happened is handed over: its task showed up in
-        RobotStatus, and the mower stands away from where it stood before the
-        start. Otherwise None. In Walter's log (#142, custom-49) the status
-        right after the start read (1, 1) or (1, 2), "no task running", so the
-        waits below ended at once, the stop went out and nav2 drove the mower
-        off the dock.
+        RobotStatus, and a mower that stood on the pile stands away from where
+        it stood before the start. Otherwise None. In Walter's log (#142,
+        custom-49) the status right after the start read (1, 1) or (1, 2), "no
+        task running", so the waits below ended at once, the stop went out and
+        nav2 drove the mower off the dock. A mower inside the dock disc but off
+        the pile (a mow restarted right after a stopped departure) is not held
+        to the distance: QUIT_PILE does not move it.
         """
         log("not localized: asking the firmware to initialise the frame")
         phase("localizing")
         self._prepare_release()
         before = self.robot_xy(timeout=2.0)   # None without a frame yet
+        anchor = _dock_anchor()
+        on_pile = bool(before and anchor and _dist(before, anchor) <= ON_PILE_M)
         requested = handed_over = stop_sent = started = False
         try:
             requested = True   # a kill during the request itself may still start the task
@@ -987,7 +1005,7 @@ class Driver:
         if pos is None:
             log("firmware init ran but the map frame never appeared")
             return None
-        if before is not None and _dist(before, pos) <= DEPARTURE_MIN_MOVE_M:
+        if on_pile and _dist(before, pos) <= DEPARTURE_MIN_MOVE_M:
             log(f"departure did not move the mower (before={before}, after={pos}): "
                 "not taking the wheels")
             return None
@@ -1502,7 +1520,9 @@ def _drive_channel_hop(drv, base, fname, robot, hop, total):
         if not ok:
             log(f"transit hop {hop + 1}/{total} aanloop faalde: {msg}")
             return False, msg, robot
-        robot = drv.robot_xy() or robot
+        # No fresh pose: nav2 drove to pts[0]. The pose from before the
+        # approach is the worst guess; the lead-in would drive back to it.
+        robot = drv.robot_xy() or pts[0]
         pts = _trim_to_nearest(read_xy_csv(os.path.join(base, fname)), robot)
         if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
             pts = list(reversed(pts))
