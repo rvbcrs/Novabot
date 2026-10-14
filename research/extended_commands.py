@@ -2196,8 +2196,23 @@ def _secure_patrol_blades(attempts=3, pause=1.0):
         if not errors:
             return True
         log(f"patrol: blade guard attempt {i + 1}/{attempts} failed: {'; '.join(errors)}")
-        time.sleep(pause)
+        if i < attempts - 1:
+            time.sleep(pause)
     return False
+
+
+def _terminate_patrol_drive(proc):
+    """Stop the patrol drive like stop_mow_zone does: end the process
+    (SIGTERM, SIGKILL after 3 s), then cancel its nav2 goal and restore
+    the transit params, which the killed drive's finally never does."""
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    threading.Thread(target=_stop_mow_zone_cleanup, daemon=True,
+                     name="patrol-stop-cleanup").start()
 
 
 def handle_patrol(params, respond):
@@ -2258,7 +2273,7 @@ def handle_patrol(params, respond):
                         _say("patrol_status", {"phase": "patrolling", "run": run})
                         if not _secure_patrol_blades():
                             log("patrol: blade guard failed, terminating the drive")
-                            proc.terminate()
+                            _terminate_patrol_drive(proc)
                             _say("patrol_status", {"phase": "error", "run": run,
                                                    "error": "blade_guard_failed"})
                             terminal_seen = True
@@ -2292,13 +2307,9 @@ def handle_patrol(params, respond):
                      {"phase": "error", "run": run, "error": f"drive_exit_{proc.returncode}"})
         except Exception as e:
             log(f"patrol error: {e}")
-            if proc is not None and proc.poll() is None:
+            if proc is not None:
                 # Nobody reads its output any more: take the drive down, do not leave it driving.
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                _terminate_patrol_drive(proc)
             _say("patrol_status", {"phase": "error", "run": run, "error": str(e)})
         finally:
             if proc is not None:

@@ -83,6 +83,8 @@ class SyncThread:
 def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=None,
         ignores_terminate=False):
     sent, calls, seen = [], [], {}
+    cleanups, sleeps = [], []    # nav-goal cleanups (the drive's state then), the guard's pauses
+    seen.update(cleanups=cleanups, sleeps=sleeps)
     script = tempfile.NamedTemporaryFile(suffix=".py", delete=False).name
     defaults = {
         "PATROL_DRIVE_SCRIPT": script,
@@ -93,6 +95,7 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
         "_restore_edge_perception": lambda: calls.append("perception_off"),
         "_publish_blade_speed": lambda s: calls.append(("blade_speed", s)) or "",
         "_publish_blade_height": lambda h: calls.append(("blade_height", h)) or "",
+        "_stop_mow_zone_cleanup": lambda: cleanups.append((seen["proc"].terminated, seen["proc"].killed)),
         "_ros_env": lambda: {},
     }
     defaults.update(patches or {})
@@ -119,7 +122,7 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
     for k, v in defaults.items():
         setattr(ec, k, v)
     ec.subprocess.Popen, ec.threading.Thread = fake_popen, SyncThread
-    ec.time.sleep = lambda seconds=0: None      # the blade guard's retry pause
+    ec.time.sleep = lambda seconds=0: sleeps.append(seconds)   # recorded, not slept
     try:
         ec.handle_patrol(params or GOOD, respond)
     finally:
@@ -136,6 +139,18 @@ def before(calls, a, b):
 
 def perception_gone():
     raise RuntimeError("perception service gone")
+
+
+def guard_speed(refusals):
+    """A blade-speed publish that refuses its first `refusals` calls. Returns the
+    publish and the list of calls it saw, one per guard attempt."""
+    attempts = []
+
+    def publish(speed):
+        attempts.append(speed)
+        return "ros node not ready" if len(attempts) <= refusals else ""
+
+    return publish, attempts
 
 
 sent, calls, seen = run([
@@ -220,10 +235,40 @@ check("a drive error phase passes through",
       [b for n, b in sent if n == "patrol_status" and b["phase"] == "error"]
       == [{"phase": "error", "run": "1791", "error": "checkpoints_unreachable"}])
 
-# f. a drive that survives SIGTERM is killed
+# round 2: a guard refused once and then holding lets the patrol go on, with one retry
+publish, attempts = guard_speed(1)
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+                        patches={"_publish_blade_speed": publish})
+check("a guard refused once and then holding lets the patrol go on",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "done"]
+      and any(n == "patrol_checkpoint" for n, _ in sent) and "perception_on" in calls)
+check("that is exactly two guard attempts with one pause between them",
+      len(attempts) == 2 and seen["sleeps"] == [1.0] and not seen["proc"].terminated)
+
+# round 2: a guard that never holds: three attempts, pauses only between them, the nav goal released
+publish, attempts = guard_speed(3)
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+                        patches={"_publish_blade_speed": publish})
+check("three refusals make exactly three attempts with pauses only between them",
+      len(attempts) == 3 and seen["sleeps"] == [1.0, 1.0])
+check("a failing guard releases the nav goal after the drive was terminated",
+      seen["cleanups"] == [(True, False)])
+
+# round 2: the loop-exception path releases the nav goal too, after the drive was terminated
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+                        patches={"_apply_edge_perception_low": perception_gone})
+check("an exception in the loop releases the nav goal after the drive was terminated",
+      seen["cleanups"] == [(True, False)])
+
+# round 2: a patrol that finishes on its own leaves the nav goal alone
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"])
+check("a patrol that finishes leaves the nav goal alone", seen["cleanups"] == [])
+
+# f. a drive that survives SIGTERM is killed, and its nav goal is still released
 sent, calls, seen = run(["PHASE patrolling"], patches={"_apply_edge_perception_low": perception_gone},
                         ignores_terminate=True)
 check("a drive that survives SIGTERM is killed", seen.get("proc") is not None and seen["proc"].killed)
+check("and its nav goal is released after the kill", seen["cleanups"] == [(True, True)])
 
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)
