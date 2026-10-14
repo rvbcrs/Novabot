@@ -23,11 +23,19 @@ export const ENDS_EDGE_CUT = new Set([
  *  firmware's task again. */
 const ZONE_DRIVE_PHASES = new Set(['starting', 'localizing', 'following_unicom', 'entering_zone']);
 
-/** An ending command while mow_zone_drive drives: kill that drive too, or the
- *  mower keeps going to the zone and starts there (#147 after #148). */
-export function endsZoneDrive(command: Record<string, unknown>, mowZonePhase: string | undefined): boolean {
+/** Night patrol phases in which the patrol drive holds the wheels (the
+ *  firmware's own departure task while localizing, then nav2 goals). The
+ *  terminal phases done, error and stopped do not, so the server's own
+ *  go_to_charge after a finished patrol passes untouched. */
+export const PATROL_DRIVE_PHASES = new Set(['localizing', 'patrolling', 'returning']);
+
+/** An ending command while mow_zone_drive or a night patrol drives: kill that
+ *  drive too (stop_mow_zone), or the mower keeps going to the zone or the next
+ *  checkpoint and starts there (#147 after #148). */
+export function endsZoneDrive(command: Record<string, unknown>, mowZonePhase: string | undefined, patrolPhase?: string): boolean {
   const name = Object.keys(command)[0];
-  return !!name && ENDS_EDGE_CUT.has(name) && ZONE_DRIVE_PHASES.has(mowZonePhase ?? '');
+  return !!name && ENDS_EDGE_CUT.has(name)
+    && (ZONE_DRIVE_PHASES.has(mowZonePhase ?? '') || PATROL_DRIVE_PHASES.has(patrolPhase ?? ''));
 }
 
 /** How long ending commands wait after stop_boundary_follow. */

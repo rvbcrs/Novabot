@@ -6,7 +6,7 @@
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
-import { publishToTopic } from '../mqtt/mapSync.js';
+import { publishToTopic, publishToDevice, getNextCmdNum } from '../mqtt/mapSync.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
@@ -151,6 +151,9 @@ export function isActivePatrolRun(sn: string, run: string, token: string, now = 
 export function stopPatrol(sn: string): void {
   // A stop leaves the mower where it is, also when it was about to dock after an error.
   cancelPendingHome(sn);
+  // stop_navigation ends the firmware's departure task while the patrol is
+  // still localizing; stop_mow_zone kills the drive.
+  publishToDevice(sn, { stop_navigation: { cmd_num: getNextCmdNum(sn) } });
   publishExtendedCommand(sn, { stop_mow_zone: {} });
 }
 

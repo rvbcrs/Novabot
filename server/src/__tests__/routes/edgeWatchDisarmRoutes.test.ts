@@ -91,8 +91,17 @@ vi.mock('../../services/demoSimulator.js', () => ({
   setDemoInterceptor: vi.fn(),
 }));
 
+// De nachtpatrouille zelf is hier niet onder test, alleen wat de route met de
+// watcher doet rond een geaccepteerde of geweigerde start.
+vi.mock('../../services/patrolService.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/patrolService.js')>()),
+  startPatrol: vi.fn(() => ({ ok: true, run: '123' })),
+  stopPatrol: vi.fn(),
+}));
+
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { publishRawToDevice, publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
+import { startPatrol } from '../../services/patrolService.js';
 import {
   startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch,
 } from '../../services/scheduleRunner.js';
@@ -343,5 +352,39 @@ describe('rand-dag watcher disarm via dashboard-routes', () => {
     expect(r.status).toBe(200);
     expect(__getPendingEdgeForTest().has(SN)).toBe(true);
     disarmEdgeWatch(SN, 'test-opruiming');
+  });
+
+  // Nachtpatrouille: een geaccepteerde start laat de maaier rijden, dus de
+  // gearmde randmaai vervalt. Een geweigerde start (accu te laag, maaier bezig)
+  // verplaatst niets: de arm moet blijven staan, anders verliest de maaier de
+  // geplande randmaai door een mislukte klik.
+  it('POST /patrol/:sn (geaccepteerde start) ontwapent de watcher', async () => {
+    const SN = 'ROUTE_PATROLOK';
+    armViaRunner(SN);
+    const r = await request(server).post(`/api/dashboard/patrol/${SN}`).send({});
+    expect(r.status).toBe(200);
+    expect(startPatrol).toHaveBeenCalledWith(SN);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+  });
+
+  it('POST /patrol/:sn (geweigerde start) laat de watcher staan', async () => {
+    const SN = 'ROUTE_PATROLNO';
+    armViaRunner(SN);
+    vi.mocked(startPatrol).mockReturnValueOnce({ ok: false, error: 'battery too low for a patrol (30%, at least 50%)' });
+    const r = await request(server).post(`/api/dashboard/patrol/${SN}`).send({});
+    expect(r.status).toBe(409);
+    expect(startPatrol).toHaveBeenCalledWith(SN);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(true);
+    disarmEdgeWatch(SN, 'test-opruiming');
+  });
+
+  it('POST /extended/:sn met patrol (handmatig pad) ontwapent de watcher', async () => {
+    const SN = 'ROUTE_EXTPATROL';
+    armViaRunner(SN);
+    const r = await request(server)
+      .post(`/api/dashboard/extended/${SN}`)
+      .send({ patrol: { run: '1', zones: [] } });
+    expect(r.status).toBe(200);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
   });
 });

@@ -108,7 +108,7 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { publishToDevice, publishToExtended } from '../../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
-import { startPatrol } from '../../services/patrolService.js';
+import { startPatrol, stopPatrol } from '../../services/patrolService.js';
 import { savePatrolFrame } from '../../services/patrolFrames.js';
 import { M } from '../../services/serverText.js';
 import { mapRepo, scheduleRepo, seamFixRepo, deviceSettingsRepo, equipmentRepo } from '../../db/repositories/index.js';
@@ -164,6 +164,9 @@ describe('central firmware gate on stock firmware', () => {
       expect(publishExtendedCommand).not.toHaveBeenCalled();
       expect(publishToExtended).not.toHaveBeenCalled();
       expect(publishToDevice).not.toHaveBeenCalled();
+      // The patrol service is mocked in this file, so it needs its own check.
+      expect(startPatrol).not.toHaveBeenCalled();
+      expect(stopPatrol).not.toHaveBeenCalled();
     });
   }
 
@@ -219,8 +222,11 @@ describe('patrol routes', () => {
     const ok = await request(server).post(`${B}/patrol/${PSN}`).send({});
     expect(ok.status).toBe(200);
     expect(ok.body).toEqual({ ok: true, run: '123' });
+    expect(startPatrol).toHaveBeenCalledWith(PSN);
+    expect(stopPatrol).not.toHaveBeenCalled();
     const stop = await request(server).post(`${B}/stop-patrol/${PSN}`).send({});
     expect(stop.status).toBe(200);
+    expect(stopPatrol).toHaveBeenCalledWith(PSN);
   });
 
   it('passes a refusal on with its reason', async () => {
@@ -244,7 +250,7 @@ describe('patrol routes', () => {
     savePatrolFrame(PSN, '5', { ...meta, seq: 3, person: 0, frames: 4 }, null);
     const res = await request(server).get(`${B}/patrol/${PSN}/runs`);
     expect(res.status).toBe(200);
-    // By run id: the test storage outlives a test run, so run 6 of the next test may already be there.
+    // By run id: the listing is newest first, so run 5 is not necessarily the first entry.
     const run5 = (res.body.runs as Array<{ run: string; frames: unknown[] }>).find(r => r.run === '5')!;
     const frames = run5.frames as Array<{ seq: number; seen: string[] | null }>;
     expect(frames.map(f => f.seen)).toEqual([['person'], null, []]);

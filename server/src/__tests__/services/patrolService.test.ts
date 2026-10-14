@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../mqtt/extendedCommands.js', () => ({ publishExtendedCommand: vi.fn() }));
-vi.mock('../../mqtt/mapSync.js', () => ({ publishToTopic: vi.fn(), publishToDevice: vi.fn() }));
+vi.mock('../../mqtt/mapSync.js', () => ({ publishToTopic: vi.fn(), publishToDevice: vi.fn(), getNextCmdNum: vi.fn(() => 1) }));
 vi.mock('../../mqtt/broker.js', () => ({ isDeviceOnline: vi.fn(() => true) }));
 vi.mock('../../mqtt/sensorData.js', () => ({ deviceCache: new Map<string, Map<string, string>>() }));
 vi.mock('../../services/mowerFileCapability.js', () => ({ isOpenNovaMower: vi.fn(() => true) }));
@@ -22,7 +22,7 @@ import {
   isActivePatrolRun, PATROL_ALERT_GAP_MS, PATROL_HOME_DELAY_MS, PATROL_RUN_TTL_MS,
 } from '../../services/patrolService.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
-import { publishToTopic } from '../../mqtt/mapSync.js';
+import { publishToTopic, publishToDevice } from '../../mqtt/mapSync.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { goHome } from '../../services/mowingService.js';
 import { freshPositionState } from '../../services/positionTelemetry.js';
@@ -266,6 +266,18 @@ describe('patrol service', () => {
     expect(publishExtendedCommand).toHaveBeenLastCalledWith(SN, { stop_mow_zone: {} });
     vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
     expect(goHome).not.toHaveBeenCalled();
+  });
+
+  it('a stop ends the firmware task first, then kills the patrol drive', () => {
+    // stop_navigation ends the departure task while the patrol still localizes;
+    // stop_mow_zone kills the drive.
+    stopPatrol(SN);
+    expect(publishToDevice).toHaveBeenCalledTimes(1);
+    expect(publishToDevice).toHaveBeenCalledWith(SN, { stop_navigation: { cmd_num: 1 } });
+    expect(publishExtendedCommand).toHaveBeenCalledTimes(1);
+    expect(publishExtendedCommand).toHaveBeenCalledWith(SN, { stop_mow_zone: {} });
+    expect(vi.mocked(publishToDevice).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(publishExtendedCommand).mock.invocationCallOrder[0]);
   });
 
   it('two errors in a row dock the mower once', () => {

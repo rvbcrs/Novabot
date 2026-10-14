@@ -596,8 +596,8 @@ export async function startMqttBroker(): Promise<void> {
               console.log(`${C.cyan}[EDGE] ${sn}: edge cut running, stop_boundary_follow before app ${Object.keys(parsed)[0]}${C.reset}`);
               publishToExtended(sn, { stop_boundary_follow: {} });
             }
-            if (endsZoneDrive(parsed, deviceCache.get(sn)?.get('mow_zone_phase'))) {
-              console.log(`${C.cyan}[EDGE] ${sn}: zone drive running, stop_mow_zone before app ${Object.keys(parsed)[0]}${C.reset}`);
+            if (endsZoneDrive(parsed, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'))) {
+              console.log(`${C.cyan}[EDGE] ${sn}: zone or patrol drive running, stop_mow_zone before app ${Object.keys(parsed)[0]}${C.reset}`);
               publishToExtended(sn, { stop_mow_zone: {} });
             }
             if (edge.delayMs > 0) {

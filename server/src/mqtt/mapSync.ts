@@ -261,8 +261,8 @@ export function publishToDevice(
     console.log(`${TAG} ${sn}: edge cut running, stop_boundary_follow before ${Object.keys(command)[0]}`);
     publishToExtended(sn, { stop_boundary_follow: {} });
   }
-  if (endsZoneDrive(command, deviceCache.get(sn)?.get('mow_zone_phase'))) {
-    console.log(`${TAG} ${sn}: zone drive running, stop_mow_zone before ${Object.keys(command)[0]}`);
+  if (endsZoneDrive(command, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'))) {
+    console.log(`${TAG} ${sn}: zone or patrol drive running, stop_mow_zone before ${Object.keys(command)[0]}`);
     publishToExtended(sn, { stop_mow_zone: {} });
   }
   if (edge.delayMs > 0) {

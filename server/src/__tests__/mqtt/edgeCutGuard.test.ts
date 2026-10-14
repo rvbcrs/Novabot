@@ -76,3 +76,23 @@ describe('publishToDevice during an edge cut', () => {
     expect(sent).toEqual([`Dart/Send_mqtt/${SN} {"go_to_charge":{"cmd_num":3}}`]);
   });
 });
+
+// A night patrol drives outside robot_decision too: an ending command that
+// reaches the mower while it localizes, patrols or returns must kill the patrol
+// first (stop_mow_zone), and the docking after a patrol that ended must not.
+describe('publishToDevice during a night patrol', () => {
+  it.each(['localizing', 'patrolling', 'returning'])('sends stop_mow_zone first, then the stop, while the patrol is %s', phase => {
+    deviceCache.set(SN, new Map([['patrol_phase', phase]]));
+    publishToDevice(SN, { stop_navigation: { cmd_num: 1 } });
+    expect(sent).toEqual([
+      `novabot/extended/${SN} {"stop_mow_zone":{}}`,
+      `Dart/Send_mqtt/${SN} {"stop_navigation":{"cmd_num":1}}`,
+    ]);
+  });
+
+  it.each(['done', 'error', 'stopped'])('sends go_to_charge untouched after a patrol that ended with %s', phase => {
+    deviceCache.set(SN, new Map([['patrol_phase', phase]]));
+    publishToDevice(SN, { go_to_charge: { cmd_num: 2 } });
+    expect(sent).toEqual([`Dart/Send_mqtt/${SN} {"go_to_charge":{"cmd_num":2}}`]);
+  });
+});

@@ -4508,12 +4508,14 @@ dashboardRouter.get('/equipment/active', (req: Request, res: Response) => {
 dashboardRouter.post('/patrol/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   if (rejectUnlessOpenNova(sn, req, res, M`Patrouille`)) return;
-  disarmEdgeWatch(sn, 'patrouille via dashboard');
   const r = startPatrol(sn);
   if (!r.ok) {
     res.status(409).json({ ok: false, error: r.errorMsg ? renderMsg(langOf(req), r.errorMsg) : r.error });
     return;
   }
+  // Only an accepted start moves the mower; a refused one must leave an armed
+  // edge-cut watcher in place.
+  disarmEdgeWatch(sn, 'patrouille via dashboard');
   res.json({ ok: true, run: r.run });
 });
 
