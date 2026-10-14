@@ -241,10 +241,7 @@ header opens (*Diagnostics & logs*):
   *Go to charger* for that. The normal stop and go-to-charger buttons, in the
   apps too, end a patrol as well. So do the STOP button on the mower and
   lifting or tilting it: the patrol then ends where the mower stands, and you
-  get a *Patrol stopped* notification. *Go to charger* or a start pressed in
-  the first moments of a patrol, while the mower is still leaving its dock,
-  goes out about 3 seconds later, after the patrol has let go of the
-  departure.
+  get a *Patrol stopped* notification.
 - **Zones.** One checkbox per work area. With none ticked, the patrol covers
   the area the dock stands in.
 - **Headlight.** A switch for the mower's headlight during the patrol, on by

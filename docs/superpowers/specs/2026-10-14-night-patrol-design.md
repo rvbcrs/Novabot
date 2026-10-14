@@ -146,10 +146,7 @@ feature would be a blind drive.
   `starting` as soon as it accepts a patrol. While a patrol drives (`starting`,
   `localizing`, `patrolling`, `returning`), every stop, go-home or start command
   from the stock app, the dashboard, the OpenNova app or the server also sends
-  `stop_mow_zone` first, as for a zone drive. While a zone drive or a patrol is
-  still `starting` or `localizing`, a go home or a start (`go_pile`, `go_to_charge`,
-  `start_run`, `start_navigation`) waits 3 s after that, so the killed drive's
-  release of its departure task cannot stop it; stops and pauses go at once.
+  `stop_mow_zone` first, as for a zone drive.
 - The STOP button, lifting or tilting the mower end a patrol as `stopped` with that
   flag as its error (the edge cut's `/chassis_incident` watcher); the mower stays
   where it is, and the owner gets `patrol_failed` with the flag. The owner's own
@@ -157,10 +154,14 @@ feature would be a blind drive.
 - A patrol and an edge cut never run together: a patrol is refused while an edge
   cut runs (by the server, and by the mower from the edge cut's start until its
   goal process ends), an edge cut while a patrol drives, and the mower's
-  `start_edge_cut` ends a running drive first. The rain monitor, the mowing
-  pushes and the always-edge watcher leave alone a patrol that is out (a driving
-  phase and a live run) and the drive home after it (until docked, at most 15
-  minutes).
+  `start_edge_cut` ends a running drive first. The rain monitor and the mowing
+  pushes leave alone a patrol that is out (a driving phase and a live run) and
+  the drive home after it (until docked, at most 15 minutes). The always-edge
+  watcher never arms while the cached patrol phase is a driving phase, with or
+  without a run on the server.
+- A patrol starts only through `POST /api/dashboard/patrol/:sn` (startPatrol,
+  which records its run and upload token); a raw `patrol` on
+  `POST /api/dashboard/extended/:sn` is refused with 409.
 
 ## Out of scope for this plan
 
@@ -185,8 +186,10 @@ theft/lift alarm, tap-to-open from a notification, rain pause for patrol.
   handler's headlight-off when a drive did not end by itself).
 - The memory cost of the `/chassis_incident` echo process for a whole patrol (a
   ros2 CLI process, 6 h timeout).
-- That holding Home or Start about 3 s during a drive's departure is enough for
-  the killed drive's release to land first.
+- A Home pressed while a zone drive or a patrol is still departing (`starting`,
+  `localizing`) kills the drive, and the drive's release of its departure task
+  (`stop_task`) may then cancel that Home; the owner presses Home again. To be
+  checked in the live test.
 
 ## Phase 0 result
 
