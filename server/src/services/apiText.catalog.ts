@@ -1072,6 +1072,12 @@ export const CATALOG: Catalog = {
     fr: "la tondeuse a refusé la patrouille ({0})",
     de: "der Mäher hat die Patrouille abgelehnt ({0})",
   },
+  // A raw `patrol` on POST /extended (dashboard.ts): a patrol starts only through POST /patrol.
+  "een patrouille start alleen via POST /api/dashboard/patrol/{0}": {
+    en: "a patrol only starts through POST /api/dashboard/patrol/{0}",
+    fr: "une patrouille ne démarre que par POST /api/dashboard/patrol/{0}",
+    de: "eine Patrouille startet nur über POST /api/dashboard/patrol/{0}",
+  },
   // An edge cut refused while a night patrol drives (mowingService.ts).
   "er loopt een nachtpatrouille; stop die eerst": {
     en: "a night patrol is running; stop it first",

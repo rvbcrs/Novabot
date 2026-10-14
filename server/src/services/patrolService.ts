@@ -185,7 +185,8 @@ export function stopPatrol(sn: string): void {
 function firstEndOfRun(sn: string, run: string, phase: string): boolean {
   const last = patrolRunsRepo.get(sn);
   if (last && last.run === run) return patrolRunsRepo.markEnded(sn, run, phase);
-  if (/^\d{1,20}$/.test(run)) patrolRunsRepo.recordEnded(sn, run, phase, Number(run));
+  // Never over a live run (a run id this server did not issue now, a clock that went back).
+  if (/^\d{1,20}$/.test(run)) patrolRunsRepo.recordEnded(sn, run, phase, Number(run), Date.now() - PATROL_RUN_TTL_MS);
   return true;
 }
 

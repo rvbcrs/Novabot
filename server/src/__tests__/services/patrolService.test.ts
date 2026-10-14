@@ -462,6 +462,22 @@ describe('patrol service', () => {
     expect(isActivePatrolRun(SN, '5000', '0'.repeat(32), 5000)).toBe(false);
   });
 
+  // V2: a report of a run id this server did not issue now (a clock that went
+  // back) never takes a live run's place.
+  it('an end of an unknown run leaves the live run its row, token and statuses', () => {
+    mower({});
+    const now = Date.now();
+    expect(startPatrol(SN, now).ok).toBe(true);
+    const { run, token } = lastPatrol();
+    onPatrolStatus(SN, 'stopped', undefined, String(now + 60_000));   // newer than the live run, not issued now
+    expect(isActivePatrolRun(SN, run, token, now)).toBe(true);
+    vi.mocked(publishToTopic).mockClear();
+    onPatrolStatus(SN, 'patrolling', undefined, run);
+    expect(publishToTopic).toHaveBeenCalledWith(`novabot/cmd/${SN}`, { led_set: 100 });
+    onPatrolStatus(SN, 'done', undefined, run);   // telemetry says docked: only "was out" docks it
+    expect(goHome).toHaveBeenCalledTimes(1);
+  });
+
   // R8: the drive home after a patrol reports Work:MOVING; that is no mow.
   it('marks the docking it starts after a patrol, at once after done and after the delay after an error', () => {
     vi.useFakeTimers();

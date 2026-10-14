@@ -15,8 +15,7 @@ vi.mock('../../mqtt/broker.js', () => ({
 import { initMapSync, publishToDevice } from '../../mqtt/mapSync.js';
 import { tryDecrypt } from '../../mqtt/decrypt.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
-import { edgeCutGate, EDGE_STOP_SETTLE_MS, DEPARTURE_SETTLE_MS, _resetEdgeCutGate } from '../../services/edgeCutGuard.js';
-import { goHome } from '../../services/mowingService.js';
+import { edgeCutGate, EDGE_STOP_SETTLE_MS, _resetEdgeCutGate } from '../../services/edgeCutGuard.js';
 
 const SN = 'LFIN1231000367';
 let sent: string[] = [];
@@ -116,34 +115,5 @@ describe('publishToDevice during a night patrol', () => {
     deviceCache.set(SN, new Map([['patrol_phase', phase]]));
     publishToDevice(SN, { go_to_charge: { cmd_num: 2 } });
     expect(sent).toEqual([`Dart/Send_mqtt/${SN} {"go_to_charge":{"cmd_num":2}}`]);
-  });
-});
-
-// R1: Home or Start while a zone or patrol drive departs waits until the killed
-// drive's release (stop_task + quit_mapping_mode) has landed; a stop goes at once.
-describe('publishToDevice while a drive departs', () => {
-  const commands = () => sent.filter(m => m.startsWith(`Dart/Send_mqtt/${SN} `))
-    .map(m => Object.keys(JSON.parse(m.slice(m.indexOf(' ') + 1)))[0]);
-
-  it("holds go home's go_pile and go_to_charge to one moment, after the release", () => {
-    deviceCache.set(SN, new Map([['patrol_phase', 'localizing']]));
-    goHome(SN);
-    expect(sent.slice(0, 2)).toEqual([`novabot/cmd/${SN} {"led_set":0}`, `novabot/extended/${SN} {"stop_mow_zone":{}}`]);
-    vi.advanceTimersByTime(DEPARTURE_SETTLE_MS - 1);
-    expect(commands()).toEqual([]);   // the go_to_charge 500 ms later did not open a new window
-    vi.advanceTimersByTime(1);
-    expect(commands()).toEqual(['go_pile', 'go_to_charge']);
-  });
-
-  it('lets a stop through at once', () => {
-    deviceCache.set(SN, new Map([['mow_zone_phase', 'starting']]));
-    publishToDevice(SN, { stop_navigation: { cmd_num: 1 } });
-    expect(commands()).toEqual(['stop_navigation']);
-  });
-
-  it('holds nothing once the drive has left its departure', () => {
-    deviceCache.set(SN, new Map([['patrol_phase', 'patrolling']]));
-    publishToDevice(SN, { go_pile: {} });
-    expect(commands()).toEqual(['go_pile']);
   });
 });

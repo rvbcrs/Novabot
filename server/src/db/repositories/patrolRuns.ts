@@ -34,6 +34,7 @@ class PatrolRunsRepository {
     ON CONFLICT(mower_sn) DO UPDATE SET
       run = excluded.run, token = '', started_at = excluded.started_at,
       schedule_id = NULL, ended_phase = excluded.ended_phase
+    WHERE patrol_runs.ended_phase IS NOT NULL OR patrol_runs.started_at < @stale_before
   `);
   private _clearAll = db.prepare('DELETE FROM patrol_runs');
 
@@ -52,9 +53,10 @@ class PatrolRunsRepository {
   }
 
   /** The end of a run this database has no row for (restored or reset): it becomes the
-   *  mower's last run, ended, without a token (no uploads). */
-  recordEnded(sn: string, run: string, phase: string, startedAt: number): void {
-    this._recordEnded.run({ mower_sn: sn, run, started_at: startedAt, ended_phase: phase });
+   *  mower's last run, ended, without a token (no uploads). Never over a live run: the
+   *  row is only replaced when it has ended or started before `staleBefore` (its TTL). */
+  recordEnded(sn: string, run: string, phase: string, startedAt: number, staleBefore: number): void {
+    this._recordEnded.run({ mower_sn: sn, run, started_at: startedAt, ended_phase: phase, stale_before: staleBefore });
   }
 
   /** Tests only. */

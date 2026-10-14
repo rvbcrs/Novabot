@@ -542,16 +542,23 @@ describe('altijd randmaaien', () => {
     expect(edgeCutCalls()).toHaveLength(0);
   });
 
-  // R5: a cached phase never expires; without a run that is out, COVERING is a mow.
-  it('a stale patrol phase without a live run does not keep the watcher from arming', () => {
-    const SN = 'ALWAYS_STALE_PATROL';
+  // V3: a patrol without a run on the server (started outside startPatrol, or
+  // a database reset) still departs with COVERING. Arming on it would start an
+  // edge cut with the blades when that patrol docks at night, so the raw phase
+  // alone keeps the watcher away. A stale phase costs a missed arm at most.
+  it('a driving patrol phase without a live run arms nothing either', () => {
+    const SN = 'ALWAYS_PATROL_NO_RUN';
     deviceSettingsRepo.upsert(SN, 'edge_always', '1');
     setIdleOnDock(SN);
     startScheduleRunner();
     setMowingMap3(SN);
-    deviceCache.get(SN)!.set('patrol_phase', 'patrolling');
+    deviceCache.get(SN)!.set('patrol_phase', 'localizing');
     vi.advanceTimersByTime(TICK_MS);
-    expect(__getPendingEdgeForTest().get(SN)).toMatchObject({ scheduleId: null, mapName: 'map3' });
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+    setDockedAfterFinishedMow(SN);
+    deviceCache.get(SN)!.set('patrol_phase', 'done');
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
   });
 
   it('a mow after a patrol still arms the edge cut', () => {

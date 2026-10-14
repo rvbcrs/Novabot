@@ -169,3 +169,28 @@ describe('patrolDockingUnderWay', () => {
     expect(patrolDockingUnderWay(SN, false, 0)).toBe(false);
   });
 });
+
+// V2: the end of a run the database has no row for is recorded (R4), but never
+// over a live run: that run would lose its token, its statuses and its docking.
+describe('recordEnded', () => {
+  it('records the end when there is no row', () => {
+    patrolRunsRepo.recordEnded(SN, '5000', 'error', 5000, 0);
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '5000', token: '', ended_phase: 'error' });
+  });
+
+  it('leaves a live run its row and token', () => {
+    started('2000');
+    patrolRunsRepo.recordEnded(SN, '5000', 'stopped', 5000, 1999);   // started 2000, not before 1999: live
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '2000', token: TOKEN, ended_phase: null });
+  });
+
+  it('replaces a run that has ended or is past its TTL', () => {
+    started('2000');
+    patrolRunsRepo.markEnded(SN, '2000', 'done');
+    patrolRunsRepo.recordEnded(SN, '5000', 'stopped', 5000, 0);
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '5000', token: '', ended_phase: 'stopped' });
+    started('3000');
+    patrolRunsRepo.recordEnded(SN, '6000', 'error', 6000, 3001);      // started before 3001: past the TTL
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '6000', ended_phase: 'error' });
+  });
+});

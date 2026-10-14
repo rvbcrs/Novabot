@@ -378,13 +378,20 @@ describe('rand-dag watcher disarm via dashboard-routes', () => {
     disarmEdgeWatch(SN, 'test-opruiming');
   });
 
-  it('POST /extended/:sn met patrol (handmatig pad) ontwapent de watcher', async () => {
+  // V3: a patrol starts only through POST /patrol (startPatrol records its run
+  // and upload token). The raw extended route refuses it, sends nothing, and
+  // leaves an armed edge cut alone: nothing moved.
+  it('POST /extended/:sn met patrol wordt geweigerd: niets verstuurd, de watcher blijft', async () => {
     const SN = 'ROUTE_EXTPATROL';
     armViaRunner(SN);
+    vi.mocked(publishToTopic).mockClear();
     const r = await request(server)
       .post(`/api/dashboard/extended/${SN}`)
       .send({ patrol: { run: '1', zones: [] } });
-    expect(r.status).toBe(200);
-    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+    expect(r.status).toBe(409);
+    expect(r.body).toEqual({ ok: false, error: `a patrol only starts through POST /api/dashboard/patrol/${SN}` });
+    expect(publishToTopic).not.toHaveBeenCalled();
+    expect(__getPendingEdgeForTest().has(SN)).toBe(true);
+    disarmEdgeWatch(SN, 'test-opruiming');
   });
 });

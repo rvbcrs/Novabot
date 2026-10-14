@@ -95,50 +95,8 @@ export function edgeCutGate(sn: string, command: Record<string, unknown>, edgeAc
   return { stopNow: true, delayMs: EDGE_STOP_SETTLE_MS };
 }
 
-/** Commands that replace the mower's task: a recharge or a start. */
-const REPLACES_TASK = new Set(['go_pile', 'go_to_charge', 'start_run', 'start_navigation']);
-/** Drive phases in which the drive holds the firmware's departure task, or is about to start it. */
-const DEPARTURE_PHASES = new Set(['starting', 'localizing']);
-/**
- * How long a task-replacing command waits after the gate killed a departing
- * drive. On its way out that drive stops and clears the departure task
- * (stop_task + quit_mapping_mode, mow_zone_drive.py DEPARTURE_RELEASE_S 1.5 s),
- * which would stop a recharge or a start that reached robot_decision first.
- */
-export const DEPARTURE_SETTLE_MS = 3_000;
-
-const departureUntil = new Map<string, number>();
-const departureAt = new Map<string, number>();
-
-/**
- * The hold for an ending command while a zone drive or a night patrol departs
- * (phase starting or localizing), the same settle mechanism as edgeCutGate. The
- * first ending command opens the window; go_pile, go_to_charge, start_run and
- * start_navigation wait until it closes, all of them for the same moment (go
- * home's go_to_charge 500 ms after its go_pile does not move it). Stops and
- * pauses pass at once: the release stops the task anyway. A command re-sent
- * when the window closes passes; no new window for REARM_MS.
- */
-export function departureGate(
-  sn: string, command: Record<string, unknown>,
-  mowZonePhase: string | undefined, patrolPhase: string | undefined, now = Date.now(),
-): { delayMs: number } {
-  const name = Object.keys(command)[0];
-  if (!name || !ENDS_EDGE_CUT.has(name)) return { delayMs: 0 };
-  const hold = (until: number) => ({ delayMs: REPLACES_TASK.has(name) ? Math.max(0, until - now) : 0 });
-  const until = departureUntil.get(sn) ?? 0;
-  if (now < until) return hold(until);
-  const departing = DEPARTURE_PHASES.has(mowZonePhase ?? '') || DEPARTURE_PHASES.has(patrolPhase ?? '');
-  if (!departing || now - (departureAt.get(sn) ?? -Infinity) < REARM_MS) return { delayMs: 0 };
-  departureAt.set(sn, now);
-  departureUntil.set(sn, now + DEPARTURE_SETTLE_MS);
-  return hold(now + DEPARTURE_SETTLE_MS);
-}
-
 /** Tests only. */
 export function _resetEdgeCutGate(): void {
   settleUntil.clear();
   stoppedAt.clear();
-  departureUntil.clear();
-  departureAt.clear();
 }
