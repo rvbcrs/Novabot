@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import signal
 import struct
 import sys
@@ -549,11 +550,14 @@ def stop_handlers():
 class DepartureDriver(mzd.Driver):
     """The real Driver.localize_via_firmware against a fake robot_decision.
     `sigterm_in` names the call during which the drive receives SIGTERM;
-    `fail_in` the one that raises instead."""
+    `fail_in` the one that raises instead. The mower stands at `before` until
+    the departure starts and at `after` from then on."""
 
-    def __init__(self, sigterm_in=None, fail_in=None, recharging=False):
+    def __init__(self, sigterm_in=None, fail_in=None, recharging=False,
+                 before=(0.0, 0.0), after=(1.0, 1.0)):
         self.calls = []
         self.sigterm_in, self.fail_in, self.recharging = sigterm_in, fail_in, recharging
+        self.before, self.after, self.departed = before, after, False
         self._status = (mzd.TASK_MODE_COVERAGE, 30)   # the departure's init states
         self._recharge = 0
 
@@ -567,13 +571,16 @@ class DepartureDriver(mzd.Driver):
 
     def start_cov(self, map_ids, cutterhigh, direction):
         self.calls.append(("start_cov",))
+        self.departed = True
         self._step("start_cov")
         return True
 
     def robot_xy(self, timeout=6.0):
         self.calls.append(("robot_xy",))
+        if not self.departed:
+            return self.before   # the pose the departure starts from
         self._step("robot_xy")
-        return (1.0, 1.0)
+        return self.after
 
     def wait_status(self, pred, timeout=30.0):
         self.calls.append(("wait_status", timeout))
@@ -767,7 +774,96 @@ def test_a_refused_departure_leaves_robot_decision_alone():
             return False
     drv = Refused()
     assert depart(drv) == (None, None)
-    assert names(drv) == ["prepare_release", "start_cov"], drv.calls   # no stop, no clear
+    # The pose before the start, the start, and no stop, no clear.
+    assert names(drv) == ["prepare_release", "robot_xy", "start_cov"], drv.calls
+
+
+# ── A departure that did not happen is never handed over (#142, custom-49) ──
+# In three of Walter's mow attempts the status read (1, 1) or (1, 2) right after
+# start_cov, the stop went out at once, "firmware init done" logged the docked
+# pose, and nav2 drove the mower off the dock.
+
+class NeverStartsDriver(DepartureDriver):
+    """robot_decision takes the start, but its status never shows the task.
+    `starts_late`: the task does show up after the wait, so the stop parks it
+    (USER_STOP) and the quit clears it."""
+
+    def __init__(self, starts_late=False):
+        super().__init__(before=(0.10, 0.09), after=(0.10, 0.09))
+        self._status = (mzd.TASK_MODE_COVERAGE, 2)
+        self.starts_late = starts_late
+
+    def stop_task(self, timeout=None):
+        self.calls.append(("stop_task", timeout))
+        if self.starts_late:
+            self._status = (mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP)
+        return True
+
+
+def test_a_departure_that_never_starts_is_not_handed_over():
+    for late in (False, True):
+        drv = NeverStartsDriver(starts_late=late)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code, pos = depart(drv, sleep=lambda s: None)
+        assert code is None and pos is None, (late, code, pos)
+        waits = [c for c in drv.calls if c[0] == "wait_status"]
+        assert waits[0] == ("wait_status", mzd.DEPARTURE_START_S), drv.calls
+        n = names(drv)
+        assert "stop_task" in n, drv.calls                           # the stop still goes out
+        assert ("quit_mapping_mode" in n) == late, (late, drv.calls)   # and clears a late task
+        assert "recharge_active" not in n, drv.calls                 # no release on top of it
+        said = out.getvalue()
+        assert "firmware task never started (status=(1, 2))" in said, said
+        assert "firmware init done" not in said, said
+
+
+class RunDriver(DepartureDriver):
+    """robot_decision moves on one state per status read, through `states`,
+    until a read finds what it waits for."""
+
+    def __init__(self, states, before, after):
+        super().__init__(before=before, after=after)
+        self._status = (mzd.TASK_MODE_COVERAGE, 2)   # docked, no task yet
+        self.states = list(states)
+
+    def wait_status(self, pred, timeout=30.0):
+        self.calls.append(("wait_status", timeout))
+        while self.states and not pred(*self._status):
+            self._status = self.states.pop(0)
+        return self._status
+
+
+DEPARTURE_RUN = [(mzd.TASK_MODE_COVERAGE, ws) for ws in (50, 53, 56, 59)]   # .. INIT_SUCCESS
+
+
+def test_a_departure_that_did_not_move_the_mower_is_not_handed_over():
+    docked = (0.10346326455538557, 0.08879976553824738)   # Walter's pose, before and after
+    drv = RunDriver(DEPARTURE_RUN, before=docked, after=docked)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos is None, pos
+    said = out.getvalue()
+    assert "departure did not move the mower" in said and "firmware init done" not in said, said
+    n = names(drv)   # the task is stopped and cleared as on every handover
+    assert n.index("start_cov") < n.index("stop_task") < n.index("quit_mapping_mode"), drv.calls
+
+
+def test_a_departure_that_moved_the_mower_hands_over_where_it_stands():
+    drv = RunDriver(DEPARTURE_RUN, before=(0.10, 0.09), after=(1.10, 0.09))
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos == (1.10, 0.09), pos
+    # The pose handed over is read after the stop and the settle, not before.
+    n = names(drv)
+    assert n[-1] == "robot_xy" and n.index("quit_mapping_mode") < len(n) - 1, drv.calls
+
+
+def test_a_departure_without_a_frame_before_is_not_held_to_the_distance():
+    # After a boot there is no map frame before the start: nothing to compare.
+    drv = RunDriver(DEPARTURE_RUN, before=None, after=(0.30, 0.09))
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos == (0.30, 0.09), pos
 
 
 class Done:
@@ -922,6 +1018,99 @@ def test_a_patrol_that_cannot_read_its_params_switches_the_light_off_too():
     assert rc == 2
     ends = [e for e in drv.events if e[0] in ("light", "phase")]
     assert [e[0] for e in ends] == ["light", "phase"] and ends[1][1] == "error", drv.events
+
+
+# ── robot_xy reads the pose now, not the one from before a drive ────────────
+# Only the main node spins while nav2 drives, so the probe's tf buffer still
+# holds the transform from before the drive. In Walter's log (#142, custom-49)
+# the pose after every transit hop equals the pose before it to 15 decimals.
+
+def tf_at(x, y, stamp):
+    """A map->base_link TransformStamped as tf2's lookup_transform returns it."""
+    ns = types.SimpleNamespace
+    sec = int(stamp)
+    return ns(header=ns(stamp=ns(sec=sec, nanosec=int((stamp - sec) * 1e9))),
+              transform=ns(translation=ns(x=x, y=y, z=0.0)))
+
+
+class FakeTfBuffer:
+    """The probe's tf buffer: the newest map->base_link it holds, or tf2's
+    exception while it holds none."""
+
+    def __init__(self, held=None):
+        self.held = held
+        self.lookups = 0
+
+    def lookup_transform(self, target, source, when):
+        self.lookups += 1
+        if self.held is None:
+            raise RuntimeError('"map" passed to lookupTransform argument target_frame does not exist')
+        return self.held
+
+
+@contextlib.contextmanager
+def probe_spins(on_spin):
+    """Every rclpy.spin_once runs on_spin(); rclpy.time.Time() exists."""
+    saved = {k: getattr(mzd.rclpy, k) for k in ("spin_once", "time") if hasattr(mzd.rclpy, k)}
+    mzd.rclpy.spin_once = lambda node, timeout_sec=0.0: on_spin()
+    mzd.rclpy.time = types.SimpleNamespace(Time=lambda: None)
+    try:
+        yield
+    finally:
+        for k in ("spin_once", "time"):
+            if k in saved:
+                setattr(mzd.rclpy, k, saved[k])
+            else:
+                delattr(mzd.rclpy, k)
+
+
+def tf_driver(buf):
+    drv = mzd.Driver(FakeNode(misses=0))
+    drv._probe_node = object()   # the probe exists already: no node is made
+    drv._tf_buf = buf
+    return drv
+
+
+def test_robot_xy_never_returns_the_pose_from_before_a_drive():
+    buf = FakeTfBuffer(tf_at(1.46, 0.10, time.time() - 30.0))   # left over from before the hop
+    out = io.StringIO()
+    with probe_spins(lambda: time.sleep(0.01)), contextlib.redirect_stdout(out):
+        assert tf_driver(buf).robot_xy(timeout=0.3) is None
+    assert buf.lookups > 1, buf.lookups   # it kept spinning for a fresh one
+    said = [line for line in out.getvalue().splitlines() if "robot_xy" in line]
+    assert len(said) == 1, said           # once per call, not once per spin
+    assert re.search(r"no fresh map->base_link in 0\.3s \(latest 30\.\ds old\)", said[0]), said
+
+
+def test_robot_xy_takes_the_transform_that_arrives_while_it_spins():
+    buf = FakeTfBuffer(tf_at(1.46, 0.10, time.time() - 30.0))
+    spins = []
+
+    def spin():   # one queued message per spin; the third is the pose now
+        spins.append(1)
+        if len(spins) == 3:
+            buf.held = tf_at(5.27, 18.6, time.time())
+    with probe_spins(spin):
+        assert tf_driver(buf).robot_xy(timeout=2.0) == (5.27, 18.6)
+    assert len(spins) == 3, spins
+
+
+def test_robot_xy_accepts_a_transform_from_just_before_the_call():
+    # tf lags the wall clock a little: half a second old is still the pose now.
+    buf = FakeTfBuffer(tf_at(2.0, 3.0, time.time() - 0.2))
+    with probe_spins(lambda: None):
+        assert tf_driver(buf).robot_xy(timeout=1.0) == (2.0, 3.0)
+    assert buf.lookups == 1, buf.lookups
+
+
+def test_robot_xy_without_a_map_frame_is_none_and_quiet():
+    # After a boot there is no map frame at all. The callers say so; the
+    # departure's frame wait asks every 2 s, so this stays silent.
+    buf = FakeTfBuffer(None)
+    out = io.StringIO()
+    with probe_spins(lambda: time.sleep(0.01)), contextlib.redirect_stdout(out):
+        assert tf_driver(buf).robot_xy(timeout=0.2) is None
+    assert out.getvalue() == "", out.getvalue()
 
 
 if __name__ == "__main__":

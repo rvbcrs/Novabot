@@ -10,7 +10,9 @@ executing" (live LFIN2230700238, 2026-09-14).
 
 Run: python3 research/__tests__/test_mow_zone_handover.py
 """
+import contextlib
 import importlib.util
+import io
 import os
 import sys
 import tempfile
@@ -517,6 +519,60 @@ def test_start_zone_near_the_dock_without_a_zone_in_reach():
     assert mzd._start_zone((-4.0, 5.0), None) is None
     assert mzd._start_zone((5.0, 5.0), "map0") == "map0"
     assert mzd._start_zone((0.0, 0.0), "dock") == "map0"
+
+
+# #142 third round (Walter, custom-49): his anchor (0.16, 0.01) lies outside
+# every zone. custom-48 found no dock zone, so a mow from that dock handed the
+# whole task to the firmware, and that worked on every map. custom-49 gave the
+# dock a zone for the edge cut, and a mow from it then took the script's
+# departure and transit, which ended in errors. A mow from a dock beside the
+# lawn is the firmware's again; only the edge cut uses the dock's zone.
+WALTER_LIKE = {"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": DOCK_PAD,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]}
+
+
+def run_mow(drv, to_slot):
+    seen, out = [], io.StringIO()
+    real, mzd.phase = mzd.phase, (lambda *a: seen.append(a))
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = mzd.do_mow(drv, to_slot, 10 ** int(to_slot[3:]), 2, None)
+    finally:
+        mzd.phase = real
+    return rc, seen, out.getvalue()
+
+
+def test_a_mow_from_a_dock_beside_the_lawn_is_the_firmwares():
+    with_maps(WALTER_LIKE)
+    assert mzd._zone_containing(mzd._dock_anchor()) is None and mzd._dock_zone() == "map0"
+    for docked in (None, DOCK_PAD[0]):   # no frame yet after a boot, or localized on the dock
+        drv = EdgeDriver(localized=docked)
+        rc, seen, out = run_mow(drv, "map6")
+        assert rc == 0 and seen == [("covering",), ("done", "")], (docked, seen)
+        # One start, no departure handover, no transit.
+        assert drv.calls == [("reload_map",), ("start_cov", 1000000)], (docked, drv.calls)
+        assert "on the dock beside the lawn (anchor outside every zone)" in out, out
+
+
+def test_a_mow_from_a_dock_inside_its_zone_still_drives_the_channel():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)],
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = EdgeDriver(localized=None)
+    rc, seen, _out = run_mow(drv, "map6")
+    assert rc == 0 and ("following_unicom",) in seen and seen[-1] == ("done", ""), seen
+    n = [c[0] for c in drv.calls]
+    assert n.index("localize") < n.index("follow_path") < n.index("start_cov"), drv.calls
+
+
+def test_an_edge_cut_from_a_dock_beside_the_lawn_keeps_the_dock_zone_route():
+    with_maps(WALTER_LIKE)
+    drv = EdgeDriver(localized=None)
+    rc, seen = run_edge(drv, "map6")
+    assert rc == 0 and seen[-1] == ("edge_ready",), seen
+    assert ("localize",) in drv.calls and ("follow_path",) in drv.calls, drv.calls
+    assert not any(c[0] == "start_cov" for c in drv.calls), drv.calls
 
 
 if __name__ == "__main__":

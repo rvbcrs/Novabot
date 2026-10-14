@@ -79,6 +79,14 @@ WORK_STATUS_INIT_SUCCESS = 59  # robot_decision: init done, departure finished
 # handler SIGKILL a drive 3 s after their SIGTERM; the goal cancel and the
 # headlight on the way out need the rest.
 DEPARTURE_RELEASE_S = 1.5
+# A map -> base_link stamped up to this long before robot_xy() was called still
+# counts as the pose now; anything older is a leftover in the probe's buffer.
+FRESH_POSE_S = 0.5
+# How long a departure's task gets to show up in RobotStatus after start_cov.
+DEPARTURE_START_S = 20.0
+# Moved less than this between the start and the handover: the mower never left
+# the dock (QUIT_PILE drives 1.0 m).
+DEPARTURE_MIN_MOVE_M = 0.5
 
 
 def task_executing(task_mode, work_status):
@@ -384,24 +392,37 @@ class Driver:
         self._recharge = int(m.recharge_status)
 
     def robot_xy(self, timeout=6.0):
-        """Read map -> base_link. Returns (x, y), or None if TF never resolves
-        (which doubles as a not-localized guard: callers refuse to move on None)."""
+        """Read map -> base_link as it is now. Returns (x, y), or None when no
+        transform stamped at or after the call (less FRESH_POSE_S) arrives
+        within `timeout`, which doubles as a not-localized guard: callers
+        refuse to move on None.
+
+        Only the main node spins while nav2 drives, so the probe's buffer still
+        holds the transform from before the drive, and one spin does not
+        refresh it: in Walter's log (#142, custom-49) the pose after every
+        transit hop equalled the pose before it to 15 decimals. So keep
+        spinning until the buffer has caught up. The mower's ROS clock is wall
+        time, so the stamps compare with time.time()."""
+        t0 = time.time()
         probe = self._probe()
         buf = self._tf_buf
-        pos = None
-        deadline = time.time() + timeout
-        try:
-            while time.time() < deadline:
-                rclpy.spin_once(probe, timeout_sec=0.1)
-                try:
-                    t = buf.lookup_transform("map", "base_link", rclpy.time.Time())
-                    pos = (t.transform.translation.x, t.transform.translation.y)
-                    break
-                except Exception:
-                    continue
-        finally:
-            pass
-        return pos
+        deadline = t0 + timeout
+        latest = None
+        while time.time() < deadline:
+            rclpy.spin_once(probe, timeout_sec=0.1)
+            try:
+                t = buf.lookup_transform("map", "base_link", rclpy.time.Time())
+            except Exception:
+                continue
+            latest = t.header.stamp.sec + t.header.stamp.nanosec * 1e-9
+            if latest >= t0 - FRESH_POSE_S:
+                return (t.transform.translation.x, t.transform.translation.y)
+        if latest is not None:
+            # No transform at all is the normal state after a boot and the
+            # callers say so; a stale one is worth a line.
+            log(f"robot_xy: no fresh map->base_link in {timeout}s "
+                f"(latest {time.time() - latest:.1f}s old)")
+        return None
 
     def undock(self, seconds=9.0, linear=0.25):
         """Release the dock magnet and reverse for EXACTLY `seconds` (9s @
@@ -900,11 +921,19 @@ class Driver:
         The task this starts belongs to the drive until the handover below
         stops and clears it. A drive that ends before that (killed, or an
         exception) stops and clears it on its way out (_release_departure).
+
+        Only a departure that happened is handed over: its task showed up in
+        RobotStatus, and the mower stands away from where it stood before the
+        start. Otherwise None. In Walter's log (#142, custom-49) the status
+        right after the start read (1, 1) or (1, 2), "no task running", so the
+        waits below ended at once, the stop went out and nav2 drove the mower
+        off the dock.
         """
         log("not localized: asking the firmware to initialise the frame")
         phase("localizing")
         self._prepare_release()
-        requested = handed_over = stop_sent = False
+        before = self.robot_xy(timeout=2.0)   # None without a frame yet
+        requested = handed_over = stop_sent = started = False
         try:
             requested = True   # a kill during the request itself may still start the task
             if not self.start_cov(map_ids, cutterhigh, direction):
@@ -912,17 +941,23 @@ class Driver:
                 log("firmware refused the init task")
                 return None
             deadline = time.time() + timeout
-            pos = None
-            while time.time() < deadline:
-                pos = self.robot_xy(timeout=2.0)
-                if pos is not None:
-                    break
-            # A mower that was already localized has a frame before it moves. Stop
-            # only once the firmware has finished its own departure (INIT_SUCCESS
-            # or later), so the transit never starts from the dock itself.
-            self.wait_status(
-                lambda tm, ws: ws >= WORK_STATUS_INIT_SUCCESS or not task_executing(tm, ws),
-                timeout=max(5.0, deadline - time.time()))
+            # The status read right after the start can still be the one from
+            # before it, so first wait for the task itself.
+            st = self.wait_status(task_executing, timeout=DEPARTURE_START_S)
+            started = st is not None and task_executing(*st)
+            if not started:
+                log(f"firmware task never started (status={st})")
+            else:
+                while time.time() < deadline and self.robot_xy(timeout=2.0) is None:
+                    pass   # the frame appears during the firmware's init
+                # A mower that was already localized has a frame before it moves. Stop
+                # only once the firmware has finished its own departure (INIT_SUCCESS
+                # or later), so the transit never starts from the dock itself.
+                self.wait_status(
+                    lambda tm, ws: ws >= WORK_STATUS_INIT_SUCCESS or not task_executing(tm, ws),
+                    timeout=max(5.0, deadline - time.time()))
+            # Also without a start: harmless when nothing runs, and it stops a
+            # task that shows up late.
             self.stop_task()
             stop_sent = True
             # The stop is queued behind the init states and only lands once the
@@ -944,12 +979,19 @@ class Driver:
             if requested and not handed_over:
                 with _signals_held():
                     self._release_departure(stop_sent)
+        if not started:
+            return None
         # Give the chassis a moment to settle before the transit takes the wheels.
         time.sleep(2.0)
+        pos = self.robot_xy()   # where the departure left it, read now
         if pos is None:
             log("firmware init ran but the map frame never appeared")
-        else:
-            log(f"firmware init done: robot={pos}")
+            return None
+        if before is not None and _dist(before, pos) <= DEPARTURE_MIN_MOVE_M:
+            log(f"departure did not move the mower (before={before}, after={pos}): "
+                "not taking the wheels")
+            return None
+        log(f"firmware init done: robot={pos}")
         return pos
 
     def cancel_recharge(self):
@@ -1565,14 +1607,25 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
         # task IS the mow: hand it over in one go. Starting it only to stop and
         # start it again is what produced "Cannot start a new task when last
         # task is executing" (live .244, 2026-09-14).
+        anchor = _dock_anchor()
         home = _dock_zone()
-        log(f"on the dock: dock zone={home} anchor={_dock_anchor()} to={to_slot} edge={edge}")
+        log(f"on the dock: dock zone={home} anchor={anchor} to={to_slot} edge={edge}")
         if edge:
             if to_slot != home and not edge_route(home, to_slot):
                 log(f"edge: on the dock, no channel or touching zones {home}->{to_slot}; "
                     f"zones={sorted(_work_polys())}")
                 phase("error", "no_route_to_zone")
                 return 1
+        elif anchor and _zone_containing(anchor) is None:
+            # A dock beside the lawn: its zone is only _dock_zone()'s guess,
+            # which the edge cut needs because it has no firmware task to fall
+            # back on. A mow has one. On custom-48 the firmware ran the whole
+            # task from such a dock on every map; custom-49 took the departure
+            # and transit over from it and every mow ended in an error (#142,
+            # Walter, anchor (0.16, 0.01) outside every zone).
+            log("on the dock beside the lawn (anchor outside every zone): "
+                "the firmware runs the whole task")
+            return _cover(drv, map_ids, cutterhigh, direction)
         elif not _channel_files(home, to_slot):
             log(f"on the dock, no channel {home}->{to_slot}: the firmware runs the whole task")
             return _cover(drv, map_ids, cutterhigh, direction)
