@@ -488,7 +488,7 @@ python3 /tmp/mzd_probe.py probe 60 100   # nobody in front, light on
 python3 /tmp/mzd_probe.py probe 90 100   # person at 4 m (0-29 s), 2 m (30-59 s), 6 m (60-89 s)
 python3 /tmp/mzd_probe.py probe 90 0     # the same walk, light off
 exit
-mkdir -p /tmp/patrol_probe_local && scp 'root@<mower-ip>:/tmp/patrol_probe/*.jpg' /tmp/patrol_probe_local/
+mkdir -p /tmp/patrol_probe_local && scp -r 'root@<mower-ip>:/tmp/patrol_probe/*' /tmp/patrol_probe_local/   # one folder per run: <time>_led<level>/
 ```
 
 Expected: `PROBE {"t": ..., "frames": N, "person": ..., "animal": ...}` lines with `frames` above 0 every second. If `frames` stays 0, the perception never came up: stop and report the `LOG` lines to Ramon.
