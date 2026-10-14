@@ -44,6 +44,21 @@ describe('patrol plan', () => {
     expect(plan.map(z => z.zone)).toEqual(['map1', 'map0', 'map2']);
   });
 
+  // mapRepo.findWorkMaps lists the newest row first; every other caller takes
+  // the first row of a zone.
+  it('of two rows of one zone the newest wins', () => {
+    const plan = buildPatrolZones([row('map0', SQ), row('map0', shift(SQ, 100))], ['map0'], 5, null);
+    expect(plan).toHaveLength(1);
+    expect(plan[0].points.length).toBeGreaterThan(0);
+    expect(plan[0].points.every(([x]) => x < 20)).toBe(true);
+  });
+
+  it('a broken newest row falls back to the next row of that zone', () => {
+    const plan = buildPatrolZones([{ canonical_name: 'map0', map_area: '{oops' }, row('map0', shift(SQ, 100))],
+      ['map0'], 5, null);
+    expect(plan[0].points.every(([x]) => x > 90)).toBe(true);
+  });
+
   it('skips obstacle rows, broken polygons and zones that do not exist', () => {
     const plan = buildPatrolZones([row('map0_0_obstacle', SQ), { canonical_name: 'map1', map_area: '{oops' }, row('map0', SQ)],
       ['map0', 'map1', 'map7'], 5, null);

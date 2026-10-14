@@ -81,12 +81,33 @@ describe('publishToDevice during an edge cut', () => {
 // reaches the mower while it localizes, patrols or returns must kill the patrol
 // first (stop_mow_zone), and the docking after a patrol that ended must not.
 describe('publishToDevice during a night patrol', () => {
-  it.each(['starting', 'localizing', 'patrolling', 'returning'])('sends stop_mow_zone first, then the stop, while the patrol is %s', phase => {
+  it.each(['starting', 'localizing', 'patrolling', 'returning'])('switches the headlight off, sends stop_mow_zone, then the stop, while the patrol is %s', phase => {
     deviceCache.set(SN, new Map([['patrol_phase', phase]]));
     publishToDevice(SN, { stop_navigation: { cmd_num: 1 } });
     expect(sent).toEqual([
+      `novabot/cmd/${SN} {"led_set":0}`,
       `novabot/extended/${SN} {"stop_mow_zone":{}}`,
       `Dart/Send_mqtt/${SN} {"stop_navigation":{"cmd_num":1}}`,
+    ]);
+  });
+
+  // Headlight 0 before any go_to_charge (dock LED = stock).
+  it('a go home during a patrol: headlight off, stop_mow_zone, then go_to_charge', () => {
+    deviceCache.set(SN, new Map([['patrol_phase', 'patrolling']]));
+    publishToDevice(SN, { go_to_charge: { cmd_num: 4 } });
+    expect(sent).toEqual([
+      `novabot/cmd/${SN} {"led_set":0}`,
+      `novabot/extended/${SN} {"stop_mow_zone":{}}`,
+      `Dart/Send_mqtt/${SN} {"go_to_charge":{"cmd_num":4}}`,
+    ]);
+  });
+
+  it('a zone drive gets stop_mow_zone first, and its light is left alone', () => {
+    deviceCache.set(SN, new Map([['mow_zone_phase', 'following_unicom']]));
+    publishToDevice(SN, { go_to_charge: { cmd_num: 5 } });
+    expect(sent).toEqual([
+      `novabot/extended/${SN} {"stop_mow_zone":{}}`,
+      `Dart/Send_mqtt/${SN} {"go_to_charge":{"cmd_num":5}}`,
     ]);
   });
 

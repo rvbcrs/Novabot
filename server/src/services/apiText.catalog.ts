@@ -1061,6 +1061,23 @@ export const CATALOG: Catalog = {
     fr: "aucun point de contrôle : choisissez des zones dans les réglages de la patrouille",
     de: "keine Kontrollpunkte: wählen Sie Zonen in den Patrouille-Einstellungen",
   },
+  "de maaier is aan het randmaaien; stop dat eerst": {
+    en: "the mower is cutting an edge; stop that first",
+    fr: "la tondeuse est en train de tondre une bordure ; arrêtez cela d'abord",
+    de: "der Mäher schneidet gerade eine Kante; stoppen Sie das zuerst",
+  },
+  // A schedule's patrol that the mower refused before anything moved (patrolService.onPatrolRefused).
+  "de maaier weigerde de patrouille ({0})": {
+    en: "the mower refused the patrol ({0})",
+    fr: "la tondeuse a refusé la patrouille ({0})",
+    de: "der Mäher hat die Patrouille abgelehnt ({0})",
+  },
+  // An edge cut refused while a night patrol drives (mowingService.ts).
+  "er loopt een nachtpatrouille; stop die eerst": {
+    en: "a night patrol is running; stop it first",
+    fr: "une patrouille de nuit est en cours ; arrêtez-la d'abord",
+    de: "eine Nachtpatrouille läuft; stoppen Sie sie zuerst",
+  },
   "maaier offline": {
     en: "mower offline",
     fr: "tondeuse hors ligne",

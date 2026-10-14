@@ -10,11 +10,12 @@ import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { isMapMqttPacketBlocked } from './mapCommandGuard.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { edgeCutGate, endsZoneDrive } from '../services/edgeCutGuard.js';
+import { edgeCutGate, stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
+import { patrolReport } from '../services/patrolRuns.js';
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond, emitMapsChanged } from '../dashboard/socketHandler.js';
-import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice, noteChargerTransport, getNextCmdNum } from './mapSync.js';
+import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, publishToTopic, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice, noteChargerTransport, getNextCmdNum } from './mapSync.js';
 import { scheduleAutoMapPull, type AutoPullDeps } from '../services/mapPull.js';
 import { isMowerMapOperationBusy } from '../services/mowerMapOperation.js';
 import { isFrameUnvalidated } from '../services/frameValidation.js';
@@ -596,9 +597,10 @@ export async function startMqttBroker(): Promise<void> {
               console.log(`${C.cyan}[EDGE] ${sn}: edge cut running, stop_boundary_follow before app ${Object.keys(parsed)[0]}${C.reset}`);
               publishToExtended(sn, { stop_boundary_follow: {} });
             }
-            if (endsZoneDrive(parsed, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'))) {
-              console.log(`${C.cyan}[EDGE] ${sn}: zone or patrol drive running, stop_mow_zone before app ${Object.keys(parsed)[0]}${C.reset}`);
-              publishToExtended(sn, { stop_mow_zone: {} });
+            // The app packet itself passes after this, when the callback below runs.
+            if (stopDriveBeforeEnding(sn, parsed, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'),
+              { toTopic: publishToTopic, toExtended: publishToExtended })) {
+              console.log(`${C.cyan}[EDGE] ${sn}: zone or patrol drive running, stop_mow_zone sent before app ${Object.keys(parsed)[0]}${C.reset}`);
             }
             if (edge.delayMs > 0) {
               const release = callback;
@@ -1309,21 +1311,23 @@ export async function startMqttBroker(): Promise<void> {
           }
         }
 
-        // Night patrol: mirror the phase for the dashboard and the app, and
-        // let the service switch the headlight and dock the mower at the end.
-        if (extSn && cmdName === 'patrol_status') {
-          const body = parsed[cmdName] as { phase?: string; error?: string };
-          if (body?.phase) {
+        // Night patrol: mirror the phase for the dashboard and the app (not
+        // for a run older than the current patrol; a checkpoint brings a lost
+        // `patrolling` back; a refused start is an error), and let the
+        // service switch the headlight and dock the mower at the end
+        // (services/patrolRuns.ts).
+        if (extSn && cmdName?.startsWith('patrol_')) {
+          const mirror = patrolReport(extSn, cmdName, parsed[cmdName], deviceCache.get(extSn)?.get('patrol_phase'));
+          if (mirror) {
             if (!deviceCache.has(extSn)) deviceCache.set(extSn, new Map());
             const cache = deviceCache.get(extSn)!;
-            const changes = new Map<string, string>([
-              ['patrol_phase', body.phase],
-              ['patrol_error', body.phase === 'error' ? (body.error || 'unknown') : ''],
-            ]);
-            for (const [k, v] of changes) cache.set(k, v);
-            forwardToDashboard(extSn, changes);
-            const sn = extSn, phase = body.phase, error = body.error;
-            void import('../services/patrolService.js').then(m => m.onPatrolStatus(sn, phase, error));
+            for (const [k, v] of mirror.changes) cache.set(k, v);
+            forwardToDashboard(extSn, mirror.changes);
+            const sn = extSn, { status, refused } = mirror;
+            if (status) void import('../services/patrolService.js').then(m => m.onPatrolStatus(sn, status.phase, status.error, status.run));
+            if (refused) void import('../services/patrolService.js').then(m => m.onPatrolRefused(sn, refused.error));
+          } else if (cmdName === 'patrol_status') {
+            console.log(`${C.cyan}[Patrol] ${extSn}: ${JSON.stringify(parsed[cmdName])} ignored (no phase, or an older run than the current patrol)${C.reset}`);
           }
         }
 

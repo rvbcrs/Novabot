@@ -501,6 +501,52 @@ describe('altijd randmaaien', () => {
     startScheduleRunner();
     expect(__getPendingEdgeForTest().has(SN)).toBe(false);
   });
+
+  // A night patrol's firmware departure may report Mode:COVERAGE Work:COVERING
+  // for a moment. An armed watcher would then start an edge cut, blades and
+  // all, once the patrol docks at night.
+  it.each(['starting', 'localizing', 'patrolling', 'returning'])('a night patrol that is %s arms nothing', phase => {
+    const SN = `ALWAYS_PATROL_${phase}`;
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setIdleOnDock(SN);
+    startScheduleRunner();
+    setMowingMap3(SN);
+    deviceCache.get(SN)!.set('patrol_phase', phase);
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+    setDockedAfterFinishedMow(SN);
+    deviceCache.get(SN)!.set('patrol_phase', 'done');
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  it('a departure still reporting COVERING when the patrol was stopped arms nothing either', () => {
+    const SN = 'ALWAYS_PATROL_STOPPED';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setIdleOnDock(SN);
+    startScheduleRunner();
+    setMowingMap3(SN);
+    deviceCache.get(SN)!.set('patrol_phase', 'localizing');
+    vi.advanceTimersByTime(TICK_MS);
+    deviceCache.get(SN)!.set('patrol_phase', 'stopped');   // the departure's task has not let go yet
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  it('a mow after a patrol still arms the edge cut', () => {
+    const SN = 'ALWAYS_AFTER_PATROL';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setIdleOnDock(SN);
+    deviceCache.get(SN)!.set('patrol_phase', 'done');
+    startScheduleRunner();
+    setMowingMap3(SN);
+    deviceCache.get(SN)!.set('patrol_phase', 'done');
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().get(SN)).toMatchObject({ scheduleId: null, mapName: 'map3' });
+  });
 });
 
 // Direct na het maaien randmaaien: de firmware meldt de beurt klaar en begint

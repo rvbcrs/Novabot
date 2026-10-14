@@ -169,40 +169,46 @@ describe('POST /api/dashboard/command/:sn: ending a running drive', () => {
   it.each([
     ['AES', undefined],
     ['plain JSON', false],
-  ])('stop_navigation while a patrol patrols: stop_mow_zone goes out before the %s publish', async (_branch, encrypt) => {
+  ])('stop_navigation while a patrol patrols: headlight off, then stop_mow_zone, before the %s publish', async (_branch, encrypt) => {
     deviceCache.set(LFI_SN, new Map([['patrol_phase', 'patrolling']]));
     const r = await request(server)
       .post(`/api/dashboard/command/${LFI_SN}`)
       .send({ encrypt, command: { stop_navigation: { cmd_num: 5 } } });
 
     expect(r.status).toBe(200);
+    expect(mapSync.publishToTopic).toHaveBeenCalledTimes(1);
+    expect(mapSync.publishToTopic).toHaveBeenCalledWith(`novabot/cmd/${LFI_SN}`, { led_set: 0 });
     expect(mapSync.publishToExtended).toHaveBeenCalledTimes(1);
     expect(mapSync.publishToExtended).toHaveBeenCalledWith(LFI_SN, { stop_mow_zone: {} });
     expect(mapSync.publishRawToDevice).toHaveBeenCalledTimes(1);
+    expect(firstCall(mapSync.publishToTopic)).toBeLessThan(firstCall(mapSync.publishToExtended));
     expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
   });
 
-  it('stop_navigation while a zone drive follows the unicom: the same', async () => {
+  it('stop_navigation while a zone drive follows the unicom: stop_mow_zone first, the light left alone', async () => {
     deviceCache.set(LFI_SN, new Map([['mow_zone_phase', 'following_unicom']]));
     const r = await request(server)
       .post(`/api/dashboard/command/${LFI_SN}`)
       .send({ command: { stop_navigation: { cmd_num: 5 } } });
 
     expect(r.status).toBe(200);
+    expect(mapSync.publishToTopic).not.toHaveBeenCalled();
     expect(mapSync.publishToExtended).toHaveBeenCalledTimes(1);
     expect(mapSync.publishToExtended).toHaveBeenCalledWith(LFI_SN, { stop_mow_zone: {} });
     expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
   });
 
   it.each(['stop_navigation', 'pause_navigation', 'go_to_charge', 'start_navigation'])(
-    '%s while a patrol returns also kills the patrol first', async command => {
+    '%s while a patrol returns also kills the patrol first, light off before that', async command => {
       deviceCache.set(LFI_SN, new Map([['patrol_phase', 'returning']]));
       const r = await request(server)
         .post(`/api/dashboard/command/${LFI_SN}`)
         .send({ command: { [command]: { cmd_num: 6 } } });
 
       expect(r.status).toBe(200);
+      expect(mapSync.publishToTopic).toHaveBeenCalledWith(`novabot/cmd/${LFI_SN}`, { led_set: 0 });
       expect(mapSync.publishToExtended).toHaveBeenCalledWith(LFI_SN, { stop_mow_zone: {} });
+      expect(firstCall(mapSync.publishToTopic)).toBeLessThan(firstCall(mapSync.publishToExtended));
       expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
     });
 

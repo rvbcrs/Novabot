@@ -23,6 +23,7 @@ import { freshPositionState } from './positionTelemetry.js';
 import { getPolygonAnchor } from './anchor.js';
 import { mapRepo } from '../db/repositories/maps.js';
 import { pointInPolygon } from '../maps/editGeometry.js';
+import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
 import { M, renderMsg, type Msg } from './serverText.js';
 
 /** Settle time (ms) between re-applying the saved para and start_navigation, so
@@ -389,9 +390,17 @@ export function edgeAlways(sn: string): boolean {
   return deviceSettingsRepo.findBySn(sn).some(r => r.key === EDGE_ALWAYS_KEY && r.value === '1');
 }
 
+/** A night patrol drives outside robot_decision (nav2 goals, the departure
+ *  task while it localizes). An edge cut started beside it would drive and
+ *  cut at the same time, so the patrol has to be stopped first. */
+function patrolDrives(sn: string): boolean {
+  return PATROL_DRIVE_PHASES.has(deviceCache.get(sn)?.get('patrol_phase') ?? '');
+}
+
 export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {
   if (!sn) return { ok: false, error: 'sn required' };
   if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
+  if (patrolDrives(sn)) return refuse(M`er loopt een nachtpatrouille; stop die eerst`);
   // start_edge_cut is een extended commando: op stock firmware hoort niemand het.
   if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
   const cmd: Record<string, unknown> = { mapName, bladeHeight: bladeHeightMm, departFromDock };
@@ -456,6 +465,7 @@ export function startEdgeCuts(sn: string, zones: string[], bladeHeightMm: number
   if (!list.length || list.some(z => !/^map\d+$/.test(z))) return refuse(M`kies een of meer zones`);
   if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
   if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
+  if (patrolDrives(sn)) return refuse(M`er loopt een nachtpatrouille; stop die eerst`);
   pendingEdgeZones.delete(sn);
   const r = startEdgeCutZone(sn, list[0], bladeHeightMm);
   if (r.ok && list.length > 1) pendingEdgeZones.set(sn, { zones: list.slice(1), bladeHeightMm });

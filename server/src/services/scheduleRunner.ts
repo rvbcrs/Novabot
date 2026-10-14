@@ -14,6 +14,7 @@ import {
   startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut, EDGE_ALWAYS_KEY, edgeAlways,
 } from './mowingService.js';
 import { startPatrol } from './patrolService.js';
+import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
 import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
@@ -88,6 +89,12 @@ function armAlwaysEdge(nowMs: number): void {
       && cache?.get('edge_active') !== '1';
     const started = covering && !wasCovering.get(sn);
     wasCovering.set(sn, covering);
+    // A night patrol's firmware departure can report COVERING for a moment.
+    // That is no mow: armed, the watcher would start an edge cut with the
+    // blades spinning when the patrol docks at night. The transition is used
+    // up here, so a COVERING still reported after the patrol was stopped does
+    // not arm either.
+    if (PATROL_DRIVE_PHASES.has(cache?.get('patrol_phase') ?? '')) continue;
     // Alleen op de overgang naar maaien: een stop of "naar huis" via de server
     // ontwapent de watcher terwijl de maaier nog even als maaiend rapporteert,
     // en die beurt mag dan niet opnieuw gearmd worden.
@@ -713,7 +720,8 @@ function triggerSchedule(row: ScheduleRow, warning?: Msg) {
 
 /** A patrol schedule: start the patrol; the frost guard applies, the night guard not. */
 function triggerPatrolSchedule(row: ScheduleRow, warning?: Msg) {
-  const result = startPatrol(row.mower_sn);
+  // The schedule goes with the start: a refusal by the mower shows on it.
+  const result = startPatrol(row.mower_sn, Date.now(), row.schedule_id);
   if (result.ok) {
     scheduleRepo.incrementTriggerCount(row.schedule_id);
     logScheduleDecision(row, !warning, 'STARTED', warning ?? `patrol run=${result.run}`);

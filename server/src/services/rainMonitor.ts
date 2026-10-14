@@ -20,6 +20,7 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice, goToChargePayload, getNextCmdNum } from '../mqtt/mapSync.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
+import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
 import type { RainSessionRow, ScheduleRow } from '../db/repositories/schedules.js';
 
@@ -75,6 +76,11 @@ function getChargerGps(mowerSn: string): { lat: number; lng: number } | null {
 function isMowing(mowerSn: string): boolean {
   const sensors = deviceCache.get(mowerSn);
   if (!sensors) return false;
+
+  // A night patrol is no mow and has no rain pause (spec 2026-10-14). Its
+  // firmware departure does report an off-dock coverage task (task_mode 1,
+  // Work:MOVING or COVERING), which the checks below would take for a mow.
+  if (PATROL_DRIVE_PHASES.has(sensors.get('patrol_phase') ?? '')) return false;
 
   // Check mower_status (via charger LoRa) — "startMowing" = actief maaien
   const mowerStatus = sensors.get('mower_status');

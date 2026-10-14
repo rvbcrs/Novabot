@@ -9,6 +9,7 @@
 import { dispatchEvent } from './dispatcher.js';
 import { lookupError } from './errorMap.js';
 import { MowerEvent, EventType } from './types.js';
+import { PATROL_DRIVE_PHASES } from '../services/edgeCutGuard.js';
 
 const LOW_BATTERY_THRESHOLD = parseInt(process.env.LOW_BATTERY_THRESHOLD ?? '20', 10);
 
@@ -158,7 +159,12 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
   // disconnect/reconnect cycle (which is frequent — mqtt_node
   // makes short-lived connections) would emit a bogus
   // mowing_started → mowing_finished pair.
-  if (prev.msg && next.msg) {
+  // A night patrol leaves the dock through the firmware's own departure, a
+  // coverage task that reports Work:MOVING: no mowing started or finished
+  // while it drives. The snapshot still moves on, so a departure seen during
+  // the patrol is not reported once the patrol has ended either.
+  const patrolDrives = PATROL_DRIVE_PHASES.has(snValues.get('patrol_phase') ?? '');
+  if (prev.msg && next.msg && !patrolDrives) {
     const wasMowing = isMowing(prev.msg);
     const nowMowing = isMowing(next.msg);
     if (!wasMowing && nowMowing) {

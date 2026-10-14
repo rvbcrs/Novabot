@@ -98,7 +98,9 @@ export function buildPatrolZones(
   const polys = new Map<string, XY[]>();
   for (const r of rows) {
     const zone = r.canonical_name?.match(/^map\d+$/)?.[0];
-    if (!zone || !r.map_area) continue;
+    // The rows come newest first (mapRepo.findWorkMaps): the first usable row
+    // of a zone wins, as everywhere else.
+    if (!zone || !r.map_area || polys.has(zone)) continue;
     try {
       const poly = JSON.parse(r.map_area) as XY[];
       const ok = Array.isArray(poly) && poly.length >= 3

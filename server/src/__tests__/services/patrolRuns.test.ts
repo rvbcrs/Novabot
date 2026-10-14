@@ -1,0 +1,115 @@
+/**
+ * The patrol run the server started last, per mower (DB, so it survives a
+ * restart), and what the broker mirrors of the mower's patrol reports.
+ * Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
+ */
+import { describe, it, expect, beforeEach } from 'vitest';
+import { patrolRunsRepo } from '../../db/repositories/index.js';
+import { isOlderPatrolRun, isLivePatrolRun, patrolReport } from '../../services/patrolRuns.js';
+
+const SN = 'LFIN_PATROL_RUNS';
+const TOKEN = '0123456789abcdef0123456789abcdef';
+
+function started(run: string, scheduleId: string | null = null) {
+  patrolRunsRepo.start({ mower_sn: SN, run, token: TOKEN, started_at: Number(run), schedule_id: scheduleId });
+}
+
+beforeEach(() => patrolRunsRepo.clearAll());
+
+describe('patrol runs', () => {
+  it('compares runs as numbers: a shorter run id is an older run', () => {
+    started('1700000000000');
+    expect(isOlderPatrolRun(SN, '999999999999')).toBe(true);
+    expect(isOlderPatrolRun(SN, '1699999999999')).toBe(true);
+    expect(isOlderPatrolRun(SN, '1700000000000')).toBe(false);
+    expect(isOlderPatrolRun(SN, '1700000000001')).toBe(false);
+  });
+
+  it('without a known run, or without a run in the report, nothing is older', () => {
+    expect(isOlderPatrolRun(SN, '1')).toBe(false);
+    started('2000');
+    expect(isOlderPatrolRun(SN, undefined)).toBe(false);
+    expect(isOlderPatrolRun(SN, 'x')).toBe(false);
+  });
+
+  it('a run is live from its start until its end was handled', () => {
+    started('2000');
+    expect(isLivePatrolRun(SN, '2000')).toBe(true);
+    expect(isLivePatrolRun(SN, '1999')).toBe(false);
+    expect(patrolRunsRepo.markEnded(SN, '2000', 'done')).toBe(true);
+    expect(isLivePatrolRun(SN, '2000')).toBe(false);
+    expect(patrolRunsRepo.markEnded(SN, '2000', 'done')).toBe(false);   // once
+  });
+});
+
+describe('what the broker mirrors of a patrol report', () => {
+  it('a status of the current run sets the phase, with the run passed on', () => {
+    started('2000');
+    expect(patrolReport(SN, 'patrol_status', { phase: 'error', error: 'checkpoints_unreachable', run: '2000' }, 'patrolling'))
+      .toEqual({
+        changes: new Map([['patrol_phase', 'error'], ['patrol_error', 'checkpoints_unreachable']]),
+        status: { phase: 'error', error: 'checkpoints_unreachable', run: '2000' },
+      });
+    expect(patrolReport(SN, 'patrol_status', { phase: 'returning', run: '2000' }, 'patrolling'))
+      .toEqual({
+        changes: new Map([['patrol_phase', 'returning'], ['patrol_error', '']]),
+        status: { phase: 'returning', error: undefined, run: '2000' },
+      });
+  });
+
+  // Run A was taken over by run B (a second start). A's late "stopped" must not
+  // put B's phase on stopped: every stop path keys on that phase.
+  it("an old run's late stopped does not overwrite the newer run's phase", () => {
+    started('1000');
+    started('2000');
+    expect(patrolReport(SN, 'patrol_status', { phase: 'stopped', run: '1000' }, 'starting')).toBeNull();
+  });
+
+  // The mower re-sends its last status after a reconnect; one that left just
+  // before the run's end can arrive after it.
+  it('a phase on the way of a run whose end was handled is not mirrored; its end again is', () => {
+    started('2000');
+    patrolRunsRepo.markEnded(SN, '2000', 'done');
+    expect(patrolReport(SN, 'patrol_status', { phase: 'patrolling', run: '2000' }, 'done')).toBeNull();
+    expect(patrolReport(SN, 'patrol_status', { phase: 'done', run: '2000' }, 'done')?.status?.phase).toBe('done');
+  });
+
+  it('a status without a run (an older mower build) still counts', () => {
+    started('2000');
+    expect(patrolReport(SN, 'patrol_status', { phase: 'patrolling' }, 'starting')?.changes.get('patrol_phase')).toBe('patrolling');
+  });
+
+  it('a checkpoint of the live run brings back a lost patrolling phase', () => {
+    started('2000');
+    for (const cached of [undefined, 'done', 'error', 'stopped']) {
+      expect(patrolReport(SN, 'patrol_checkpoint', { seq: 3, run: '2000' }, cached))
+        .toEqual({ changes: new Map([['patrol_phase', 'patrolling'], ['patrol_error', '']]) });
+    }
+  });
+
+  it('a checkpoint changes nothing while a driving phase is cached, for another run, or after the end', () => {
+    started('2000');
+    for (const cached of ['starting', 'localizing', 'patrolling', 'returning']) {
+      expect(patrolReport(SN, 'patrol_checkpoint', { seq: 3, run: '2000' }, cached)).toBeNull();
+    }
+    expect(patrolReport(SN, 'patrol_checkpoint', { seq: 3, run: '1999' }, 'done')).toBeNull();
+    expect(patrolReport(SN, 'patrol_checkpoint', { seq: 3 }, 'done')).toBeNull();
+    patrolRunsRepo.markEnded(SN, '2000', 'stopped');
+    expect(patrolReport(SN, 'patrol_checkpoint', { seq: 3, run: '2000' }, 'stopped')).toBeNull();
+  });
+
+  it('a refused start is an error with its reason, and a refusal for the service', () => {
+    expect(patrolReport(SN, 'patrol_respond', { result: 1, error: 'invalid_token' }, 'done'))
+      .toEqual({
+        changes: new Map([['patrol_phase', 'error'], ['patrol_error', 'invalid_token']]),
+        refused: { error: 'invalid_token' },
+      });
+    expect(patrolReport(SN, 'patrol_respond', { result: 0, run: '2000' }, 'starting')).toBeNull();
+  });
+
+  it('ignores anything that is not a patrol report', () => {
+    expect(patrolReport(SN, 'mow_zone_status', { phase: 'done' }, undefined)).toBeNull();
+    expect(patrolReport(SN, 'patrol_status', null, undefined)).toBeNull();
+    expect(patrolReport(SN, 'patrol_status', { phase: '' }, undefined)).toBeNull();
+  });
+});

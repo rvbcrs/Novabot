@@ -135,6 +135,42 @@ describe('eventDetector', () => {
   });
 });
 
+// A night patrol leaves the dock through the firmware's own departure, a
+// coverage task that reports Work:MOVING: that is no mow, and "Mowing started"
+// on every patrol was a false push.
+describe('mowing events during a night patrol', () => {
+  const PSN = 'LFIN_NOTIFY_PATROL';
+  const frame = (msg: string, patrolPhase?: string) => snap({
+    error_status: '0', msg, battery_power: '90', recharge_status: '0', battery_state: 'DISCHARGING',
+    ...(patrolPhase ? { patrol_phase: patrolPhase } : {}),
+  });
+  const mowingEvents = () => getRecentEvents(PSN, 50)
+    .filter(e => e.ts > startedAt && (e.type === 'mowing_started' || e.type === 'mowing_finished'));
+  let startedAt = 0;
+  beforeEach(() => { resetEventState(PSN); startedAt = Date.now() - 1; });
+
+  it('no mowing started or finished while the patrol drives', () => {
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'starting'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:MOVING', 'localizing'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:FINISHED', 'patrolling'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:MOVING', 'returning'));
+    expect(mowingEvents()).toEqual([]);
+  });
+
+  it('the departure seen during the patrol is not reported once the patrol has ended', () => {
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'starting'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:MOVING', 'localizing'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:MOVING', 'stopped'));
+    expect(mowingEvents()).toEqual([]);
+  });
+
+  it('a mow after the patrol is reported again', () => {
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'done'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:RUNNING', 'done'));
+    expect(mowingEvents().map(e => e.type)).toEqual(['mowing_started']);
+  });
+});
+
 describe('dispatcher', () => {
   it('publishes to the local MQTT events topic prefix', () => {
     dispatchEvent({

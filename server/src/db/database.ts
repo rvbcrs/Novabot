@@ -855,6 +855,22 @@ export function initDb(): void {
     // Kolom bestaat al
   }
 
+  // Night patrol: the run the server started last per mower, its upload token
+  // and start time, the schedule that started it, and the end that was handled.
+  // On disk so a server restart in the middle of a patrol keeps taking that
+  // run's uploads and keeps telling an old run's late report from the current
+  // one. Not in device_settings: the dashboard settings API exposes that table.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS patrol_runs (
+      mower_sn    TEXT    PRIMARY KEY,
+      run         TEXT    NOT NULL,
+      token       TEXT    NOT NULL,
+      started_at  INTEGER NOT NULL,
+      schedule_id TEXT,
+      ended_phase TEXT
+    );
+  `);
+
   // Feature: actieve regenpauze sessies (rain monitor → go_to_charge → herstart na regen)
   db.exec(`
     CREATE TABLE IF NOT EXISTS rain_sessions (

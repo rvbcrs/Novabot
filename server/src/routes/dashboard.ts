@@ -26,7 +26,7 @@ import os from 'os';
 import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason, isScheduleWarning } from '../services/scheduleRunner.js';
-import { endsZoneDrive } from '../services/edgeCutGuard.js';
+import { stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
@@ -3559,9 +3559,9 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   // does. The third branch calls publishToDevice, which gates itself: no second
   // stop_mow_zone from here.
   if ((shouldEncrypt || sn.startsWith('LFI'))
-      && endsZoneDrive(command, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'))) {
-    console.log(`[DASHBOARD] ${sn}: zone or patrol drive running, stop_mow_zone before ${Object.keys(command)[0]}`);
-    publishToExtended(sn, { stop_mow_zone: {} });
+      && stopDriveBeforeEnding(sn, command, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'),
+        { toTopic: publishToTopic, toExtended: publishToExtended })) {
+    console.log(`[DASHBOARD] ${sn}: zone or patrol drive running, stop_mow_zone sent before ${Object.keys(command)[0]}`);
   }
 
   if (shouldEncrypt) {

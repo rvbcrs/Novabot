@@ -18,7 +18,7 @@ import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
 import { freshPositionState } from '../../services/positionTelemetry.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { mapRepo } from '../../db/repositories/index.js';
-import { startEdgeCuts, continueEdgeCuts, cancelEdgeCuts } from '../../services/mowingService.js';
+import { startEdgeCut, startEdgeCuts, continueEdgeCuts, cancelEdgeCuts } from '../../services/mowingService.js';
 
 const SN = 'LFIN_EDGE_ZONES';
 const square = (x0: number) => JSON.stringify([{ x: x0, y: 0 }, { x: x0 + 10, y: 0 }, { x: x0 + 10, y: 10 }, { x: x0, y: 10 }]);
@@ -68,5 +68,25 @@ describe('startEdgeCuts', () => {
     startEdgeCuts(SN, ['map0', 'map1'], 40);
     cancelEdgeCuts(SN);
     expect(continueEdgeCuts(SN)).toBe(false);
+  });
+});
+
+// A night patrol drives outside robot_decision (nav2 goals). An edge cut started
+// beside it would drive and cut at the same time; the patrol is stopped first.
+describe('edge cuts during a night patrol', () => {
+  it.each(['starting', 'localizing', 'patrolling', 'returning'])('are refused while the patrol is %s', phase => {
+    deviceCache.get(SN)!.set('patrol_phase', phase);
+    for (const r of [startEdgeCuts(SN, ['map0', 'map1'], 40), startEdgeCut(SN, 'map0', 40, true)]) {
+      expect(r.ok).toBe(false);
+      expect(r.error).toBe('a night patrol is running; stop it first');
+    }
+    expect(sent()).toEqual([]);
+    expect(continueEdgeCuts(SN)).toBe(false);   // nothing was queued either
+  });
+
+  it.each(['done', 'error', 'stopped'])('start again once the patrol has ended (%s)', phase => {
+    deviceCache.get(SN)!.set('patrol_phase', phase);
+    expect(startEdgeCuts(SN, ['map0'], 40).ok).toBe(true);
+    expect(sent()).toEqual([{ start_edge_cut: { mapName: 'map0', bladeHeight: 40, departFromDock: true } }]);
   });
 });

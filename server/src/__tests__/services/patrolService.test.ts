@@ -18,7 +18,7 @@ vi.mock('../../notifications/eventDetector.js', () => ({
 }));
 
 import {
-  startPatrol, stopPatrol, onPatrolStatus, onPatrolFrame, readPatrolSettings, alertKinds, _resetPatrolState,
+  startPatrol, stopPatrol, onPatrolStatus, onPatrolFrame, onPatrolRefused, readPatrolSettings, alertKinds, _resetPatrolState,
   isActivePatrolRun, PATROL_ALERT_GAP_MS, PATROL_HOME_DELAY_MS, PATROL_RUN_TTL_MS,
 } from '../../services/patrolService.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
@@ -27,7 +27,8 @@ import { deviceCache } from '../../mqtt/sensorData.js';
 import { goHome } from '../../services/mowingService.js';
 import { freshPositionState } from '../../services/positionTelemetry.js';
 import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent } from '../../notifications/eventDetector.js';
-import { mapRepo, deviceSettingsRepo } from '../../db/repositories/index.js';
+import { mapRepo, deviceSettingsRepo, scheduleRepo } from '../../db/repositories/index.js';
+import { renderMsg, type Msg } from '../../services/serverText.js';
 
 const SN = 'LFIN_PATROL_0001';
 const SQ = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
@@ -345,5 +346,116 @@ describe('patrol service', () => {
     const second = lastPatrol();
     expect(isActivePatrolRun(SN, first.run, first.token, 2000)).toBe(false);
     expect(isActivePatrolRun(SN, second.run, second.token, 2000)).toBe(true);
+  });
+
+  // An edge cut is an NTCP goal outside robot_decision: isMowerBusy does not
+  // see it, and a patrol would drive beside it.
+  it('refuses while an edge cut runs', () => {
+    mower({ edge_active: '1' });
+    const r = startPatrol(SN, 1000);
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('the mower is cutting an edge; stop that first');
+    expect(publishExtendedCommand).not.toHaveBeenCalled();
+    mower({ edge_active: '0' });
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+  });
+
+  // A server restart in the middle of a patrol keeps that run's uploads and
+  // its place: the run, token and start time are on disk.
+  it('a restart in the middle of a patrol keeps taking its uploads and keeps the run filter', () => {
+    vi.useFakeTimers();
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    const older = lastPatrol();
+    expect(startPatrol(SN, 2000).ok).toBe(true);
+    const { run, token } = lastPatrol();
+    _resetPatrolState({ keepRuns: true });   // the server restarts: what is in memory is gone
+    expect(isActivePatrolRun(SN, run, token, 2000)).toBe(true);
+    expect(isActivePatrolRun(SN, older.run, older.token, 2000)).toBe(false);
+    onPatrolStatus(SN, 'stopped', undefined, older.run);   // the taken-over run's late end
+    expect(publishToTopic).not.toHaveBeenCalled();
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', run);
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("an old run's late stopped leaves the newer run alone: no light off, still counted as out", () => {
+    vi.useFakeTimers();
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    expect(startPatrol(SN, 2000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '2000');
+    vi.mocked(publishToTopic).mockClear();
+    onPatrolStatus(SN, 'stopped', undefined, '1000');
+    expect(publishToTopic).not.toHaveBeenCalled();
+    onPatrolStatus(SN, 'done', undefined, '2000');   // telemetry says docked: only "was out" docks it
+    expect(goHome).toHaveBeenCalledTimes(1);
+  });
+
+  // The mower re-sends its last status after every MQTT reconnect.
+  it('a repeated end of the same run docks and notifies once', () => {
+    vi.useFakeTimers();
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '1000');
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '1000');
+    _resetPatrolState({ keepRuns: true });   // also after a server restart
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '1000');
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).toHaveBeenCalledTimes(1);
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it('a patrolling that arrives after its run ended switches nothing on and claims nothing', () => {
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');
+    onPatrolStatus(SN, 'done', undefined, '1000');
+    vi.mocked(publishToTopic).mockClear();
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');   // re-sent before the end, arrived after it
+    expect(publishToTopic).not.toHaveBeenCalled();
+    expect(startPatrol(SN, 2000).ok).toBe(true);
+    onPatrolStatus(SN, 'error', 'not_localized', '2000');   // docked: only "was out" could send it home
+    expect(goHome).toHaveBeenCalledTimes(1);                // the first patrol's done, nothing more
+  });
+
+  it('a repeated done docks once', () => {
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');
+    onPatrolStatus(SN, 'done', undefined, '1000');
+    onPatrolStatus(SN, 'done', undefined, '1000');
+    expect(goHome).toHaveBeenCalledTimes(1);
+  });
+
+  it('a patrol the mower refused before anything moved: failed, never sent home, and its schedule shows it', () => {
+    vi.useFakeTimers();
+    mower({});
+    dockTelemetry({ dockKnown: true, docked: false });
+    scheduleRepo.create({
+      schedule_id: 'p-refused', mower_sn: SN, start_time: '23:00', kind: 'patrol',
+      weekdays: JSON.stringify([1]), enabled: 1, rain_pause: 0,
+    });
+    scheduleRepo.update('p-refused', { last_result: 'started', last_result_reason: 'patrol run=1000' });
+    expect(startPatrol(SN, 1000, 'p-refused').ok).toBe(true);
+    onPatrolRefused(SN, 'invalid_token');
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'invalid_token', false);
+    const row = scheduleRepo.findById('p-refused')!;
+    expect(row.last_result).toBe('failed');
+    expect(renderMsg('en', JSON.parse(row.last_result_reason!) as Msg)).toBe('the mower refused the patrol (invalid_token)');
+    onPatrolRefused(SN, 'invalid_token');   // once
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledTimes(1);
+    scheduleRepo.delete('p-refused');
+  });
+
+  it('a refused patrol that no schedule started touches no schedule', () => {
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolRefused(SN, 'drive_script_missing');
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'drive_script_missing', false);
+    expect(goHome).not.toHaveBeenCalled();
   });
 });

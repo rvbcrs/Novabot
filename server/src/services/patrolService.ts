@@ -11,6 +11,8 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
 import { mapRepo } from '../db/repositories/maps.js';
+import { patrolRunsRepo } from '../db/repositories/patrolRuns.js';
+import { scheduleRepo } from '../db/repositories/schedules.js';
 import { isOpenNovaMower } from './mowerFileCapability.js';
 import { isMowerBusy, goHome } from './mowingService.js';
 import { isMowerMapOperationBusy } from './mowerMapOperation.js';
@@ -20,6 +22,7 @@ import { customBuildNumber } from './firmwareAdvisory.js';
 import { mowerSwVersion } from './mowingArea.js';
 import { freshPositionState } from './positionTelemetry.js';
 import { buildPatrolZones } from './patrolRoute.js';
+import { isOlderPatrolRun, isAfterPatrolEnd, PATROL_END_PHASES } from './patrolRuns.js';
 import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent } from '../notifications/eventDetector.js';
 import { M, renderMsg, type Msg } from './serverText.js';
 
@@ -105,10 +108,15 @@ function goHomeAfterDelay(sn: string): void {
 
 /** How long a patrol run accepts checkpoint uploads after its start. */
 export const PATROL_RUN_TTL_MS = 6 * 3_600_000;
-// The run and token startPatrol issued per mower: the only uploads the server takes.
-const activeRuns = new Map<string, { run: string; token: string; startedAt: number }>();
+// The run and token startPatrol issued per mower, the only uploads the server
+// takes, are in patrol_runs (services/patrolRuns.ts): a server restart in the
+// middle of a patrol keeps taking that run's uploads.
 
-export function startPatrol(sn: string, now = Date.now()): PatrolResult {
+/**
+ * `scheduleId`: the patrol schedule that starts it, so a refusal by the mower
+ * (onPatrolRefused) shows on that schedule.
+ */
+export function startPatrol(sn: string, now = Date.now(), scheduleId: string | null = null): PatrolResult {
   if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
   if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
   const build = customBuildNumber(mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')));
@@ -116,6 +124,9 @@ export function startPatrol(sn: string, now = Date.now()): PatrolResult {
     return refuse(M`patrouille vereist custom firmware ${PATROL_MIN_BUILD} of nieuwer`);
   }
   if (isMowerBusy(sn)) return refuse(M`de maaier is bezig; stop de taak eerst`);
+  // An edge cut is an NTCP goal outside robot_decision, which isMowerBusy does
+  // not see: the patrol would drive beside it.
+  if (deviceCache.get(sn)?.get('edge_active') === '1') return refuse(M`de maaier is aan het randmaaien; stop dat eerst`);
   if (isMowerMapOperationBusy(sn)) return refuse(M`er loopt een kaartbewerking; probeer het straks opnieuw`);
   // publishExtendedCommand would drop it silently in an unvalidated frame.
   if (isFrameUnvalidated(sn)) return refuse(M`het kaartframe is niet gevalideerd; her-anker eerst`);
@@ -134,7 +145,7 @@ export function startPatrol(sn: string, now = Date.now()): PatrolResult {
   cancelPendingHome(sn);
   outOnPatrol.delete(sn);
   const token = randomBytes(16).toString('hex');
-  activeRuns.set(sn, { run, token, startedAt: now });
+  patrolRunsRepo.start({ mower_sn: sn, run, token, started_at: now, schedule_id: scheduleId });
   publishExtendedCommand(sn, { patrol: { run, token, zones, dwell_s: s.dwellS, photo_topic: s.photoTopic } });
   console.log(`[Patrol] start ${sn} run=${run} ${zones.map(z => `${z.zone}:${z.points.length}`).join(',')}`);
   return { ok: true, run };
@@ -142,8 +153,8 @@ export function startPatrol(sn: string, now = Date.now()): PatrolResult {
 
 /** True when (run, token) is the patrol this server started for sn, within PATROL_RUN_TTL_MS. */
 export function isActivePatrolRun(sn: string, run: string, token: string, now = Date.now()): boolean {
-  const a = activeRuns.get(sn);
-  if (!a || a.run !== run || now - a.startedAt > PATROL_RUN_TTL_MS) return false;
+  const a = patrolRunsRepo.get(sn);
+  if (!a || a.run !== run || now - a.started_at > PATROL_RUN_TTL_MS) return false;
   const want = Buffer.from(a.token), got = Buffer.from(token);
   return want.length === got.length && timingSafeEqual(want, got);
 }
@@ -158,6 +169,17 @@ export function stopPatrol(sn: string): void {
 }
 
 /**
+ * False when this end of `run` was handled before: the mower re-sends its last
+ * status after every MQTT reconnect, also after a server restart. A run this
+ * server did not start last has nothing to compare with and counts as new.
+ */
+function firstEndOfRun(sn: string, run: string, phase: string): boolean {
+  const last = patrolRunsRepo.get(sn);
+  if (!last || last.run !== run) return true;
+  return patrolRunsRepo.markEnded(sn, run, phase);
+}
+
+/**
  * The mower's patrol_status stream (broker.ts). On `patrolling` the headlight
  * goes on. On every end it goes off FIRST, so the dock marker always sees the
  * stock light (CLAUDE.md, dock LED = stock). Then the mower is docked (goHome),
@@ -167,8 +189,19 @@ export function stopPatrol(sn: string): void {
  * without `patrolling` ever being reported. After `done` that happens at once,
  * after `error` it waits PATROL_HOME_DELAY_MS. A patrol that was refused before
  * anything moved never docks the mower: it is wherever its own task put it.
+ * A report of a run older than the current patrol is ignored (a newer patrol
+ * took that one over), and so are an end of a run that was handled before and
+ * a phase on the way that arrives after its run's end.
  */
-export function onPatrolStatus(sn: string, phase: string, error?: string): void {
+export function onPatrolStatus(sn: string, phase: string, error?: string, run?: string): void {
+  if (isOlderPatrolRun(sn, run)) {
+    console.log(`[Patrol] ${sn} ${phase} of run ${run} ignored: a newer patrol took that run over`);
+    return;
+  }
+  if (isAfterPatrolEnd(sn, phase, run)) {
+    console.log(`[Patrol] ${sn} ${phase} of run ${run} ignored: that run has ended`);
+    return;
+  }
   const led = (level: number) => publishToTopic(`novabot/cmd/${sn}`, { led_set: level });
   if (phase === 'patrolling') {
     cancelPendingHome(sn);   // a patrol that is out owns the mower
@@ -177,7 +210,11 @@ export function onPatrolStatus(sn: string, phase: string, error?: string): void 
     if (level > 0) led(level);
     return;
   }
-  if (phase !== 'done' && phase !== 'error' && phase !== 'stopped') return;
+  if (!PATROL_END_PHASES.has(phase)) return;
+  if (run && !firstEndOfRun(sn, run, phase)) {
+    console.log(`[Patrol] ${sn} ${phase} of run ${run} again (re-sent after a reconnect): handled before`);
+    return;
+  }
   led(0);
   const wasOut = outOnPatrol.delete(sn);
   const dock = freshPositionState(sn);
@@ -191,6 +228,27 @@ export function onPatrolStatus(sn: string, phase: string, error?: string): void 
     else goHome(sn);
   }
   if (phase === 'error') dispatchPatrolFailedEvent(sn, error || 'unknown', goesHome);
+}
+
+/**
+ * The mower refused the patrol before anything moved (patrol_respond result 1:
+ * its parameters, no drive script, no server address). Nothing was switched
+ * on and nothing moved, so nothing is switched off and the mower is never sent
+ * home. The user hears of it as a failed patrol, and a schedule that started
+ * it shows it as failed.
+ */
+export function onPatrolRefused(sn: string, error = 'unknown'): void {
+  const last = patrolRunsRepo.get(sn);
+  if (last && !patrolRunsRepo.markEnded(sn, last.run, 'error')) return;   // handled before
+  console.log(`[Patrol] ${sn} refused by the mower (${error}), leaving it where it is`);
+  dispatchPatrolFailedEvent(sn, error, false);
+  if (last?.schedule_id) {
+    scheduleRepo.update(last.schedule_id, {
+      last_result_at: new Date().toISOString(),
+      last_result: 'failed',
+      last_result_reason: JSON.stringify(M`de maaier weigerde de patrouille (${error})`),
+    });
+  }
 }
 
 export interface PatrolFrameReport {
@@ -221,10 +279,10 @@ export function onPatrolFrame(sn: string, f: PatrolFrameReport, now = Date.now()
   return out;
 }
 
-/** Tests only. */
-export function _resetPatrolState(): void {
+/** Tests only. `keepRuns`: a server restart, what is on disk stays. */
+export function _resetPatrolState(opts: { keepRuns?: boolean } = {}): void {
   outOnPatrol.clear();
-  activeRuns.clear();
+  if (!opts.keepRuns) patrolRunsRepo.clearAll();
   lastAlert.clear();
   for (const timer of pendingHome.values()) clearTimeout(timer);
   pendingHome.clear();

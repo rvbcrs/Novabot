@@ -76,7 +76,8 @@ describe('patrol schedules', () => {
     due('m-23', 'mow');
     startScheduleRunner();
     await flush();
-    expect(startPatrol).toHaveBeenCalledWith(SN);
+    // The schedule goes with it, so a refusal by the mower shows on this schedule.
+    expect(startPatrol).toHaveBeenCalledWith(SN, NOW.getTime(), 'p-23');
     expect(startMowing).not.toHaveBeenCalled();
     expect(scheduleRepo.findById('p-23')!.last_result).toBe('started');
     expect(scheduleRepo.findById('m-23')!.last_result).toBe('skipped');
@@ -115,7 +116,7 @@ describe('patrol schedules', () => {
     startScheduleRunner();
     await flush();
     expect(getWeatherForecast).toHaveBeenCalledTimes(1);   // the frost guard did look
-    expect(startPatrol).toHaveBeenCalledWith(SN);
+    expect(startPatrol).toHaveBeenCalledWith(SN, expect.any(Number), expect.any(String));
     expect(scheduleRepo.findById('p-warm')!.last_result).toBe('started');
     expect(emitScheduleEvent).not.toHaveBeenCalledWith('weather:paused', expect.anything());
   });
@@ -128,7 +129,7 @@ describe('patrol schedules', () => {
     due('p-23', 'patrol');
     startScheduleRunner();
     await flush();
-    expect(startPatrol).toHaveBeenCalledWith(SN);
+    expect(startPatrol).toHaveBeenCalledWith(SN, expect.any(Number), expect.any(String));
     const row = scheduleRepo.findById('p-23')!;
     expect(row.last_result).toBe('started');
     expect(isScheduleWarning(row.last_result, row.last_result_reason)).toBe(false);
@@ -142,7 +143,7 @@ describe('patrol schedules', () => {
     due('p-23', 'patrol');
     startScheduleRunner();
     await flush();
-    expect(startPatrol).toHaveBeenCalledWith(SN);
+    expect(startPatrol).toHaveBeenCalledWith(SN, expect.any(Number), expect.any(String));
     expect(getWeatherForecast).not.toHaveBeenCalled();
   });
 

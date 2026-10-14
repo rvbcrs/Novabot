@@ -42,6 +42,33 @@ export function endsZoneDrive(command: Record<string, unknown>, mowZonePhase: st
     && (ZONE_DRIVE_PHASES.has(mowZonePhase ?? '') || PATROL_DRIVE_PHASES.has(patrolPhase ?? ''));
 }
 
+export interface DriveStopPublish {
+  /** An unencrypted message on any topic (here led_set on novabot/cmd/<SN>, led_bridge.py). */
+  toTopic: (topic: string, message: Record<string, unknown>) => void;
+  /** An extended command on novabot/extended/<SN>. */
+  toExtended: (sn: string, command: Record<string, unknown>) => void;
+}
+
+/**
+ * The ending-command gate, one copy for the three places a command reaches the
+ * mower (mapSync publishToDevice, the broker for the stock app, the dashboard's
+ * raw branches): an ending command while a zone drive or a night patrol drives
+ * first kills that drive (stop_mow_zone). During a patrol the headlight goes
+ * off before that: the command may be a go_to_charge, and the dock marker must
+ * see the stock light (headlight 0 before any go_to_charge). The caller sends
+ * the command itself afterwards. True when it fired.
+ */
+export function stopDriveBeforeEnding(
+  sn: string, command: Record<string, unknown>,
+  mowZonePhase: string | undefined, patrolPhase: string | undefined,
+  publish: DriveStopPublish,
+): boolean {
+  if (!endsZoneDrive(command, mowZonePhase, patrolPhase)) return false;
+  if (PATROL_DRIVE_PHASES.has(patrolPhase ?? '')) publish.toTopic(`novabot/cmd/${sn}`, { led_set: 0 });
+  publish.toExtended(sn, { stop_mow_zone: {} });
+  return true;
+}
+
 /** How long ending commands wait after stop_boundary_follow. */
 export const EDGE_STOP_SETTLE_MS = 6_000;
 /** After a stop, no new round for this long, so the re-sent commands go through. */
