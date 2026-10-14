@@ -36,7 +36,7 @@ So there is nothing to finish. We build it from parts that do work:
 | Costmap sees people/animals | `_apply_edge_perception_low()` / `_restore_edge_perception()` (`research/extended_commands.py`) |
 | Photo | `camera_stream.py` `/snapshot?topic=` on port 8000 |
 | Headlight 0..100 | `/led_set` via `led_bridge.py` (MQTT `novabot/cmd/<SN>` `{led_set: N}`) |
-| Blades off | `_publish_blade_speed(0)` + `_publish_blade_height(0)` (`extended_commands.py`) |
+| Blades off, deck up | `_publish_blade_speed(0)` + `_publish_blade_height(7)` (`extended_commands.py`; mm = (level + 2) * 10, so 7 = 90 mm) |
 | Notifications | `dispatchEvent` (ntfy, HA webhook, Expo push, MQTT, dashboard socket) |
 
 ## Decisions
@@ -56,8 +56,12 @@ So there is nothing to finish. We build it from parts that do work:
    (`localize_via_firmware`, deck at its highest). Afterwards the drive returns into
    the dock's zone over channels, and the server sends `goHome()`, but only when the
    mower actually left (`PHASE patrolling` seen) and the user did not press stop.
-5. **Blades never cut.** The extended handler sends blade speed 0 and height 0 the
-   moment the patrol phase starts, as a guard behind the firmware departure.
+5. **Blades never cut.** The extended handler sends blade speed 0 and deck level 7
+   (90 mm, the highest; level 0 would be 20 mm, the lowest) the moment the patrol
+   phase starts, as a guard behind the firmware departure. A guard that still fails
+   after three attempts ends the patrol. A stopped or failed drive also releases its
+   nav2 goal and the relaxed transit params; a drive taken over by a newer drive
+   reports `stopped`.
 6. **Headlight is set by the server** (`novabot/cmd/<SN>` `{led_set}`) on
    `patrolling`, and switched off (0) on every terminal phase before go_to_charge,
    so the dock marker always sees the stock light (CLAUDE.md, dock LED = stock).
