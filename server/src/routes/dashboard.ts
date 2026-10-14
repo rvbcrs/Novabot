@@ -3940,6 +3940,7 @@ interface ScheduleRow {
   last_result?: string | null;
   last_result_reason?: string | null;
   edge_days: string | null;
+  kind?: string;
   created_at: string;
   updated_at: string;
 }
@@ -3947,6 +3948,7 @@ interface ScheduleRow {
 function scheduleRowToDto(r: ScheduleRow, lang: Lang) {
   return {
     scheduleId: r.schedule_id,
+    kind: r.kind ?? 'mow',
     mowerSn: r.mower_sn,
     scheduleName: r.schedule_name,
     startTime: r.start_time,
@@ -4004,7 +4006,10 @@ function scheduleRowToDto(r: ScheduleRow, lang: Lang) {
 //                       schedule's session, null otherwise.
 dashboardRouter.get('/schedules/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const rows = scheduleRepo.findByMowerSnOrderByStartTime(sn) as ScheduleRow[];
+  // Patrol schedules live in the patrol panel; the mow lists never show them.
+  const kind = req.query.kind === 'patrol' ? 'patrol' : 'mow';
+  const rows = (scheduleRepo.findByMowerSnOrderByStartTime(sn) as ScheduleRow[])
+    .filter(r => (r.kind ?? 'mow') === kind);
 
   // Build "rain-paused" lookup by schedule_id.
   const rainBySchedule = new Map<string, string>();  // schedule_id → paused_at
@@ -4078,10 +4083,14 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     // Dagen (0=zo..6=za) waarop na het maaien een randmaai-beurt volgt.
     // NULL/undefined = huidig gedrag (geen edge-cut).
     edgeDays?: number[] | null;
+    // 'patrol' = nachtpatrouille, alleen door de server gedraaid. Default 'mow'.
+    kind?: 'mow' | 'patrol';
   };
 
   if (Array.isArray(body.edgeDays) && body.edgeDays.length > 0
     && rejectUnlessOpenNova(sn, req, res, M`Randmaaien op schemadagen`)) return;
+  const isPatrol = body.kind === 'patrol';
+  if (isPatrol && rejectUnlessOpenNova(sn, req, res, M`Patrouille`)) return;
   if (!body.startTime) {
     res.status(400).json({ error: T`startTime is vereist` });
     return;
@@ -4105,7 +4114,8 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     alternate_direction: body.alternateDirection ? 1 : 0,
     alternate_step: body.alternateStep ?? 90,
     edge_offset: body.edgeOffset ?? 0,
-    rain_pause: body.rainPause ? 1 : 0,
+    // No rain pause for a patrol (spec 2026-10-14).
+    rain_pause: !isPatrol && body.rainPause ? 1 : 0,
     rain_threshold_mm: body.rainThresholdMm ?? 0.5,
     rain_threshold_probability: body.rainThresholdProbability ?? 50,
     rain_check_hours: body.rainCheckHours ?? 2,
@@ -4113,12 +4123,14 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     interval_anchor_date: body.intervalAnchorDate ?? null,
     timezone: body.timezone ?? null,
     edge_days: serializeEdgeDays(body.edgeDays) ?? null,
+    kind: isPatrol ? 'patrol' : 'mow',
   });
 
   // Stuur timer_task naar maaier als die online is — maar NIET als rain_pause
   // actief is OF als interval_days mode aan staat (mower's timer_task is
   // strictly WEEKLY, interval scheduling lives server-side via the runner).
-  if (isDeviceOnline(sn) && !body.rainPause && !(body.intervalDays && body.intervalDays > 0)) {
+  // En nooit voor een patrouille: de firmware zou er een maaibeurt van maken.
+  if (!isPatrol && isDeviceOnline(sn) && !body.rainPause && !(body.intervalDays && body.intervalDays > 0)) {
     publishToDevice(sn, {
       timer_task: {
         task_id: scheduleId,
@@ -4225,6 +4237,10 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
   const row = scheduleRepo.findByIdAndMower(scheduleId, sn) as ScheduleRow | undefined;
   if (!row) {
     res.status(404).json({ error: T`Schedule niet gevonden` });
+    return;
+  }
+  if (row.kind === 'patrol') {
+    res.status(409).json({ error: T`Een patrouilleschema draait op de server en gaat niet naar de maaier.` });
     return;
   }
 

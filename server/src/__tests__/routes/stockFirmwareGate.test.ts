@@ -143,6 +143,7 @@ const stockCases: Array<[string, () => request.Test]> = [
   ['POST /maps/recalibrate-charging-pose', () => request(server).post(`${B}/maps/${SN}/recalibrate-charging-pose`).send({})],
   ['POST /navigate-to (stock stub never drives)', () => request(server).post(`${B}/navigate-to/${SN}`).send({ x: 1.5, y: -2 })],
   ['POST /schedules with edgeDays', () => request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] })],
+  ['POST /schedules as a patrol', () => request(server).post(`${B}/schedules/${SN}`).send({ kind: 'patrol', startTime: '23:30', weekdays: [1] })],
   ['POST /patrol', () => request(server).post(`${B}/patrol/${SN}`).send({})],
   ['POST /stop-patrol', () => request(server).post(`${B}/stop-patrol/${SN}`).send({})],
 ];
@@ -175,6 +176,7 @@ describe('central firmware gate on stock firmware', () => {
     await request(server).put(`${B}/coverage-planner-radius/${SN}`).send({ radius: 0.35 });
     await request(server).post(`${B}/lora/set-mower/${SN}`).send({ addr: 718, channel: 16 });
     await request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] });
+    await request(server).post(`${B}/schedules/${SN}`).send({ kind: 'patrol', startTime: '23:30', weekdays: [1] });
     expect(seamFixRepo.get(SN)).toBeNull();
     expect(deviceSettingsRepo.findBySn(SN)).toHaveLength(0);
     expect(equipmentRepo.getLoraCache(SN)).toBeFalsy();
@@ -264,5 +266,32 @@ describe('patrol routes', () => {
     expect(img.headers['content-type']).toContain('image/jpeg');
     expect((await request(server).get(`${B}/patrol/${PSN}/runs/6/2.jpg`)).status).toBe(404);
     expect((await request(server).get(`${B}/patrol/${PSN}/runs/x6/1.jpg`)).status).toBe(404);
+  });
+
+  it('a patrol schedule never goes to the mower as timer_task and cannot be sent', async () => {
+    for (const s of scheduleRepo.findByMowerSn(PSN)) scheduleRepo.deleteByIdAndMower(s.schedule_id, PSN);
+    const created = await request(server).post(`${B}/schedules/${PSN}`)
+      .send({ kind: 'patrol', startTime: '23:30', weekdays: [0, 1, 2, 3, 4, 5, 6], rainPause: true });
+    expect(created.status).toBe(200);
+    expect(created.body.schedule.kind).toBe('patrol');
+    expect(created.body.schedule.rainPause).toBe(false);
+    expect(publishToDevice).not.toHaveBeenCalledWith(PSN, expect.objectContaining({ timer_task: expect.anything() }));
+    const send = await request(server).post(`${B}/schedules/${PSN}/${created.body.schedule.scheduleId}/send`).send({});
+    expect(send.status).toBe(409);
+    expect(publishToDevice).not.toHaveBeenCalled();
+  });
+
+  // The test above sends rainPause, and a rain pause alone already keeps the
+  // timer_task away. Without it, only the patrol kind stands between a patrol
+  // schedule and a timer_task, which makes the firmware mow.
+  it('a patrol schedule is not sent as timer_task where the same schedule as a mow is', async () => {
+    for (const s of scheduleRepo.findByMowerSn(PSN)) scheduleRepo.deleteByIdAndMower(s.schedule_id, PSN);
+    const body = { startTime: '23:30', weekdays: [1] };
+    const patrol = await request(server).post(`${B}/schedules/${PSN}`).send({ ...body, kind: 'patrol' });
+    expect(patrol.status).toBe(200);
+    expect(publishToDevice).not.toHaveBeenCalled();
+    const mow = await request(server).post(`${B}/schedules/${PSN}`).send(body);
+    expect(mow.status).toBe(200);
+    expect(publishToDevice).toHaveBeenCalledWith(PSN, expect.objectContaining({ timer_task: expect.anything() }));
   });
 });

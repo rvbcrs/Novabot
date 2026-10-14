@@ -760,6 +760,11 @@ export const CATALOG: Catalog = {
     fr: "Planning introuvable",
     de: "Zeitplan nicht gefunden",
   },
+  "Een patrouilleschema draait op de server en gaat niet naar de maaier.": {
+    en: "A patrol schedule runs on the server and is not sent to the mower.",
+    fr: "Un programme de patrouille tourne sur le serveur et n'est pas envoyé à la tondeuse.",
+    de: "Ein Patrouillenplan läuft auf dem Server und wird nicht an den Mäher gesendet.",
+  },
   "Soft restart": {
     en: "Soft restart",
     fr: "Le redémarrage logiciel",

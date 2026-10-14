@@ -114,7 +114,8 @@ export function setPlanWeekdays(plan: CutGrassPlanRow, weeks: unknown[]): void {
 // ── dashboard schedule → app plan ────────────────────────────────────────
 export function mirrorScheduleToPlan(scheduleId: string): void {
   const row = scheduleRepo.findById(scheduleId);
-  if (!row) return;
+  // A patrol is no mowing plan; the stock app would show it as one.
+  if (!row || row.kind === 'patrol') return;
   const eq = equipmentRepo.findBySn(row.mower_sn);
   if (!eq?.equipment_id) return;
   const planId = planIdForSchedule(row.schedule_id);

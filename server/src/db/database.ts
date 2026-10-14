@@ -846,6 +846,15 @@ export function initDb(): void {
     // Kolom bestaat al — geen actie nodig
   }
 
+  // Nachtpatrouille: een schema is een maaibeurt ('mow') of een patrouille
+  // ('patrol'). Patrouilleschema's draait alleen de server (spec 2026-10-14).
+  try {
+    db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN kind TEXT NOT NULL DEFAULT 'mow'`);
+    console.log('[DB] Migrated: added dashboard_schedules.kind');
+  } catch {
+    // Kolom bestaat al
+  }
+
   // Feature: actieve regenpauze sessies (rain monitor → go_to_charge → herstart na regen)
   db.exec(`
     CREATE TABLE IF NOT EXISTS rain_sessions (

@@ -26,6 +26,7 @@ import { cutGrassPlanRouter } from '../../cloud-api/routes/cutGrassPlan.js';
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { signToken } from '../../middleware/auth.js';
 import { scheduleRepo, cutGrassPlanRepo } from '../../db/repositories/index.js';
+import { deviceCache } from '../../mqtt/sensorData.js';
 
 const SN = 'LFIN1231000357';
 const USER = 'user-357';
@@ -150,5 +151,20 @@ describe('Novabot app delete/edit by list id', () => {
     await request(app).post('/api/nova-data/appManage/updateCutGrassPlan').set(auth).send({ id: item.id, weeks: ['Sat'], startTime: '08:30', endTime: '09:30' });
     expect(scheduleRepo.findByIdAndMower(a, SN)!.start_time).toBe('08:30');
     expect(scheduleRepo.findByIdAndMower(`app:${a}`, SN)).toBeUndefined();
+  });
+});
+
+describe('patrol schedules stay out of the mow lists and the app', () => {
+  it('a patrol schedule is listed only with ?kind=patrol and never becomes an app plan', async () => {
+    deviceCache.set(SN, new Map([['sw_version', 'v6.0.2-custom-50']]));   // OpenNova
+    const res = await request(app).post(`/api/dashboard/schedules/${SN}`)
+      .send({ kind: 'patrol', startTime: '23:30', weekdays: [0, 1, 2, 3, 4, 5, 6] });
+    expect(res.status).toBe(200);
+    const scheduleId = res.body.schedule.scheduleId as string;
+    expect((await request(app).get(`/api/dashboard/schedules/${SN}`)).body.schedules).toHaveLength(0);
+    const patrols = (await request(app).get(`/api/dashboard/schedules/${SN}?kind=patrol`)).body.schedules;
+    expect(patrols.map((p: { scheduleId: string }) => p.scheduleId)).toEqual([scheduleId]);
+    expect(cutGrassPlanRepo.findById(scheduleId)).toBeFalsy();
+    deviceCache.delete(SN);
   });
 });

@@ -13,6 +13,7 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import {
   startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut, EDGE_ALWAYS_KEY, edgeAlways,
 } from './mowingService.js';
+import { startPatrol } from './patrolService.js';
 import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
@@ -542,7 +543,9 @@ async function checkWeatherAndTrigger(
   const now = Date.now();
 
   let skip: { reason: 'night' | 'frost' | 'rain'; detail: Msg } | null = null;
-  if (guards.nightGuard && isNight(forecast, now)) {
+  // A patrol is what the night guard keeps mowing from: it runs at night, the
+  // frost guard still applies.
+  if (guards.nightGuard && row.kind !== 'patrol' && isNight(forecast, now)) {
     skip = { reason: 'night', detail: M`nachtbewaking: tussen zonsondergang en zonsopgang` };
   } else if (guards.frostGuard && isFrostExpected(forecast, guards.frostThresholdC, now)) {
     skip = { reason: 'frost', detail: M`vorstbewaking: onder ${guards.frostThresholdC}°C` };
@@ -620,6 +623,10 @@ export function computeScheduleArea(
  * technische details, die alleen naar de console gaan.
  */
 function triggerSchedule(row: ScheduleRow, warning?: Msg) {
+  if (row.kind === 'patrol') {
+    triggerPatrolSchedule(row, warning);
+    return;
+  }
   // Bereken effectieve richting (met alternerende rotatie).
   // Rotatie draait op trigger_count, NIET op work_records: de maaier stuurt
   // geen scheduleId mee in saveCutGrassRecord bij runner-gestarte mows, dus
@@ -696,6 +703,23 @@ function triggerSchedule(row: ScheduleRow, warning?: Msg) {
     mowerSn: row.mower_sn,
     effectiveDirection,
   });
+}
+
+/** A patrol schedule: start the patrol; the frost guard applies, the night guard not. */
+function triggerPatrolSchedule(row: ScheduleRow, warning?: Msg) {
+  const result = startPatrol(row.mower_sn);
+  if (result.ok) {
+    scheduleRepo.incrementTriggerCount(row.schedule_id);
+    logScheduleDecision(row, !warning, 'STARTED', warning ?? `patrol run=${result.run}`);
+    // The patrol takes the mower off the dock. An edge cut that an earlier mow
+    // armed waits on the dock until the mower has charged, and would start with
+    // the blades spinning when the patrol docks at night. Only an accepted start
+    // disarms: a refused patrol does not move the mower.
+    disarmEdgeWatch(row.mower_sn, `patrouille via schema (${row.schedule_id})`);
+  } else {
+    logScheduleDecision(row, false, 'NOT STARTED', result.errorMsg ?? (result.error ?? 'patrol refused'));
+  }
+  scheduleRepo.updateLastTriggered(row.schedule_id);
 }
 
 export function startScheduleRunner(): void {
