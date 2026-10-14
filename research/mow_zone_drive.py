@@ -1121,7 +1121,7 @@ def find_stale_mow_drives(proc_root="/proc", self_pid=None):
         # Alleen echte ritten tellen: een droogloop (`check`) rijdt niet en
         # mag de volgende start niet blokkeren, en onze eigen wrapper-shell
         # draagt het scriptpad ook in zijn argv.
-        if re.search(r"mow_zone_drive\.py\s+(mow|edge|return)\b", cmd):
+        if re.search(r"mow_zone_drive\.py\s+(mow|edge|return|patrol)\b", cmd):
             out.append(int(name))
     return out
 
@@ -1725,6 +1725,124 @@ def do_probe(drv, seconds, led):
     return 0
 
 
+# ── Nachtpatrouille: rijden ─────────────────────────────────────────────────
+PATROL_NAV_TIMEOUT_S = 180.0
+PATROL_MAX_NAV_FAILS = 3        # drie controlepunten op rij onbereikbaar: stoppen
+# De vertrek-taak van de firmware krijgt het maaidek op zijn hoogst (90 mm);
+# de messen draaien nooit (extended_commands.py zet ze uit bij `patrolling`).
+PATROL_DEPART_CUTTERHIGH = 7
+
+
+def upload_checkpoint(url, seq, xy, scores, frames, jpeg, timeout=20.0):
+    """POST one checkpoint to the server: the photo, or an empty body, plus
+    the scores in the query. False when the server did not take it."""
+    import urllib.request
+    q = (f"&seq={seq}&x={xy[0]:.3f}&y={xy[1]:.3f}&frames={frames}"
+         f"&person={scores['person']}&animal={scores['animal']}")
+    req = urllib.request.Request(url + q, data=jpeg or b"", method="POST",
+                                 headers={"Content-Type": "application/octet-stream"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return 200 <= r.status < 300
+    except Exception as e:
+        log(f"patrol upload seq={seq}: {e}")
+        return False
+
+
+def _patrol_look(drv, params, seq, xy):
+    """Dwell at a checkpoint: perception on, count, one photo, upload."""
+    drv.ensure_perception()
+    per_frame, frames = drv.watch_labels(float(params.get("dwell_s", 6)))
+    scores = {name: steady_count(per_frame[name]) for name in PATROL_LABELS.values()}
+    jpeg = fetch_snapshot(params.get("photo_topic", "front"))
+    sent = upload_checkpoint(params["upload"], seq, xy, scores, frames, jpeg)
+    print("CHECKPOINT", json.dumps({"seq": seq, "x": round(xy[0], 2), "y": round(xy[1], 2),
+                                     "frames": frames, "photo": bool(jpeg), "sent": sent,
+                                     **scores}), flush=True)
+
+
+def do_patrol(drv, params):
+    """Night patrol with the blades off: depart like stock, drive the
+    server's checkpoints zone by zone, look and photograph at each, come back
+    into the dock's zone. The docking is the firmware's: the server sends
+    go_to_charge after PHASE done/error (patrolService.ts)."""
+    st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
+    if st is not None and task_executing(*st) and not task_parked(*st):
+        phase("error", "busy_mowing")
+        return 1
+    ok, detail = drv.reload_map()
+    log(f"map_server reload: {'ok' if ok else 'MISLUKT'} ({detail})")
+    clear_parked_task(drv)
+    clear_recharge(drv)
+    home = _dock_zone()
+    robot = drv.robot_xy()
+    if robot is None or current_zone_slot(robot) == "dock":
+        if home is None:
+            phase("error", "no_dock_zone")
+            return 1
+        # Het vertrek is dat van de firmware (QUIT_PILE), nooit ons eigen
+        # achteruitrijden (Walter, 2026-10-07).
+        if drv.localize_via_firmware(10 ** int(home[3:]), PATROL_DEPART_CUTTERHIGH, None) is None:
+            phase("error", "not_localized")
+            return 1
+        robot = drv.robot_xy()
+        if robot is None:
+            phase("error", "not_localized")
+            return 1
+    phase("patrolling")
+    base = _csv_base()
+    current = _start_zone(robot, current_zone_slot(robot))
+    seq, fails, error = 0, 0, None
+    for entry in params.get("zones", []):
+        zone = entry.get("zone")
+        if zone != current:
+            hops = edge_route(current, zone)
+            if not hops:
+                log(f"patrol: no route {current} -> {zone}, zone skipped")
+                print("SKIPPED", json.dumps({"zone": zone, "reason": "no_route"}), flush=True)
+                seq += len(entry.get("points", []))
+                continue
+            ok, msg, robot = _drive_hops(drv, base, robot, hops)
+            if not ok:
+                error = msg
+                break
+            current = zone
+        for x, y in entry.get("points", []):
+            seq += 1
+            if not _goto_target_allowed(x, y):
+                log(f"patrol: checkpoint {seq} ({x:.2f},{y:.2f}) outside every zone, skipped")
+                continue
+            ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
+            robot = drv.robot_xy() or robot
+            if not ok:
+                fails += 1
+                log(f"patrol: checkpoint {seq} unreachable ({msg}), {fails} in a row")
+                if fails >= PATROL_MAX_NAV_FAILS:
+                    error = "checkpoints_unreachable"
+                    break
+                continue
+            fails = 0
+            _patrol_look(drv, params, seq, robot)
+        if error:
+            break
+    # Terug in de zone van het dock, zodat go_to_charge nooit dwars door een
+    # heg plant.
+    if home and current != home:
+        hops = edge_route(current, home)
+        if hops:
+            phase("returning")
+            ok, msg, robot = _drive_hops(drv, base, robot, hops)
+            if not ok and not error:
+                error = msg
+        elif not error:
+            error = "no_route_home"
+    if error:
+        phase("error", error)
+        return 1
+    phase("done")
+    return 0
+
+
 def check_mow(drv, to_slot):
     """Dry run: say what stands in the way BEFORE the mower drives anywhere.
 
@@ -1884,6 +2002,14 @@ def main():
                 phase("error", "usage: mow_zone_drive.py probe [seconds] [led 0-100]")
             else:
                 rc = do_probe(drv, max(1, min(600, secs)), max(0, min(100, led)))
+        elif mode == "patrol":
+            try:
+                with open(args[1]) as fh:
+                    params = json.load(fh)
+            except (IndexError, OSError, ValueError) as e:
+                phase("error", f"usage: mow_zone_drive.py patrol <params.json> ({e})")
+            else:
+                rc = do_patrol(drv, params)
         else:
             phase("error", f"unknown_mode:{mode}")
     except Exception as e:

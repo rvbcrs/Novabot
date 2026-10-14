@@ -295,6 +295,123 @@ def test_drive_hops_drives_a_channel_and_reports_where_it_ended():
     assert ok and msg == "" and robot[0] > 30
 
 
+# ── Task 3: patrol mode ─────────────────────────────────────────────────────
+
+DOCK = [(0.5, 0.7), (2, 3)]   # map0tocharge_unicom: anchor inside SQ0
+
+
+class PatrolDriver(HopDriver):
+    def __init__(self, unreachable=(), status=(0, 0)):
+        super().__init__()
+        self._loc = None                 # on the dock after a boot: no frame yet
+        self.unreachable = {tuple(p) for p in unreachable}
+        self.status = status
+
+    def wait_status(self, pred, timeout=30.0):
+        return self.status
+
+    def reload_map(self, map_yaml=None):
+        return True, "ok"
+
+    def recharge_active(self, timeout=4.0):
+        return False
+
+    def localize_via_firmware(self, map_ids, cutterhigh, direction, timeout=90.0):
+        self.calls.append(("localize", map_ids, cutterhigh))
+        self._loc = (1.0, 1.0)
+        return self._loc
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        if (x, y) in self.unreachable:
+            self.calls.append(("nav_to_fail", x, y))
+            return False, "nav_to_pose_status_6"
+        return super().nav_to(x, y, yaw, timeout)
+
+    def ensure_perception(self):
+        return True
+
+    def watch_labels(self, seconds):
+        return {"person": [0, 60, 70], "animal": [0, 0, 0]}, 3
+
+
+def run_patrol(drv, zones):
+    seen, uploads = [], []
+    real = (mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint)
+    mzd.phase = lambda *a: seen.append(a)
+    mzd.fetch_snapshot = lambda topic, timeout=25.0: b"\xff\xd8x"
+    mzd.upload_checkpoint = (lambda url, seq, xy, scores, frames, jpeg, timeout=20.0:
+                             uploads.append((seq, scores, frames, jpeg is not None)) or True)
+    try:
+        rc = mzd.do_patrol(drv, {"run": "1", "zones": zones, "dwell_s": 1,
+                                 "photo_topic": "front", "upload": "http://srv/u?sn=X&run=1"})
+    finally:
+        mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint = real
+    return rc, seen, uploads
+
+
+def test_patrol_departs_like_stock_and_looks_at_every_checkpoint():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = PatrolDriver()
+    rc, seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [7, 7]]}])
+    assert rc == 0 and seen[0] == ("patrolling",) and seen[-1] == ("done",), seen
+    assert drv.calls[0] == ("localize", 1, mzd.PATROL_DEPART_CUTTERHIGH)
+    assert [u[0] for u in uploads] == [1, 2]
+    assert uploads[0][1] == {"person": 60, "animal": 0} and uploads[0][2] == 3
+    assert ("follow_path",) not in drv.calls          # no transit inside the dock's zone
+
+
+def test_points_outside_every_zone_are_skipped_not_driven():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = PatrolDriver()
+    rc, _seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [50, 50]]}])
+    assert rc == 0 and [u[0] for u in uploads] == [1]
+    assert ("nav_to", 50, 50) not in drv.calls
+
+
+def test_a_zone_without_a_route_is_skipped_and_the_rest_goes_on():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map0tocharge_unicom.csv": DOCK})
+    drv = PatrolDriver()
+    rc, seen, uploads = run_patrol(drv, [{"zone": "map6", "points": [[35, 5]]},
+                                         {"zone": "map0", "points": [[3, 3]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert [u[0] for u in uploads] == [2]             # map6's point was seq 1, never driven
+
+
+def test_three_unreachable_checkpoints_in_a_row_end_the_patrol():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = PatrolDriver(unreachable=[(3, 3), (4, 4), (5, 5)])
+    rc, seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [4, 4], [5, 5], [6, 6]]}])
+    assert rc == 1 and seen[-1] == ("error", "checkpoints_unreachable"), seen
+    assert uploads == []
+
+
+def test_another_zone_is_reached_over_its_channel_and_left_again():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map0tocharge_unicom.csv": DOCK,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = PatrolDriver()
+    rc, seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]},
+                                         {"zone": "map6", "points": [[35, 5]]}])
+    assert rc == 0 and ("returning",) in seen and seen[-1] == ("done",), seen
+    assert [u[0] for u in uploads] == [1, 2]
+    assert drv.calls.count(("follow_path",)) == 2      # out over the channel and back
+
+
+def test_a_running_mow_is_never_touched():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = PatrolDriver(status=(mzd.TASK_MODE_COVERAGE, 60))
+    rc, seen, _uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]}])
+    assert rc == 1 and seen == [("error", "busy_mowing")]
+    assert not any(c[0] == "localize" for c in drv.calls)
+
+
+def test_a_patrol_run_counts_as_a_stale_drive():
+    root = tempfile.mkdtemp()
+    os.makedirs(os.path.join(root, "111"))
+    with open(os.path.join(root, "111", "cmdline"), "wb") as fh:
+        fh.write(b"python3\0/root/novabot/scripts/mow_zone_drive.py\0patrol\0/tmp/patrol_1.json")
+    assert mzd.find_stale_mow_drives(root, self_pid=999) == [111]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
