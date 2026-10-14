@@ -911,16 +911,19 @@ def test_a_departure_that_never_starts_is_not_handed_over():
 
 
 class LateTaskDriver(DepartureDriver):
-    """The departure's task shows up only after the 20 s wait: on the second
-    status read after the first stop. That stop found nothing to stop; the
-    next one parks the task (USER_STOP). `sigterm_on_read` delivers a SIGTERM
-    on that read instead."""
+    """The departure's task shows up only after the 20 s wait, running, on
+    status read `shows_on_read` after the first stop (1 is the read right
+    after it). That stop found nothing to stop; a stop to a running task parks
+    it (USER_STOP). A status read takes 0.2 s and a wait whose condition never
+    holds takes its whole timeout (`waits`: timeout, seconds, held).
+    `sigterm` delivers a SIGTERM on the read where the task shows up."""
 
-    def __init__(self, sigterm_on_read=None):
+    def __init__(self, shows_on_read=2, sigterm=False):
         super().__init__(before=(0.10, 0.09), after=(0.10, 0.09))
         self._status = (mzd.TASK_MODE_COVERAGE, 2)
+        self.shows_on_read, self.sigterm = shows_on_read, sigterm
         self.reads_after_stop = None
-        self.sigterm_on_read = sigterm_on_read
+        self.waits = []
 
     def stop_task(self, timeout=None):
         self.calls.append(("stop_task", timeout))
@@ -930,14 +933,24 @@ class LateTaskDriver(DepartureDriver):
             self.reads_after_stop = 0
         return True
 
-    def wait_status(self, pred, timeout=30.0):
-        self.calls.append(("wait_status", timeout))
+    def _read(self):
         if self.reads_after_stop is not None:
             self.reads_after_stop += 1
-            if self.reads_after_stop == 2:
-                self._status = (mzd.TASK_MODE_COVERAGE, 50)   # the task shows up late
-                if self.sigterm_on_read == 2:
+            if self.reads_after_stop == self.shows_on_read:
+                self._status = (mzd.TASK_MODE_COVERAGE, 92)   # the task shows up, running
+                if self.sigterm:
                     os.kill(os.getpid(), signal.SIGTERM)
+        return self._status
+
+    def wait_status(self, pred, timeout=30.0):
+        self.calls.append(("wait_status", timeout))
+        took = 0.0
+        while took < timeout:
+            took += 0.2
+            if pred(*self._read()):
+                self.waits.append((timeout, took, True))
+                return self._status
+        self.waits.append((timeout, timeout, False))
         return self._status
 
 
@@ -956,8 +969,25 @@ def test_a_departure_task_that_shows_up_after_the_wait_is_stopped_and_cleared():
     assert "recharge_active" not in n, drv.calls   # the drive cleared it itself, no release
 
 
+def test_a_task_that_shows_up_right_after_the_first_stop_gets_a_stop_of_its_own():
+    # Visible on the first read after a stop that found nothing: no USER_STOP
+    # will ever come from that stop, and quit_mapping_mode is for a parked task.
+    drv = LateTaskDriver(shows_on_read=1)
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos is None, (code, pos)
+    n = names(drv)
+    stops = [i for i, c in enumerate(n) if c == "stop_task"]
+    assert len(stops) == 2 and n.index("quit_mapping_mode") > stops[1], drv.calls
+    # After the second stop: the USER_STOP wait, then the quit on the parked task.
+    assert drv.calls[stops[1] + 1] == ("wait_status", 30.0), drv.calls
+    assert drv._status == (mzd.TASK_MODE_COVERAGE, 0), drv._status
+    # The 20 s wait for the start ran out; no wait after the first stop did.
+    assert all(held for _t, _s, held in drv.waits[1:]), drv.waits
+    assert sum(s for _t, s, _h in drv.waits[1:]) < 2.0, drv.waits
+
+
 def test_a_sigterm_while_watching_for_a_late_task_still_stops_it():
-    drv = LateTaskDriver(sigterm_on_read=2)
+    drv = LateTaskDriver(sigterm=True)
     code, _pos = depart(drv, sleep=lambda s: None)
     assert code == 143, code
     # The first stop went out before the task existed: the release sends its own.

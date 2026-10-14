@@ -940,13 +940,20 @@ class Driver:
         exception) stops and clears it on its way out (_release_departure).
 
         Only a departure that happened is handed over: its task showed up in
-        RobotStatus, and a mower that stood on the pile stands away from where
-        it stood before the start. Otherwise None. In Walter's log (#142,
-        custom-49) the status right after the start read (1, 1) or (1, 2), "no
-        task running", so the waits below ended at once, the stop went out and
-        nav2 drove the mower off the dock. A mower inside the dock disc but off
-        the pile (a mow restarted right after a stopped departure) is not held
-        to the distance: QUIT_PILE does not move it.
+        RobotStatus within DEPARTURE_START_S, and after the handover the mower
+        stands more than ON_PILE_M from the dock anchor and, if it stood on the
+        pile before the start, more than DEPARTURE_MIN_MOVE_M from there.
+        Otherwise None. In Walter's log (#142, custom-49) the status right
+        after the start read (1, 1) or (1, 2), "no task running", so the waits
+        below ended at once, the stop went out and nav2 drove the mower off the
+        dock. A mower inside the dock disc but off the pile (a mow restarted
+        right after a stopped departure) is not held to the distance from
+        where it stood: QUIT_PILE does not move it.
+
+        A start that never showed up still gets the stop, which then finds
+        nothing. The late watch gives its task DEPARTURE_LATE_S more to show
+        up; one that does gets a stop of its own and is parked and cleared
+        instead of running on unsupervised. None either way.
         """
         log("not localized: asking the firmware to initialise the frame")
         phase("localizing")
@@ -982,24 +989,27 @@ class Driver:
 
             # Also without a start: harmless when nothing runs.
             self.stop_task()
-            stop_sent = True
-            # The stop is queued behind the init states and only lands once the
-            # task reaches MOVING, as USER_STOP. A parked task still counts as
-            # executing, so a start_cov right after the stop was refused with
-            # "Cannot start a new task when last task is executing" (live .244,
-            # 2026-09-14). Wait for the stop to land, then clear the parked task
-            # the way the delete flow does, and only then hand over the wheels.
-            st = self.wait_status(stopped, timeout=30.0)
-            log(f"after stop: status={st}")
-            if not started and not (st is not None and task_executing(*st)):
-                # That stop went out before any task existed and found nothing.
-                # A task that shows up now would run on unsupervised (on a
-                # patrol: the dock zone at 90 mm, at night), so watch for it and
-                # stop it too. Until then a SIGTERM's release sends its own stop.
-                stop_sent = False
-                late = self.wait_status(task_executing, timeout=DEPARTURE_LATE_S)
-                if late is not None and task_executing(*late):
-                    log(f"firmware task showed up late (status={late}): stopping and clearing it")
+            # Without a start that stop went out before any task existed and
+            # found nothing: until a task gets a stop of its own, a SIGTERM's
+            # release sends one.
+            stop_sent = started
+            if started:
+                # The stop is queued behind the init states and only lands once the
+                # task reaches MOVING, as USER_STOP. A parked task still counts as
+                # executing, so a start_cov right after the stop was refused with
+                # "Cannot start a new task when last task is executing" (live .244,
+                # 2026-09-14). Wait for the stop to land, then clear the parked task
+                # the way the delete flow does, and only then hand over the wheels.
+                st = self.wait_status(stopped, timeout=30.0)
+                log(f"after stop: status={st}")
+            else:
+                # The late watch. A task that shows up now, also right after
+                # that stop, would run on unsupervised (on a patrol: the dock
+                # zone at 90 mm, at night): give it a stop of its own, then
+                # park and clear it like any other.
+                st = self.wait_status(task_executing, timeout=DEPARTURE_LATE_S)
+                if st is not None and task_executing(*st):
+                    log(f"firmware task showed up late (status={st}): stopping and clearing it")
                     self.stop_task()
                     stop_sent = True
                     st = self.wait_status(stopped, timeout=30.0)
