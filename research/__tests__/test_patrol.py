@@ -243,6 +243,58 @@ def test_headlight_without_a_subscriber_sends_nothing():
     assert node.last.sent == []
 
 
+# ── Task 2: route driver ────────────────────────────────────────────────────
+
+SQ0 = [(0, 0), (10, 0), (10, 10), (0, 10)]
+SQ1 = [(10, 0), (20, 0), (20, 10), (10, 10)]    # touches SQ0 along x = 10
+SQ6 = [(30, 0), (40, 0), (40, 10), (30, 10)]    # elsewhere
+
+
+class HopDriver:
+    def __init__(self, fail_at=None):
+        self.calls, self.params = [], []
+        self._loc = (5.0, 5.0)
+        self.fail_at = fail_at
+
+    def set_params(self, items):
+        self.params.append(list(items))
+
+    def log_applied_params(self, names):
+        pass
+
+    def robot_xy(self, timeout=6.0):
+        return self._loc
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        self.calls.append(("nav_to", round(x, 2), round(y, 2)))
+        if self.fail_at == "nav_to":
+            return False, "nav_to_pose_status_6"
+        self._loc = (x, y)
+        return True, ""
+
+    def follow_path(self, pts):
+        self.calls.append(("follow_path",))
+        self._loc = pts[-1]
+        return True, ""
+
+
+def test_drive_hops_restores_the_controller_params_also_on_failure():
+    with_maps({"map0_work.csv": SQ0, "map1_work.csv": SQ1})
+    drv = HopDriver(fail_at="nav_to")
+    ok, msg, _robot = mzd._drive_hops(drv, mzd._csv_base(), (5.0, 5.0), [("touch", None, "map1")])
+    assert not ok and msg == "nav_to_pose_status_6"
+    assert drv.params[-1] == [(n, d) for (n, _r, d) in mzd.TRANSIT_PARAMS]
+
+
+def test_drive_hops_drives_a_channel_and_reports_where_it_ended():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = HopDriver()
+    ok, msg, robot = mzd._drive_hops(drv, mzd._csv_base(), (9.0, 5.0),
+                                     [("channel", "map0tomap6_0_unicom.csv", "map6")])
+    assert ok and msg == "" and robot[0] > 30
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -1373,6 +1373,32 @@ def _drive_channel_hop(drv, base, fname, robot, hop, total):
     return True, "", robot
 
 
+def _drive_hops(drv, base, robot, hops):
+    """Drive a route from edge_route(): recorded channels and steps into a
+    touching zone, with the transit controller params relaxed and always
+    restored. Shared by the edge cut and the night patrol. (ok, msg, robot)."""
+    drv.set_params([(n, r) for (n, r, _d) in TRANSIT_PARAMS])
+    drv.log_applied_params([n for (n, _r, _d) in TRANSIT_PARAMS])
+    try:
+        for i, (kind, fname, zone) in enumerate(hops):
+            if kind == "channel":
+                ok, msg, robot = _drive_channel_hop(drv, base, fname, robot, i, len(hops))
+            else:
+                target = _entry_point(read_xy_csv(os.path.join(base, f"{zone}_work.csv")), robot)
+                if target is None:
+                    ok, msg = False, "no_entry_point"
+                else:
+                    log(f"hop {i + 1}/{len(hops)}: into touching {zone} at {target}")
+                    ok, msg = drv.nav_to(target[0], target[1])
+                    robot = drv.robot_xy() or target
+            if not ok:
+                return False, msg, robot
+    finally:
+        drv.set_params([(n, d) for (n, _r, d) in TRANSIT_PARAMS])
+        log("restored controller params")
+    return True, "", robot
+
+
 def _edge_transit(drv, base, robot, from_slot, to_slot, already_in):
     """Edge cut (#148): get into the target zone over recorded channels and
     touching zones, then PHASE edge_ready. extended_commands.py then starts
@@ -1392,26 +1418,10 @@ def _edge_transit(drv, base, robot, from_slot, to_slot, already_in):
     if hops:
         log(f"edge route {route_from} -> {to_slot}: {hops}")
         phase("following_unicom" if any(k == "channel" for k, _f, _z in hops) else "entering_zone")
-        drv.set_params([(n, r) for (n, r, _d) in TRANSIT_PARAMS])
-        drv.log_applied_params([n for (n, _r, _d) in TRANSIT_PARAMS])
-        try:
-            for i, (kind, fname, zone) in enumerate(hops):
-                if kind == "channel":
-                    ok, msg, robot = _drive_channel_hop(drv, base, fname, robot, i, len(hops))
-                else:
-                    target = _entry_point(read_xy_csv(os.path.join(base, f"{zone}_work.csv")), robot)
-                    if target is None:
-                        ok, msg = False, "no_entry_point"
-                    else:
-                        log(f"edge hop {i + 1}/{len(hops)}: into touching {zone} at {target}")
-                        ok, msg = drv.nav_to(target[0], target[1])
-                        robot = drv.robot_xy() or target
-                if not ok:
-                    phase("error", msg)
-                    return 1
-        finally:
-            drv.set_params([(n, d) for (n, _r, d) in TRANSIT_PARAMS])
-            log("restored controller params")
+        ok, msg, robot = _drive_hops(drv, base, robot, hops)
+        if not ok:
+            phase("error", msg)
+            return 1
     phase("edge_ready")
     return 0
 
