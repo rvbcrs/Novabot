@@ -83,8 +83,9 @@ function dockZone(polys: Map<string, XY[]>, dock: XY | null): string | null {
 
 /**
  * The plan for the chosen zones: the dock's zone first, then the rest by
- * slot. No choice means the dock's zone only. Above `maxPoints` every zone is
- * thinned by the same stride, so a big garden still gets checkpoints all round.
+ * slot. No choice, or a choice of only zones that no longer exist, means the
+ * dock's zone only. Above `maxPoints` every zone is thinned by the same
+ * stride, so a big garden still gets checkpoints all round.
  * At most `maxPoints` zones are planned (the dock's zone survives that cut).
  * A cap below 1, or a spacing below 0.5 m or NaN, plans nothing. A zone with a
  * vertex beyond PATROL_MAX_COORD_M is skipped whole.
@@ -96,8 +97,10 @@ export function buildPatrolZones(
   if (maxPoints < 1) return [];
   if (!(spacingM >= 0.5)) return [];
   const polys = new Map<string, XY[]>();
+  const existing = new Set<string>();   // every zone with a row, usable polygon or not
   for (const r of rows) {
     const zone = r.canonical_name?.match(/^map\d+$/)?.[0];
+    if (zone) existing.add(zone);
     // The rows come newest first (mapRepo.findWorkMaps): the first usable row
     // of a zone wins, as everywhere else.
     if (!zone || !r.map_area || polys.has(zone)) continue;
@@ -110,7 +113,12 @@ export function buildPatrolZones(
     } catch { /* a broken polygon row is skipped */ }
   }
   const home = dockZone(polys, dock);
-  const chosen = [...new Set(wanted.length ? wanted : home ? [home] : [])].filter(z => polys.has(z));
+  // A saved choice outlives the zones: a slot deleted since is no choice, so a
+  // choice of only deleted zones is the dock's zone, like an empty one. A zone
+  // that exists but has no usable polygon stays chosen and plans nothing (the
+  // start is refused, the card shows it ticked) instead of being swapped.
+  const picked = wanted.filter(z => existing.has(z));
+  const chosen = [...new Set(picked.length ? picked : home ? [home] : [])].filter(z => polys.has(z));
   const slot = (z: string) => Number(z.slice(3));
   chosen.sort((a, b) => (a === home ? -1 : b === home ? 1 : slot(a) - slot(b)));
   // At most maxPoints zones: the dock's zone sorts first, so it survives the cut.

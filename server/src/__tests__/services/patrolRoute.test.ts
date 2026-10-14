@@ -38,6 +38,32 @@ describe('patrol plan', () => {
     expect(plan.map(z => z.zone)).toEqual(['map0']);
   });
 
+  // A saved choice outlives the zones. A slot that was deleted since is no
+  // choice at all: the card hides it, so the owner sees nothing ticked and
+  // expects the dock's zone, not a refusal that nobody sees.
+  it("a choice of only deleted zones patrols the dock's zone, like no choice", () => {
+    const rows = [row('map0', SQ), row('map1', shift(SQ, 20))];
+    const plan = buildPatrolZones(rows, ['map9'], 5, { x: 1, y: 1 });
+    expect(plan.map(z => z.zone)).toEqual(['map0']);
+    expect(plan).toEqual(buildPatrolZones(rows, [], 5, { x: 1, y: 1 }));
+  });
+
+  it('a deleted zone among the chosen ones is dropped and the rest is planned as chosen', () => {
+    const rows = [row('map0', SQ), row('map1', shift(SQ, 20))];
+    // The dock's zone is not added to a choice that leaves it out ...
+    expect(buildPatrolZones(rows, ['map1', 'map9'], 5, { x: 1, y: 1 }).map(z => z.zone)).toEqual(['map1']);
+    // ... and it goes first when the choice has it.
+    expect(buildPatrolZones(rows, ['map0', 'map1', 'map9'], 5, { x: 21, y: 1 }).map(z => z.zone)).toEqual(['map1', 'map0']);
+  });
+
+  // A zone that exists is still a choice, usable polygon or not: the card shows
+  // it ticked, so a refusal is explained, while a swap for the dock's zone
+  // would patrol something the owner did not pick.
+  it("a chosen zone that exists but has no usable polygon is not swapped for the dock's zone", () => {
+    const plan = buildPatrolZones([row('map0', SQ), { canonical_name: 'map1', map_area: '{oops' }], ['map1'], 5, { x: 1, y: 1 });
+    expect(plan).toEqual([]);
+  });
+
   it("puts the dock's zone first and the rest by slot", () => {
     const plan = buildPatrolZones([row('map2', shift(SQ, 40)), row('map0', SQ), row('map1', shift(SQ, 20))],
       ['map2', 'map1', 'map0'], 5, { x: 21, y: 1 });
