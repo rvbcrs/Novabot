@@ -105,6 +105,11 @@ def test_an_unreadable_process_does_not_break_the_scan():
     assert ec.find_stale_mow_drives(root, self_pid=999) == [111]
 
 
+def test_a_patrol_run_counts_too():
+    root = fake_proc({111: "python3 /root/novabot/scripts/mow_zone_drive.py patrol /tmp/patrol_1.json"})
+    assert ec.find_stale_mow_drives(root, self_pid=999) == [111]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

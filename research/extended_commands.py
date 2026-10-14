@@ -1822,7 +1822,7 @@ def find_stale_mow_drives(proc_root="/proc", self_pid=None):
         # Alleen echte ritten tellen: een droogloop (`check`) rijdt niet en
         # mag de volgende start niet blokkeren, en onze eigen wrapper-shell
         # draagt het scriptpad ook in zijn argv.
-        if re.search(r"mow_zone_drive\.py\s+(mow|edge|return)\b", cmd):
+        if re.search(r"mow_zone_drive\.py\s+(mow|edge|return|patrol)\b", cmd):
             out.append(int(name))
     return out
 
@@ -2137,6 +2137,143 @@ def handle_nav_to_point(params, respond):
 
     threading.Thread(target=_run, daemon=True, name="nav-to-point").start()
     respond("nav_to_point_respond", {"result": 0})
+
+
+# ── Nachtpatrouille ──────────────────────────────────────────────────────────
+# Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
+PATROL_DRIVE_SCRIPT = "/root/novabot/scripts/mow_zone_drive.py"
+PATROL_PHOTO_TOPICS = ("front", "front_hd", "tof_gray")
+PATROL_MAX_POINTS = 60
+
+
+def validate_patrol_params(params):
+    """(clean, None) or (None, error). The server plans the route; the mower
+    still refuses anything but a short list of finite map points."""
+    p = params or {}
+    run = str(p.get("run", ""))
+    if not re.fullmatch(r"\d{1,20}", run):
+        return None, "invalid_run"
+    zones, total = [], 0
+    for z in p.get("zones") or []:
+        name = str((z or {}).get("zone", ""))
+        if not re.fullmatch(r"map\d+", name):
+            return None, "invalid_zone"
+        pts = []
+        for pt in z.get("points") or []:
+            try:
+                x, y = float(pt[0]), float(pt[1])
+            except (TypeError, ValueError, IndexError):
+                return None, "invalid_point"
+            if not (math.isfinite(x) and math.isfinite(y)) or max(abs(x), abs(y)) > 500:
+                return None, "invalid_point"
+            pts.append([x, y])
+        total += len(pts)
+        zones.append({"zone": name, "points": pts})
+    if total == 0:
+        return None, "no_points"
+    if total > PATROL_MAX_POINTS:
+        return None, "too_many_points"
+    try:
+        dwell = float(p.get("dwell_s", 6))
+    except (TypeError, ValueError):
+        return None, "invalid_dwell"
+    if not 2 <= dwell <= 30:
+        return None, "invalid_dwell"
+    topic = p.get("photo_topic", "front")
+    if topic not in PATROL_PHOTO_TOPICS:
+        return None, "invalid_photo_topic"
+    return {"run": run, "zones": zones, "dwell_s": dwell, "photo_topic": topic}, None
+
+
+def handle_patrol(params, respond):
+    """Night patrol: mow_zone_drive.py patrol drives the server's checkpoints
+    with the blades off, looks and photographs at each and comes back into the
+    dock's zone; the server docks it afterwards. While it runs the costmap
+    treats people and animals as obstacles (the edge cut's Low setting).
+    Streams patrol_status / patrol_checkpoint / patrol_skipped; stopped with
+    stop_mow_zone like every other drive."""
+    clean, err = validate_patrol_params(params)
+    if err:
+        respond("patrol_respond", {"result": 1, "error": err})
+        return
+    if not os.path.isfile(PATROL_DRIVE_SCRIPT):
+        respond("patrol_respond", {"result": 1, "error": "drive_script_missing"})
+        return
+    server, sn = _server_from_config(), _sn_from_config()
+    if not server or not sn:
+        respond("patrol_respond", {"result": 1, "error": "server_unknown"})
+        return
+    run = clean["run"]
+    clean["upload"] = f"http://{server}/api/nova-file-server/patrol/uploadFrame?sn={sn}&run={run}"
+    params_file = f"/tmp/patrol_{run}.json"
+    with open(params_file, "w") as fh:
+        json.dump(clean, fh)
+    _stale = kill_stale_mow_drives()
+    if _stale:
+        log(f"patrol: {len(_stale)} vastgelopen run(s) opgeruimd voor de start: {_stale}")
+    wrapper = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        'exec stdbuf -oL python3 "$1" patrol "$2"'
+    )
+    argv = ["bash", "-c", wrapper, "patrol", PATROL_DRIVE_SCRIPT, params_file]
+
+    def _run():
+        terminal_seen = blades_secured = perception_changed = False
+        proc = None
+        try:
+            perception_changed = _apply_edge_perception_low()
+            proc = subprocess.Popen(argv, env=_ros_env(), stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            _register_mow_drive(proc)
+            for line in proc.stdout:
+                line = line.strip()
+                if line.startswith("PHASE "):
+                    parts = line.split(" ", 2)
+                    ph = parts[1] if len(parts) > 1 else ""
+                    if ph == "patrolling" and not blades_secured:
+                        # The firmware departure runs a coverage task's init
+                        # states; nothing of a patrol may cut.
+                        blades_secured = True
+                        _publish_blade_speed(0)
+                        _publish_blade_height(0)
+                    if ph in ("done", "error"):
+                        terminal_seen = True
+                    msg = {"phase": ph, "run": run}
+                    if ph == "error" and len(parts) > 2:
+                        msg["error"] = parts[2]
+                    respond("patrol_status", msg)
+                elif line.startswith("CHECKPOINT ") or line.startswith("SKIPPED "):
+                    kind, _, body = line.partition(" ")
+                    try:
+                        data = json.loads(body)
+                    except ValueError:
+                        log(f"patrol: bad {kind} line: {body[:120]}")
+                        continue
+                    respond("patrol_checkpoint" if kind == "CHECKPOINT" else "patrol_skipped",
+                            dict(data, run=run))
+                elif line:
+                    log(f"patrol: {line}")
+            proc.wait()
+            stopped = _unregister_mow_drive(proc)
+            if proc.returncode != 0 and not terminal_seen:
+                respond("patrol_status", {"phase": "stopped", "run": run} if stopped else
+                        {"phase": "error", "run": run, "error": f"drive_exit_{proc.returncode}"})
+        except Exception as e:
+            log(f"patrol error: {e}")
+            respond("patrol_status", {"phase": "error", "run": run, "error": str(e)})
+        finally:
+            if proc is not None:
+                _unregister_mow_drive(proc)
+            if perception_changed:
+                _restore_edge_perception()
+            try:
+                os.remove(params_file)
+            except OSError:
+                pass
+
+    threading.Thread(target=_run, daemon=True, name="patrol").start()
+    respond("patrol_respond", {"result": 0, "run": run})
 
 
 def _stop_mow_zone_cleanup_cli():
@@ -5954,6 +6091,7 @@ COMMANDS = {
     "mow_zone_check": handle_mow_zone_check,
     "return_to_dock": handle_return_to_dock,
     "nav_to_point": handle_nav_to_point,
+    "patrol": handle_patrol,
     "stop_mow_zone": handle_stop_mow_zone,
     "stop_boundary_follow": handle_stop_boundary_follow,
     "get_lora_info": handle_get_lora_info,
