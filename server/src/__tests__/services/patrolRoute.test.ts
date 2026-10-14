@@ -59,10 +59,38 @@ describe('patrol plan', () => {
   });
 
   it('rounds points to centimetres for the wire', () => {
-    const plan = buildPatrolZones([row('map0', SQ)], ['map0'], 5, null);
+    // A square turned 30 degrees: its raw checkpoints are off the centimetre grid.
+    const a = Math.PI / 6;
+    const turned = SQ.map(p => ({ x: p.x * Math.cos(a) - p.y * Math.sin(a), y: p.x * Math.sin(a) + p.y * Math.cos(a) }));
+    expect(patrolCheckpoints(turned, 5).some(p => Math.round(p.x * 100) / 100 !== p.x)).toBe(true);
+    const plan = buildPatrolZones([row('map0', turned)], ['map0'], 5, null);
+    expect(plan[0].points.length).toBeGreaterThan(0);
     for (const [x, y] of plan[0].points) {
       expect(Math.round(x * 100) / 100).toBe(x);
       expect(Math.round(y * 100) / 100).toBe(y);
     }
+  });
+
+  it('plans nothing when the cap is zero', () => {
+    expect(buildPatrolZones([row('map0', SQ)], ['map0'], 5, null, 0)).toEqual([]);
+  });
+
+  it('caps the plan at 60 points across 61 zones and keeps the dock zone first', () => {
+    const zones = Array.from({ length: 61 }, (_, i) => row(`map${i}`, [
+      { x: i * 10, y: 0 }, { x: i * 10 + 5, y: 0 }, { x: i * 10 + 5, y: 5 }, { x: i * 10, y: 5 },
+    ]));
+    const wanted = zones.map(r => r.canonical_name);
+    const plan = buildPatrolZones(zones, wanted, 5, { x: 602.5, y: 2.5 });
+    expect(plan.reduce((n, z) => n + z.points.length, 0)).toBeLessThanOrEqual(PATROL_MAX_POINTS);
+    expect(plan[0].zone).toBe('map60');
+  });
+
+  it('skips a polygon with a malformed vertex and keeps the good zones', () => {
+    const plan = buildPatrolZones([
+      { canonical_name: 'map1', map_area: JSON.stringify([null, { x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }]) },
+      { canonical_name: 'map2', map_area: '[{"x":"a","y":0},{"x":10,"y":0},{"x":10,"y":10},{"x":0,"y":10}]' },
+      row('map0', SQ),
+    ], ['map0', 'map1', 'map2'], 5, null);
+    expect(plan.map(z => z.zone)).toEqual(['map0']);
   });
 });

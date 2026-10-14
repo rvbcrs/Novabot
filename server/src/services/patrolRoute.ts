@@ -80,25 +80,31 @@ function dockZone(polys: Map<string, XY[]>, dock: XY | null): string | null {
  * The plan for the chosen zones: the dock's zone first, then the rest by
  * slot. No choice means the dock's zone only. Above `maxPoints` every zone is
  * thinned by the same stride, so a big garden still gets checkpoints all round.
+ * At most `maxPoints` zones are planned (the dock's zone survives that cut), and
+ * a cap below 1 plans nothing.
  */
 export function buildPatrolZones(
   rows: Array<{ canonical_name: string | null; map_area: string | null }>,
   wanted: string[], spacingM: number, dock: XY | null, maxPoints = PATROL_MAX_POINTS,
 ): PatrolZone[] {
+  if (maxPoints < 1) return [];
   const polys = new Map<string, XY[]>();
   for (const r of rows) {
     const zone = r.canonical_name?.match(/^map\d+$/)?.[0];
     if (!zone || !r.map_area) continue;
     try {
       const poly = JSON.parse(r.map_area) as XY[];
-      if (Array.isArray(poly) && poly.length >= 3) polys.set(zone, poly);
+      const ok = Array.isArray(poly) && poly.length >= 3
+        && poly.every(p => p != null && Number.isFinite(p.x) && Number.isFinite(p.y));
+      if (ok) polys.set(zone, poly);
     } catch { /* a broken polygon row is skipped */ }
   }
   const home = dockZone(polys, dock);
   const chosen = [...new Set(wanted.length ? wanted : home ? [home] : [])].filter(z => polys.has(z));
   const slot = (z: string) => Number(z.slice(3));
   chosen.sort((a, b) => (a === home ? -1 : b === home ? 1 : slot(a) - slot(b)));
-  const zones = chosen.map(zone => ({ zone, pts: patrolCheckpoints(polys.get(zone)!, spacingM) }));
+  // At most maxPoints zones: the dock's zone sorts first, so it survives the cut.
+  const zones = chosen.slice(0, maxPoints).map(zone => ({ zone, pts: patrolCheckpoints(polys.get(zone)!, spacingM) }));
   const kept = (stride: number) => zones.reduce((n, z) => n + Math.ceil(z.pts.length / stride), 0);
   let stride = 1;
   while (kept(stride) > maxPoints) stride++;
