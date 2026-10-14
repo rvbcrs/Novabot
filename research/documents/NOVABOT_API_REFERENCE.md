@@ -633,10 +633,10 @@ These commands were discovered in the mower firmware `mqtt_node` binary:
 
 | Command | Response | Fields | Description |
 |---------|----------|--------|-------------|
-| `start_patrol` | `start_patrol_respond` | `{ map_name? }` | Start boundary patrol (follows map outline) |
-| `stop_patrol` | `stop_patrol_respond` | `{}` | Stop boundary patrol |
+| `start_patrol` | `start_patrol_respond` | `{ map_name? }` | Stub in stock mqtt_node: it only answers (no boundary patrol) |
+| `stop_patrol` | `stop_patrol_respond` | `{}` | Stub in stock mqtt_node: it only answers |
 
-**ROS action:** `BoundaryFollow` — robot follows the boundary of the specified map area.
+**ROS action:** none. Both commands are JSON-echo stubs in stock mqtt_node (no ROS call). OpenNova's night patrol is the extended command `patrol`; see docs/superpowers/specs/2026-10-14-night-patrol-design.md.
 
 ---
 
@@ -1189,7 +1189,7 @@ const sig = crypto.createHash('sha256')
 | `/robot_decision/generate_preview_cover_path` | `generate_preview_cover_path` | `GenerateCoveragePath.srv` |
 | `/robot_decision/quit_mapping_mode` | `quit_mapping_mode` | — |
 | `/robot_decision/start_erase` | `start_erase_map` | — |
-| `/robot_decision/start_boundary_follow` | `start_patrol` | `BoundaryFollow` (action) |
+| none (stub in stock mqtt_node, it only answers) | `start_patrol` | none; OpenNova's night patrol is the extended command `patrol`, see docs/superpowers/specs/2026-10-14-night-patrol-design.md |
 
 ---
 

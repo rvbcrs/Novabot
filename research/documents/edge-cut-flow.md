@@ -150,8 +150,8 @@ Documenting the paths we tried and abandoned so we don't re-try them:
 
 ### B. Stock MQTT `start_patrol`
 
-- mqtt_node binary has `api_start_patrol` (at 0x2c2db8) and
-  `api_stop_patrol` (at 0x2c32b8) handlers.
+- mqtt_node binary has `api_start_patrol` (at 0x1c2db8) and
+  `api_stop_patrol` (at 0x1c32b8) handlers (Ghidra: 0x2c2db8 / 0x2c32b8).
 - Live test: app → `{start_patrol:null}` → mqtt_node responds
   `{result:0}` immediately, robot_decision log shows **nothing**.
 - Disasm of mqtt_node's `api_start_patrol` (follow-up disasm pass):

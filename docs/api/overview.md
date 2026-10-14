@@ -49,6 +49,7 @@ These endpoints are called by the **mower firmware** (`mqtt_node` via libcurl).
 | [`/api/nova-user/equipment/machineReset`](mower-api.md#machinereset) | None | Device unbind/reset |
 | [`/api/nova-network/network/connection`](mower-api.md#connection) | None | Connectivity check |
 | [`/x3/log/upload`](mower-api.md#log-upload) | None | Mower log upload (50MB limit) |
+| [`/api/nova-file-server/patrol/uploadFrame`](mower-api.md#patrol-uploadframe) | None (run token) | Night patrol checkpoint upload (photo and scores) |
 
 ## Response Format
 

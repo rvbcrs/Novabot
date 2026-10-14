@@ -441,7 +441,7 @@ The following command categories were **not observed** in this idle capture. A f
 ### High priority (mowing session)
 
 - `start_run` / `stop_to_charge` — basic mowing start/stop
-- `start_patrol` — single-zone mowing (if used by app)
+- `start_patrol`: a stub in stock mqtt_node that only answers (no mowing, no ROS call); OpenNova's night patrol is the extended command `patrol`, see docs/superpowers/specs/2026-10-14-night-patrol-design.md
 - `pause_task` / `resume_task` — mid-mow pause/resume
 - `go_to_charge` — manual dock command
 - `set_cut_height` or `cutterhigh` field in start commands

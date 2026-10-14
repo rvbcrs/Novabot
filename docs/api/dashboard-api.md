@@ -492,7 +492,7 @@ mower, so for it this endpoint answers 409.
 Night patrol is an OpenNova feature: the extended command `patrol`, which needs
 custom firmware build 50 or newer. The stock MQTT `start_patrol` / `stop_patrol`
 are stubs in `mqtt_node` (they only answer) and have nothing to do with it.
-Design: `docs/superpowers/specs/2026-10-14-night-patrol-design.md`.
+What it does and how it looks in the dashboard: [Night patrol](../user-guide/dashboard.md#night-patrol).
 
 ### POST `/api/dashboard/patrol/:sn`
 
@@ -505,7 +505,7 @@ Start a patrol.
 A refusal answers 409 with the reason in `error`, in the language of the request:
 the mower is offline, runs stock firmware or a custom build older than 50, is
 busy with a task or a map operation, has a map frame that is not validated, has
-a battery below 50 %, or there is no checkpoint to visit.
+a battery below 50%, or there is no checkpoint to visit.
 
 ```json title="Response (refused)"
 { "ok": false, "error": "..." }
@@ -580,17 +580,21 @@ Query parameters:
 | `frames` | Detection readings counted at the checkpoint |
 | `person`, `animal` | Detection score per class |
 
-Body: the raw JPEG (up to 3 MB), or empty when the camera gave nothing.
+Body: the raw JPEG (up to 3 MB), or empty when the camera gave nothing. The body is
+only read as a photo when the request has `Content-Type: application/octet-stream`;
+with any other type the checkpoint is stored without a photo.
 
 The server issues a random 32-hex token for every run it starts and sends it to the
 mower in the `patrol` command; the mower repeats it in every upload. The server only
 accepts uploads for the run it started, with the right token, within 6 hours of the
 start. Anything else answers 403: nothing is stored and no alert is raised.
-Malformed parameters, or a body that is not a JPEG, answer 400.
+Malformed parameters, or an `application/octet-stream` body that is not a JPEG,
+answer 400.
 
-A score at or above `patrol_min_points` raises the `patrol_detection` notification
-(see [Notifications & Push](../guide/notifications.md)). A checkpoint that could not
-be stored answers 500; the alert is still raised.
+An alert needs both a score at or above `patrol_min_points` and at least 2 detection
+readings (`frames`). It raises the `patrol_detection` notification (see
+[Notifications & Push](../guide/notifications.md)), at most once per class per run per
+2 minutes. A checkpoint that could not be stored answers 500; the alert is still raised.
 
 ---
 

@@ -179,6 +179,43 @@ Mower uploads debug/system logs.
 
 ---
 
+## Patrol uploadFrame
+
+### POST `/api/nova-file-server/patrol/uploadFrame`
+
+The night patrol (custom firmware 50 or newer) posts one request per checkpoint, from its own drive script rather than from `mqtt_node`. See [Night patrol](../user-guide/dashboard.md#night-patrol).
+
+**Content-Type**: `application/octet-stream`
+
+The checkpoint data rides in the query string. The body is the raw JPEG (up to 3 MB), or empty when the camera gave nothing.
+
+| Query field | Type | Description |
+|-------------|------|-------------|
+| `sn` | string | Mower serial number |
+| `run` | string | Run id the server returned when the patrol started (digits) |
+| `token` | string | The 32-hex token of that run |
+| `seq` | number | Checkpoint number (1 to 200) |
+| `x`, `y` | number | Mower position, local map metres |
+| `frames` | number | Detection readings counted at the checkpoint |
+| `person`, `animal` | number | Detection score per class |
+
+!!! warning "Run token instead of login"
+    This endpoint is not behind the login, so the run token protects it. The server issues a random 32-hex token for every run it starts and sends it to the mower in the `patrol` command; the mower repeats it in every upload. Only the run the server started is accepted, with the right token, within 6 hours of the start. Anything else answers 403: nothing is stored and no alert is raised. Malformed parameters, or an `application/octet-stream` body that is not a JPEG, answer 400.
+
+!!! note "Photo and alert rules"
+    The body is only read as a photo when the request has `Content-Type: application/octet-stream`; with any other type the checkpoint is stored without a photo. An alert (`patrol_detection`) needs both a score at or above `patrol_min_points` and at least 2 detection readings (`frames`), and comes at most once per class per run per 2 minutes. A checkpoint that could not be stored answers 500; the alert is still raised.
+
+```json title="Response"
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": null
+}
+```
+
+---
+
 ## Implementation Status
 
 | Endpoint | Status | Notes |
@@ -191,3 +228,4 @@ Mower uploads debug/system logs.
 | `machineReset` | ✅ Implemented | Unbinds device |
 | `connection` | ✅ Implemented | Returns success |
 | `/x3/log/upload` | ✅ Implemented | Accepts raw binary |
+| `patrol/uploadFrame` | ✅ Implemented | Stores the checkpoint and its photo, needs the run token |

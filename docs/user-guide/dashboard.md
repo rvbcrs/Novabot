@@ -215,9 +215,14 @@ firmware and do not depend on the app being open.
 On a button press, or every night on a schedule, the mower leaves its dock,
 drives a route through the garden and stops at checkpoints to look with its
 camera. When it sees a person or an animal, the server sends you a
-notification. Every checkpoint gets a photo, so you can look through the whole
-round afterwards. At the end the mower drives back and docks the same way it
-does after mowing. The blades never turn during a patrol.
+notification. It takes a photo at every checkpoint it reaches, so you can look
+through the round afterwards; a checkpoint can lack a photo when the camera
+gave nothing. At the end the mower drives back and docks the same way it does
+after mowing.
+
+A patrol never mows. The mower leaves the dock the normal way, with the
+cutting deck raised to its highest position, and the blades are switched off
+as soon as that departure is done.
 
 The server plans the route: a checkpoint about every 6 m along the inside of
 each chosen work area, 60 at most. Between work areas the mower only drives
@@ -230,8 +235,8 @@ header opens (*Diagnostics & logs*):
 - **Phase line with a Start / Stop button.** The line says what the patrol is
   doing: ready, on patrol, coming back, back and docking, stopped, or the
   error that stopped it. The button is **Start** when nothing runs. As soon as
-  the mower has accepted the patrol it becomes **Stop**, and it stays Stop for
-  the whole drive, from the moment the mower leaves the dock until it is back.
+  the mower has accepted the patrol, which is before it leaves the dock, the
+  button becomes **Stop**, and it stays Stop until the mower is back.
   Stop ends the drive where the mower stands and does not send it home; use
   *Go to charger* for that. The normal stop and go-to-charger buttons, in the
   apps too, end a patrol as well.
@@ -246,8 +251,9 @@ header opens (*Diagnostics & logs*):
   plans. *No mowing after dark* does not hold it back, since a patrol is meant
   for the night; *No mowing in frost* does (Settings → Weather & time). Rain
   does not pause it.
-- **Last patrol.** A photo for every checkpoint of the latest patrol, labelled
-  *person*, *animal*, *nothing* or *no camera data*.
+- **Last patrol.** The latest patrol, with the photo of each checkpoint (a
+  checkpoint can lack a photo), labelled *person*, *animal*, *nothing* or
+  *no camera data*.
 
 *No camera data* means the camera gave nothing usable at that checkpoint
 (fewer than two detection readings), so nobody knows what was there. It does
@@ -262,7 +268,7 @@ minutes during a patrol), and a patrol that stops with an error gives
 
 The dashboard refuses to start a patrol, and says why, when the mower is
 offline or busy with a task or a map operation, when its map frame is not
-validated yet, when the battery is below 50 %, or when there is no checkpoint
+validated yet, when the battery is below 50%, or when there is no checkpoint
 to visit.
 
 !!! warning "It drives at night"
