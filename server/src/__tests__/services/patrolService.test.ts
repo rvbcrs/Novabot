@@ -361,6 +361,31 @@ describe('patrol service', () => {
     expect(startPatrol(SN, 1000).ok).toBe(true);
   });
 
+  // A zone drive (mow_zone_drive.py) holds the wheels outside robot_decision,
+  // which isMowerBusy does not see. On the mower a patrol start kills a live
+  // zone drive (kill_stale_mow_drives), so a patrol started from the app, the
+  // API or a schedule would silently end that mow.
+  it.each(['starting', 'localizing', 'following_unicom', 'entering_zone'])(
+    'refuses while a zone drive is in phase %s, and sends the mower nothing',
+    phase => {
+      mower({ mow_zone_phase: phase });
+      const r = startPatrol(SN, 1000);
+      expect(r.ok).toBe(false);
+      expect(r.error).toBe('a zone drive is running; stop it first');
+      expect(publishExtendedCommand).not.toHaveBeenCalled();
+      expect(publishToDevice).not.toHaveBeenCalled();
+      expect(publishToTopic).not.toHaveBeenCalled();
+    },
+  );
+
+  // The cache keeps the last phase until the next report, so a drive that has
+  // ended (done, error, stopped) must not block a patrol for good.
+  it.each(['done', 'error', 'stopped'])('does not refuse after a zone drive ended with %s', phase => {
+    mower({ mow_zone_phase: phase });
+    expect(startPatrol(SN, 1000)).toEqual({ ok: true, run: '1000' });
+    expect(publishExtendedCommand).toHaveBeenCalledTimes(1);
+  });
+
   // A server restart in the middle of a patrol keeps that run's uploads and
   // its place: the run, token and start time are on disk.
   it('a restart in the middle of a patrol keeps taking its uploads and keeps the run filter', () => {

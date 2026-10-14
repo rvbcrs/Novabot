@@ -1066,6 +1066,11 @@ export const CATALOG: Catalog = {
     fr: "la tondeuse est en train de tondre une bordure ; arrêtez cela d'abord",
     de: "der Mäher schneidet gerade eine Kante; stoppen Sie das zuerst",
   },
+  "er loopt een zonerit; stop die eerst": {
+    en: "a zone drive is running; stop it first",
+    fr: "un trajet vers la zone est en cours ; arrêtez-le d'abord",
+    de: "eine Zonenfahrt läuft; stoppen Sie sie zuerst",
+  },
   // A schedule's patrol that the mower refused before anything moved (patrolService.onPatrolRefused).
   "de maaier weigerde de patrouille ({0})": {
     en: "the mower refused the patrol ({0})",

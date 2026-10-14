@@ -15,6 +15,7 @@ import { patrolRunsRepo } from '../db/repositories/patrolRuns.js';
 import { scheduleRepo } from '../db/repositories/schedules.js';
 import { isOpenNovaMower } from './mowerFileCapability.js';
 import { isMowerBusy, goHome } from './mowingService.js';
+import { ZONE_DRIVE_PHASES } from './edgeCutGuard.js';
 import { isMowerMapOperationBusy } from './mowerMapOperation.js';
 import { isFrameUnvalidated } from './frameValidation.js';
 import { getPolygonAnchor } from './anchor.js';
@@ -135,6 +136,10 @@ export function startPatrol(sn: string, now = Date.now(), scheduleId: string | n
   // An edge cut is an NTCP goal outside robot_decision, which isMowerBusy does
   // not see: the patrol would drive beside it.
   if (deviceCache.get(sn)?.get('edge_active') === '1') return refuse(M`de maaier is aan het randmaaien; stop dat eerst`);
+  // A zone drive (mow_zone_drive.py) is outside robot_decision too, and a patrol
+  // start kills a live one on the mower (kill_stale_mow_drives): that mow would
+  // end silently.
+  if (ZONE_DRIVE_PHASES.has(deviceCache.get(sn)?.get('mow_zone_phase') ?? '')) return refuse(M`er loopt een zonerit; stop die eerst`);
   if (isMowerMapOperationBusy(sn)) return refuse(M`er loopt een kaartbewerking; probeer het straks opnieuw`);
   // publishExtendedCommand would drop it silently in an unvalidated frame.
   if (isFrameUnvalidated(sn)) return refuse(M`het kaartframe is niet gevalideerd; her-anker eerst`);

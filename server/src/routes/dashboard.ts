@@ -4665,10 +4665,12 @@ function syncVirtualWalls(sn: string): void {
 // ── Extended Commands (via firmware Python node) ────────────────
 
 // Bewegingsstartende extended-commando's (extended_commands.py handlers).
-// mow_zone is het PRIMAIRE handmatige maaipad van de app; de andere vier
+// mow_zone is het PRIMAIRE handmatige maaipad van de app; de andere
 // starten of sturen eveneens een rit. Elk hiervan via de extended-route is een
 // handmatige interventie die een gearmde rand-dag randmaai ongeldig maakt.
-const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive', 'nav_to_point', 'patrol'];
+// Een ruwe patrol staat er niet in: de route weigert die met 409 voordat deze
+// lijst wordt geraadpleegd (alleen POST /patrol start een patrouille).
+const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive', 'nav_to_point'];
 
 // POST /api/dashboard/extended/:sn — stuur commando naar extended_commands.py
 // POST /api/dashboard/edge-cut/:sn {zones: ['map0', ...], bladeHeight: mm}

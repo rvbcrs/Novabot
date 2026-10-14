@@ -20,8 +20,9 @@ export const ENDS_EDGE_CUT = new Set([
 /** mow_zone_drive phases in which the drive itself holds the wheels (nav2
  *  FollowPath / NavigateToPose, outside robot_decision). stop_navigation does
  *  not reach those; only stop_mow_zone ends them. "covering" and later are the
- *  firmware's task again. */
-const ZONE_DRIVE_PHASES = new Set(['starting', 'localizing', 'following_unicom', 'entering_zone']);
+ *  firmware's task again. startPatrol also refuses to start while one runs: a
+ *  patrol start kills a live zone drive on the mower. */
+export const ZONE_DRIVE_PHASES = new Set(['starting', 'localizing', 'following_unicom', 'entering_zone']);
 
 /** Night patrol phases in which the patrol drive holds the wheels (the
  *  firmware's own departure task while localizing, then nav2 goals), or is
