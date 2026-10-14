@@ -146,14 +146,21 @@ feature would be a blind drive.
   `starting` as soon as it accepts a patrol. While a patrol drives (`starting`,
   `localizing`, `patrolling`, `returning`), every stop, go-home or start command
   from the stock app, the dashboard, the OpenNova app or the server also sends
-  `stop_mow_zone` first, as for a zone drive.
+  `stop_mow_zone` first, as for a zone drive. While a zone drive or a patrol is
+  still `starting` or `localizing`, a go home or a start (`go_pile`, `go_to_charge`,
+  `start_run`, `start_navigation`) waits 3 s after that, so the killed drive's
+  release of its departure task cannot stop it; stops and pauses go at once.
 - The STOP button, lifting or tilting the mower end a patrol as `stopped` with that
   flag as its error (the edge cut's `/chassis_incident` watcher); the mower stays
-  where it is.
+  where it is, and the owner gets `patrol_failed` with the flag. The owner's own
+  stop carries no flag and notifies nobody.
 - A patrol and an edge cut never run together: a patrol is refused while an edge
-  cut runs, an edge cut while a patrol drives, and the mower's `start_edge_cut`
-  ends a running drive first. The rain monitor, the mowing-started push and the
-  always-edge watcher ignore a patrol's departure task.
+  cut runs (by the server, and by the mower from the edge cut's start until its
+  goal process ends), an edge cut while a patrol drives, and the mower's
+  `start_edge_cut` ends a running drive first. The rain monitor, the mowing
+  pushes and the always-edge watcher leave alone a patrol that is out (a driving
+  phase and a live run) and the drive home after it (until docked, at most 15
+  minutes).
 
 ## Out of scope for this plan
 
@@ -168,6 +175,18 @@ theft/lift alarm, tap-to-open from a notification, rain pause for patrol.
 - Whether the firmware departure briefly spins the blades before our stop lands
   (mitigated: blade-off guard; watched in the first live test).
 - Detection quality at night (Phase 0).
+- Whether the release of a drive killed during its departure (`stop_task` +
+  `quit_mapping_mode` in the init states) clears the departure task, or leaves it
+  parked as USER_STOP (then a Resume could mow it until the next drive start
+  clears it).
+- That nav2 stamps goal acceptance in system time, which the CancelGoal stamp of
+  the stop cleanup relies on (a docking goal accepted after the kill survives).
+- That chassis_control reacts to `/led_set` from the blade relay's publisher (the
+  handler's headlight-off when a drive did not end by itself).
+- The memory cost of the `/chassis_incident` echo process for a whole patrol (a
+  ros2 CLI process, 6 h timeout).
+- That holding Home or Start about 3 s during a drive's departure is enough for
+  the killed drive's release to land first.
 
 ## Phase 0 result
 
