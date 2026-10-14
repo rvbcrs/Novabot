@@ -76,11 +76,12 @@ describe('patrol plan', () => {
   });
 
   it('caps the plan at 60 points across 61 zones and keeps the dock zone first', () => {
+    // 61 squares from x = -300 m to x = 305 m, all inside the 500 m bound.
     const zones = Array.from({ length: 61 }, (_, i) => row(`map${i}`, [
-      { x: i * 10, y: 0 }, { x: i * 10 + 5, y: 0 }, { x: i * 10 + 5, y: 5 }, { x: i * 10, y: 5 },
+      { x: i * 10 - 300, y: 0 }, { x: i * 10 - 295, y: 0 }, { x: i * 10 - 295, y: 5 }, { x: i * 10 - 300, y: 5 },
     ]));
     const wanted = zones.map(r => r.canonical_name);
-    const plan = buildPatrolZones(zones, wanted, 5, { x: 602.5, y: 2.5 });
+    const plan = buildPatrolZones(zones, wanted, 5, { x: 302.5, y: 2.5 });
     expect(plan.reduce((n, z) => n + z.points.length, 0)).toBeLessThanOrEqual(PATROL_MAX_POINTS);
     expect(plan[0].zone).toBe('map60');
   });
@@ -92,5 +93,52 @@ describe('patrol plan', () => {
       row('map0', SQ),
     ], ['map0', 'map1', 'map2'], 5, null);
     expect(plan.map(z => z.zone)).toEqual(['map0']);
+  });
+
+  it('skips a polygon with a vertex 1e12 m away and still plans the other zones', () => {
+    const plan = buildPatrolZones([
+      { canonical_name: 'map1', map_area: JSON.stringify([{ x: 0, y: 0 }, { x: 1e12, y: 0 }, { x: 1e12, y: 10 }, { x: 0, y: 10 }]) },
+      row('map0', SQ),
+    ], ['map0', 'map1'], 5, null);
+    expect(plan.map(z => z.zone)).toEqual(['map0']);
+  });
+
+  it('skips a polygon with a vertex just outside the 500 m bound', () => {
+    const plan = buildPatrolZones([
+      row('map1', [{ x: 501, y: 0 }, { x: 511, y: 0 }, { x: 511, y: 10 }, { x: 501, y: 10 }]),
+      row('map0', SQ),
+    ], ['map0', 'map1'], 5, null);
+    expect(plan.map(z => z.zone)).toEqual(['map0']);
+  });
+
+  it('keeps polygons inside the 500 m bound, vertices on it included', () => {
+    const plan = buildPatrolZones([
+      row('map0', [{ x: 480, y: 480 }, { x: 500, y: 480 }, { x: 500, y: 500 }, { x: 480, y: 500 }]),
+      row('map1', [{ x: -500, y: -500 }, { x: -480, y: -500 }, { x: -480, y: -480 }, { x: -500, y: -480 }]),
+    ], ['map0', 'map1'], 5, null);
+    expect(plan.map(z => z.zone)).toEqual(['map0', 'map1']);
+  });
+
+  it('plans nothing at 0.1 m spacing', () => {
+    expect(patrolCheckpoints(SQ, 0.1)).toHaveLength(0);
+    expect(buildPatrolZones([row('map0', SQ)], ['map0'], 0.1, null)).toEqual([]);
+  });
+
+  it('plans nothing at a tiny spacing that would walk the border forever', () => {
+    expect(buildPatrolZones([row('map0', SQ)], ['map0'], 1e-9, null)).toEqual([]);
+  });
+
+  it('plans nothing for a NaN, zero or negative spacing', () => {
+    for (const spacingM of [NaN, 0, -3]) {
+      expect(patrolCheckpoints(SQ, spacingM)).toHaveLength(0);
+      expect(buildPatrolZones([row('map0', SQ)], ['map0'], spacingM, null)).toEqual([]);
+    }
+  });
+
+  it('still plans at the half-metre minimum spacing', () => {
+    expect(patrolCheckpoints(SQ, 0.5).length).toBeGreaterThan(0);
+    const plan = buildPatrolZones([row('map0', SQ)], ['map0'], 0.5, null);
+    expect(plan.map(z => z.zone)).toEqual(['map0']);
+    expect(plan[0].points.length).toBeLessThanOrEqual(PATROL_MAX_POINTS);
   });
 });

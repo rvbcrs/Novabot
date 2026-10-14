@@ -11,6 +11,8 @@ import { pointInPolygon, type XY } from '../maps/editGeometry.js';
 export const PATROL_INSET_M = 0.6;
 /** The mower refuses more (extended_commands.py PATROL_MAX_POINTS). */
 export const PATROL_MAX_POINTS = 60;
+/** The mower's own bound for patrol points (research/extended_commands.py validate_patrol_params). */
+export const PATROL_MAX_COORD_M = 500;
 
 export interface PatrolZone { zone: string; points: Array<[number, number]> }
 
@@ -41,9 +43,12 @@ function signedArea(poly: XY[]): number {
  * `insetM` along that edge's inward normal, and keep the point only when it
  * lies inside and at least 0.8 * insetM from every edge. A narrow neck or a
  * sharp corner then gives no checkpoint rather than one in the hedge.
+ * `spacingM` must be at least 0.5 m. A smaller or non-numeric spacing plans
+ * nothing: the walk along an edge takes len / spacingM steps, so a tiny value
+ * would never finish.
  */
 export function patrolCheckpoints(poly: XY[], spacingM = 6, insetM = PATROL_INSET_M): XY[] {
-  if (poly.length < 3 || !(spacingM > 0)) return [];
+  if (poly.length < 3 || !(spacingM >= 0.5)) return [];
   const ccw = signedArea(poly) > 0;
   const out: XY[] = [];
   let carry = spacingM / 2;   // the first checkpoint half a step along the border
@@ -80,14 +85,16 @@ function dockZone(polys: Map<string, XY[]>, dock: XY | null): string | null {
  * The plan for the chosen zones: the dock's zone first, then the rest by
  * slot. No choice means the dock's zone only. Above `maxPoints` every zone is
  * thinned by the same stride, so a big garden still gets checkpoints all round.
- * At most `maxPoints` zones are planned (the dock's zone survives that cut), and
- * a cap below 1 plans nothing.
+ * At most `maxPoints` zones are planned (the dock's zone survives that cut).
+ * A cap below 1, or a spacing below 0.5 m or NaN, plans nothing. A zone with a
+ * vertex beyond PATROL_MAX_COORD_M is skipped whole.
  */
 export function buildPatrolZones(
   rows: Array<{ canonical_name: string | null; map_area: string | null }>,
   wanted: string[], spacingM: number, dock: XY | null, maxPoints = PATROL_MAX_POINTS,
 ): PatrolZone[] {
   if (maxPoints < 1) return [];
+  if (!(spacingM >= 0.5)) return [];
   const polys = new Map<string, XY[]>();
   for (const r of rows) {
     const zone = r.canonical_name?.match(/^map\d+$/)?.[0];
@@ -95,7 +102,8 @@ export function buildPatrolZones(
     try {
       const poly = JSON.parse(r.map_area) as XY[];
       const ok = Array.isArray(poly) && poly.length >= 3
-        && poly.every(p => p != null && Number.isFinite(p.x) && Number.isFinite(p.y));
+        && poly.every(p => p != null && Number.isFinite(p.x) && Number.isFinite(p.y)
+          && Math.abs(p.x) <= PATROL_MAX_COORD_M && Math.abs(p.y) <= PATROL_MAX_COORD_M);
       if (ok) polys.set(zone, poly);
     } catch { /* a broken polygon row is skipped */ }
   }
