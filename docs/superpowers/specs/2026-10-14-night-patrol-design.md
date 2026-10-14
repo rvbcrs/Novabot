@@ -76,6 +76,11 @@ So there is nothing to finish. We build it from parts that do work:
    `patrol`), at most once per class per run per 2 minutes. A checkpoint with fewer
    than 2 perception frames is "no data": never an alert, never shown as all clear.
    A failed run raises `patrol_failed`.
+   Every patrol run gets a random token (32 hex characters) from the server; the
+   mower sends it with every upload, and the server only accepts uploads for the
+   run it started, with the right token, within 6 hours (otherwise 403, nothing
+   stored, no alert). The upload path is not behind the login gate, so without this
+   anyone who knows a serial number could raise false alerts or push genuine runs out.
 9. **Starting.** Dashboard and app button, and patrol schedules
    (`dashboard_schedules.kind = 'patrol'`). Patrol schedules are run by the server
    only: never sent to the mower as `timer_task` (the firmware would mow), never
