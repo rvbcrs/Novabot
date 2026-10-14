@@ -24,6 +24,7 @@ import { messageRouter }        from './routes/message.js';
 import { machineMessageRouter } from './routes/machineMessage.js';
 import { networkRouter }        from './routes/network.js';
 import { terrainRouter }        from './routes/terrain.js';
+import { patrolRouter }         from './routes/patrol.js';
 
 export function mountCloudApi(app: Express): void {
   // nova-user service
@@ -45,6 +46,7 @@ export function mountCloudApi(app: Express): void {
   app.use('/api/nova-file-server/map', mapRouter);
   app.use('/api/nova-file-server/log', logRouter);
   app.use('/api/nova-file-server/terrain', terrainRouter);
+  app.use('/api/nova-file-server/patrol', patrolRouter);
 
   // novabot-message service (maaier stuurt naar nova-message, app naar novabot-message)
   app.use('/api/novabot-message/message',        messageRouter);

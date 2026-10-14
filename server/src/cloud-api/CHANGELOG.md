@@ -2,6 +2,16 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-10-14 - patrol checkpoints uploaded by the mower
+
+- New `POST /api/nova-file-server/patrol/uploadFrame` (mower patrol mode,
+  mow_zone_drive.py). Query: `sn`, `run`, `seq`, `x`, `y`, `frames`, `person`,
+  `animal`. Body: raw `application/octet-stream` JPEG (max 3 MB), or empty when
+  the camera gave nothing. Response: `ok(null)`, or 400 for bad identifiers,
+  numbers or a body that is not a JPEG. Stored under
+  `STORAGE_PATH/patrol/<sn>/<run>/`, keeping the last 10 runs per mower. New
+  endpoint for the night-patrol feature, called by the mower's patrol mode.
+
 ## 2026-10-10 - work-record fallback reads cov_work_time as minutes
 
 - `saveCutGrassRecord`: the sensor-cache fallback no longer divides
