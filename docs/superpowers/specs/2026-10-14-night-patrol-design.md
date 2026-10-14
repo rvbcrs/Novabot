@@ -120,7 +120,11 @@ feature would be a blind drive.
 - Patrol only in a validated frame; frame-blocked like every other drive.
 - Costmap detection layer on during the patrol, so people and animals (hedgehogs)
   are obstacles to the planner, and restored afterwards.
-- Stop = the existing `stop_mow_zone` (kills the drive, cancels the goal).
+- Stop = `stop_navigation` (ends a firmware departure still under way) plus the
+  existing `stop_mow_zone` (kills the drive, cancels the goal). While a patrol
+  drives (`localizing`, `patrolling`, `returning`), every stop, go-home or start
+  command from the app or the server also sends `stop_mow_zone` first, as for a
+  zone drive.
 
 ## Out of scope for this plan
 
