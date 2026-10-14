@@ -1020,6 +1020,37 @@ export const CATALOG: Catalog = {
     fr: "tondeuse occupée : une tâche est déjà en cours",
     de: "Mäher beschäftigt: es läuft bereits eine Aufgabe",
   },
+  // Night patrol start refusals (patrolService.ts).
+  "patrouille vereist custom firmware {0} of nieuwer": {
+    en: "a patrol needs custom firmware {0} or newer",
+    fr: "une patrouille nécessite le firmware personnalisé {0} ou plus récent",
+    de: "eine Patrouille erfordert Custom-Firmware {0} oder neuer",
+  },
+  "de maaier is bezig; stop de taak eerst": {
+    en: "the mower is busy; stop the task first",
+    fr: "la tondeuse est occupée ; arrêtez d'abord la tâche",
+    de: "der Mäher ist beschäftigt; stoppen Sie zuerst die Aufgabe",
+  },
+  "er loopt een kaartbewerking; probeer het straks opnieuw": {
+    en: "a map operation is running; try again shortly",
+    fr: "une opération sur la carte est en cours ; réessayez dans un instant",
+    de: "eine Kartenbearbeitung läuft; versuchen Sie es gleich noch einmal",
+  },
+  "het kaartframe is niet gevalideerd; her-anker eerst": {
+    en: "the map frame is not validated; re-anchor first",
+    fr: "le repère de la carte n'est pas validé ; réancrez d'abord",
+    de: "der Kartenrahmen ist nicht validiert; zuerst neu verankern",
+  },
+  "accu te leeg voor een patrouille ({0}%, minimaal {1}%)": {
+    en: "battery too low for a patrol ({0}%, at least {1}%)",
+    fr: "batterie trop faible pour une patrouille ({0} %, au moins {1} %)",
+    de: "Akku zu schwach für eine Patrouille ({0} %, mindestens {1} %)",
+  },
+  "geen controlepunten: kies zones in de patrouille-instellingen": {
+    en: "no checkpoints: choose zones in the patrol settings",
+    fr: "aucun point de contrôle : choisissez des zones dans les réglages de la patrouille",
+    de: "keine Kontrollpunkte: wählen Sie Zonen in den Patrouille-Einstellungen",
+  },
   "maaier offline": {
     en: "mower offline",
     fr: "tondeuse hors ligne",
