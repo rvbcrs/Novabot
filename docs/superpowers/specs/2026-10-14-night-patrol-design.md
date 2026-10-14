@@ -191,6 +191,43 @@ theft/lift alarm, tap-to-open from a notification, rain pause for patrol.
   (`stop_task`) may then cancel that Home; the owner presses Home again. To be
   checked in the live test.
 
+## First live tests
+
+In this order, with Ramon present and his OK for each test. The mower side only
+reaches a mower through a custom build (first build that ships `patrol`: 50).
+
+1. Phase 0 night probe on the dock, no motion (section above); fill in "Phase 0 result".
+2. First daytime patrol of the dock zone, watched. Stop at once if the blades spin
+   during the firmware departure. Check that the photos and scores appear in the run
+   listing, that the headlight is off before the docking, that the mower docks at the
+   end, and that no "Mowing started" push arrives.
+3. Stops, for a patrol and for a zone drive:
+   - Stop during `localizing`: the release appears in the log within 3 s, robot_status
+     is not executing afterwards, and a Resume in the app does not mow.
+   - Home during `localizing`: note whether the mower docks or stays about 1 m out; if
+     it stays, a second Home must dock it. The same with a Start.
+   - Stop during `patrolling`: the mower brakes, and a Home afterwards docks (the
+     docking goal survives the stamped goal cancel).
+   - A stop while the drive still waits for the `start_cov` reply: the release still
+     ends within 3 s.
+4. STOP button, lifting, tilting: each ends the patrol as `stopped` with its flag, the
+   mower stays, the light goes off, and the "stays where it stopped" push arrives. No
+   flag is latched while the mower idles on the dock, and no tilt flag fires on slopes
+   or in channels.
+5. Headlight after `kill -9` of the drive: off through the blade relay's `/led_set`.
+6. `ps` after a patrol and after an edge cut: no `ros2 topic echo /chassis_incident`
+   left after about 2 s; the echo's memory over a whole patrol is acceptable.
+7. Zone edge cut after a channel transit: `start_edge_cut` follows `edge_ready` promptly.
+8. A patrol started during an edge cut's departure: refused with `edge_cut_running`, and
+   the schedule shows it as failed.
+9. Mower reboot mid-patrol: exactly one `mower_restarted`, and the docking decision is
+   right (also for a mower carried back onto its dock). A status file older than 6 h
+   reports nothing.
+10. Server restart mid-patrol: the phase comes back through the re-announce, uploads
+    are still accepted, and the end is handled once.
+11. Far-zone Wi-Fi gap at the end of a patrol: the `done` arrives after the reconnect.
+12. A drive under an `extended_commands` started with nohup over SSH survives the logout.
+
 ## Phase 0 result
 
 (To be filled in by the Phase 0 test.)
