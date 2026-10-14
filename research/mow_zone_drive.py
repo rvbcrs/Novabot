@@ -84,6 +84,9 @@ DEPARTURE_RELEASE_S = 1.5
 FRESH_POSE_S = 0.5
 # How long a departure's task gets to show up in RobotStatus after start_cov.
 DEPARTURE_START_S = 20.0
+# After a start that never showed up: how long to watch for its task arriving
+# late anyway, so it can be stopped and cleared instead of running unsupervised.
+DEPARTURE_LATE_S = 15.0
 # Moved less than this between the start and the handover: the mower never left
 # the dock (QUIT_PILE drives 1.0 m).
 DEPARTURE_MIN_MOVE_M = 0.5
@@ -422,7 +425,7 @@ class Driver:
         held = newest()   # before any spin: what the buffer holds at the call
         noted = held[0] if held else float("-inf")
         deadline = t0 + timeout
-        latest = None
+        latest = held[0] if held else None   # also said when later lookups all throw
         while time.time() < deadline:
             rclpy.spin_once(probe, timeout_sec=0.1)
             got = newest()
@@ -974,8 +977,10 @@ class Driver:
                 self.wait_status(
                     lambda tm, ws: ws >= WORK_STATUS_INIT_SUCCESS or not task_executing(tm, ws),
                     timeout=max(5.0, deadline - time.time()))
-            # Also without a start: harmless when nothing runs, and it stops a
-            # task that shows up late.
+            def stopped(tm, ws):
+                return ws == WORK_STATUS_USER_STOP or not task_executing(tm, ws)
+
+            # Also without a start: harmless when nothing runs.
             self.stop_task()
             stop_sent = True
             # The stop is queued behind the init states and only lands once the
@@ -984,10 +989,21 @@ class Driver:
             # "Cannot start a new task when last task is executing" (live .244,
             # 2026-09-14). Wait for the stop to land, then clear the parked task
             # the way the delete flow does, and only then hand over the wheels.
-            st = self.wait_status(
-                lambda tm, ws: ws == WORK_STATUS_USER_STOP or not task_executing(tm, ws),
-                timeout=30.0)
+            st = self.wait_status(stopped, timeout=30.0)
             log(f"after stop: status={st}")
+            if not started and not (st is not None and task_executing(*st)):
+                # That stop went out before any task existed and found nothing.
+                # A task that shows up now would run on unsupervised (on a
+                # patrol: the dock zone at 90 mm, at night), so watch for it and
+                # stop it too. Until then a SIGTERM's release sends its own stop.
+                stop_sent = False
+                late = self.wait_status(task_executing, timeout=DEPARTURE_LATE_S)
+                if late is not None and task_executing(*late):
+                    log(f"firmware task showed up late (status={late}): stopping and clearing it")
+                    self.stop_task()
+                    stop_sent = True
+                    st = self.wait_status(stopped, timeout=30.0)
+                    log(f"after stop: status={st}")
             if st is not None and task_executing(*st):
                 self.quit_mapping_mode()
                 st = self.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)
@@ -1005,9 +1021,12 @@ class Driver:
         if pos is None:
             log("firmware init ran but the map frame never appeared")
             return None
-        if on_pile and _dist(before, pos) <= DEPARTURE_MIN_MOVE_M:
-            log(f"departure did not move the mower (before={before}, after={pos}): "
-                "not taking the wheels")
+        # Still on the pile, whatever it stood before (after a boot `before` is
+        # None): a real 1 m departure ends well away from the anchor.
+        still_on_pile = bool(anchor and _dist(pos, anchor) <= ON_PILE_M)
+        if still_on_pile or (on_pile and _dist(before, pos) <= DEPARTURE_MIN_MOVE_M):
+            log(f"departure did not move the mower (before={before}, after={pos}, "
+                f"anchor={anchor}): not taking the wheels")
             return None
         log(f"firmware init done: robot={pos}")
         return pos
@@ -1759,7 +1778,7 @@ def do_return(drv):
                     phase("error", msg)
                     return 1
                 used.add(f)
-                robot = drv.robot_xy() or robot
+                robot = drv.robot_xy() or oriented[-1]   # no fresh pose: where the hop went
         finally:
             drv.set_params([(n, d) for (n, _r, d) in TRANSIT_PARAMS])
             log("restored controller params")
@@ -2052,7 +2071,7 @@ def do_patrol(drv, params):
                     log(f"patrol: checkpoint {seq} ({x:.2f},{y:.2f}) outside every zone, skipped")
                     continue
                 ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
-                robot = drv.robot_xy() or robot
+                robot = drv.robot_xy() or ((x, y) if ok else robot)   # no fresh pose: where nav2 went
                 if not ok:
                     fails += 1
                     log(f"patrol: checkpoint {seq} unreachable ({msg}), {fails} in a row")

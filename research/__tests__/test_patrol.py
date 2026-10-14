@@ -319,6 +319,39 @@ class StaleAfterApproach(HopDriver):
         return super().follow_path(pts)
 
 
+class StaleReturnDriver(HopDriver):
+    """Stands at the far end of a channel home; no fresh pose after the hop."""
+
+    def __init__(self):
+        super().__init__()
+        self._loc, self.stale = (8.0, 0.2), False
+
+    def robot_xy(self, timeout=6.0):
+        return None if self.stale else self._loc
+
+    def follow_path(self, pts):
+        self.stale = True
+        return super().follow_path(pts)
+
+    def auto_recharge(self):
+        self.calls.append(("auto_recharge",))
+        return True
+
+
+def test_a_stale_pose_after_a_return_hop_docks_from_where_the_hop_went():
+    with_maps({"map1tomap0_0_unicom.csv": [(0.5, 0.5), (8.0, 0.0)]})
+    drv = StaleReturnDriver()
+    seen = []
+    real, mzd.phase = mzd.phase, (lambda *a: seen.append(a))
+    try:
+        rc = mzd.do_return(drv)
+    finally:
+        mzd.phase = real
+    # Not "no return segment near (8.0, 0.2)": the hop ended at the dock end.
+    assert rc == 0 and seen[-1] == ("done", ""), seen
+    assert drv.calls == [("follow_path",), ("auto_recharge",)], drv.calls
+
+
 def test_a_stale_pose_after_the_approach_starts_the_channel_where_nav2_drove_to():
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
@@ -414,6 +447,31 @@ def test_patrol_departs_like_stock_and_looks_at_every_checkpoint():
     assert len(looks) == 2 and all(set(c) == keys for c in looks), looks
     assert [c["seq"] for c in looks] == [1, 2]
     assert looks[0]["person"] == 60 and looks[0]["photo"] is True and looks[0]["sent"] is True
+
+
+class StalePatrolDriver(PatrolDriver):
+    """No fresh pose comes back once the patrol drives."""
+
+    def __init__(self):
+        super().__init__()
+        self.driven = False
+
+    def robot_xy(self, timeout=6.0):
+        return None if self.driven else self._loc
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        self.driven = True
+        return super().nav_to(x, y, yaw, timeout)
+
+
+def test_a_stale_pose_after_a_checkpoint_reports_that_checkpoint():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = StalePatrolDriver()
+    rc, seen, _uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [7, 7]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    looks = [json.loads(line.split(" ", 1)[1]) for line in out if line.startswith("CHECKPOINT ")]
+    # Not (1.0, 1.0) twice, where the patrol stood before it drove.
+    assert [(c["x"], c["y"]) for c in looks] == [(3, 3), (7, 7)], looks
 
 
 def test_points_outside_every_zone_are_skipped_not_driven():
@@ -719,6 +777,7 @@ def test_a_second_sigterm_does_not_cut_the_release_short():
 
 
 def test_a_departure_that_hands_over_runs_no_release():
+    with_maps({"map0tocharge_unicom.csv": [(0.16, 0.01), (2.0, 3.0)]})   # anchor beside (0, 0)
     drv = DepartureDriver()
     code, pos = depart(drv, sleep=lambda s: None)
     assert code is None and pos == (1.0, 1.0)
@@ -851,6 +910,61 @@ def test_a_departure_that_never_starts_is_not_handed_over():
         assert "firmware init done" not in said, said
 
 
+class LateTaskDriver(DepartureDriver):
+    """The departure's task shows up only after the 20 s wait: on the second
+    status read after the first stop. That stop found nothing to stop; the
+    next one parks the task (USER_STOP). `sigterm_on_read` delivers a SIGTERM
+    on that read instead."""
+
+    def __init__(self, sigterm_on_read=None):
+        super().__init__(before=(0.10, 0.09), after=(0.10, 0.09))
+        self._status = (mzd.TASK_MODE_COVERAGE, 2)
+        self.reads_after_stop = None
+        self.sigterm_on_read = sigterm_on_read
+
+    def stop_task(self, timeout=None):
+        self.calls.append(("stop_task", timeout))
+        if mzd.task_executing(*self._status):
+            self._status = (mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP)
+        if self.reads_after_stop is None:
+            self.reads_after_stop = 0
+        return True
+
+    def wait_status(self, pred, timeout=30.0):
+        self.calls.append(("wait_status", timeout))
+        if self.reads_after_stop is not None:
+            self.reads_after_stop += 1
+            if self.reads_after_stop == 2:
+                self._status = (mzd.TASK_MODE_COVERAGE, 50)   # the task shows up late
+                if self.sigterm_on_read == 2:
+                    os.kill(os.getpid(), signal.SIGTERM)
+        return self._status
+
+
+def test_a_departure_task_that_shows_up_after_the_wait_is_stopped_and_cleared():
+    # Otherwise it runs on unsupervised: on a patrol the dock zone at 90 mm, at night.
+    drv = LateTaskDriver()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos is None, (code, pos)
+    n = names(drv)
+    stops = [i for i, c in enumerate(n) if c == "stop_task"]
+    assert len(stops) == 2 and n.index("quit_mapping_mode") > stops[1], drv.calls
+    assert drv._status == (mzd.TASK_MODE_COVERAGE, 0), drv._status   # cleared
+    assert "firmware task showed up late" in out.getvalue(), out.getvalue()
+    assert "recharge_active" not in n, drv.calls   # the drive cleared it itself, no release
+
+
+def test_a_sigterm_while_watching_for_a_late_task_still_stops_it():
+    drv = LateTaskDriver(sigterm_on_read=2)
+    code, _pos = depart(drv, sleep=lambda s: None)
+    assert code == 143, code
+    # The first stop went out before the task existed: the release sends its own.
+    assert [c for c in drv.calls if c[0] == "stop_task"][-1][1] is not None, drv.calls
+    assert drv._status == (mzd.TASK_MODE_COVERAGE, 0), drv.calls
+
+
 class RunDriver(DepartureDriver):
     """robot_decision moves on one state per status read, through `states`,
     until a read finds what it waits for."""
@@ -886,6 +1000,7 @@ def test_a_departure_that_did_not_move_the_mower_is_not_handed_over():
 
 
 def test_a_departure_that_moved_the_mower_hands_over_where_it_stands():
+    with_maps(WALTER_DOCK)
     drv = RunDriver(DEPARTURE_RUN, before=(0.10, 0.09), after=(1.10, 0.09))
     code, pos = depart(drv, sleep=lambda s: None)
     assert code is None and pos == (1.10, 0.09), pos
@@ -894,12 +1009,23 @@ def test_a_departure_that_moved_the_mower_hands_over_where_it_stands():
     assert n[-1] == "robot_xy" and n.index("quit_mapping_mode") < len(n) - 1, drv.calls
 
 
-def test_a_departure_without_a_frame_before_is_not_held_to_the_distance():
-    # After a boot there is no map frame before the start: nothing to compare.
+def test_a_departure_without_a_frame_before_hands_over_off_the_pile():
+    # After a boot there is no map frame before the start: nothing to compare,
+    # and a real 1 m departure ends well away from the anchor.
     with_maps(WALTER_DOCK)
-    drv = RunDriver(DEPARTURE_RUN, before=None, after=(0.30, 0.09))
+    drv = RunDriver(DEPARTURE_RUN, before=None, after=(1.16, 0.09))
     code, pos = depart(drv, sleep=lambda s: None)
-    assert code is None and pos == (0.30, 0.09), pos
+    assert code is None and pos == (1.16, 0.09), pos
+
+
+def test_a_departure_that_ends_on_the_pile_is_not_handed_over_even_without_a_frame_before():
+    with_maps(WALTER_DOCK)
+    drv = RunDriver(DEPARTURE_RUN, before=None, after=(0.32, 0.01))   # 0.16 m from the anchor
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos is None, pos
+    assert "departure did not move the mower" in out.getvalue(), out.getvalue()
 
 
 def test_a_mower_off_the_pile_is_not_held_to_the_distance():
@@ -1179,6 +1305,26 @@ def test_robot_xy_takes_a_new_sample_whose_stamp_lags_the_wall_clock():
     with probe_spins(lambda: time.sleep(0.01)), contextlib.redirect_stdout(out):
         assert tf_driver(buf).robot_xy(timeout=0.3) is None
     assert out.getvalue().count("robot_xy: no fresh map->base_link") == 1, out.getvalue()
+
+
+class ThenThrows(FakeTfBuffer):
+    """Holds a transform at the call; every lookup after that throws (tf2's
+    extrapolation error once newer samples pruned the old ones)."""
+
+    def lookup_transform(self, target, source, when):
+        self.lookups += 1
+        if self.lookups > 1:
+            raise RuntimeError("Lookup would require extrapolation into the past")
+        return self.held
+
+
+def test_robot_xy_says_so_when_the_held_transform_stops_resolving():
+    buf = ThenThrows(tf_at(1.46, 0.10, time.time() - 30.0))
+    out = io.StringIO()
+    with probe_spins(lambda: time.sleep(0.01)), contextlib.redirect_stdout(out):
+        assert tf_driver(buf).robot_xy(timeout=0.3) is None
+    said = [line for line in out.getvalue().splitlines() if "robot_xy" in line]
+    assert len(said) == 1 and re.search(r"\(latest 30\.\ds old\)", said[0]), said
 
 
 def test_robot_xy_without_a_map_frame_is_none_and_quiet():
