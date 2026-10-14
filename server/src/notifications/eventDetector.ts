@@ -33,6 +33,8 @@ const TITLE_BY_TYPE: Record<EventType, string> = {
   dock_drift:           'Charging station may have moved',
   firmware_required:    'Firmware update required',
   blade_maintenance:    'Time to check the blades',
+  patrol_detection:     'Patrol alert',
+  patrol_failed:        'Patrol stopped',
 };
 
 interface SnapshotState {
@@ -235,6 +237,33 @@ export function dispatchDockDriftEvent(sn: string, driftCm: number, sinceIso: st
     TITLE_BY_TYPE.dock_drift,
     `The mower stands ${driftCm} cm from where it stood on the dock on ${sinceIso.slice(0, 10)}, measured by RTK. The charging station or its antenna has probably moved; check it, and re-anchor if it stands right.`,
     { drift_cm: driftCm, since: sinceIso },
+  ));
+}
+
+/** The night patrol saw a person or an animal (patrolService.onPatrolFrame). */
+export function dispatchPatrolDetectionEvent(
+  sn: string,
+  d: { run: string; seq: number; kind: 'person' | 'animal'; points: number; image: boolean },
+): void {
+  dispatchEvent(makeEvent(
+    sn,
+    'patrol_detection',
+    TITLE_BY_TYPE.patrol_detection,
+    `The patrol saw ${d.kind === 'person' ? 'a person' : 'an animal'} at checkpoint ${d.seq}.`
+      + (d.image ? ' The photo is in the patrol overview.' : ' No photo was taken there.'),
+    { run: d.run, seq: d.seq, kind: d.kind, points: d.points, image: d.image },
+  ));
+}
+
+/** The night patrol stopped with an error (patrolService.onPatrolStatus). */
+export function dispatchPatrolFailedEvent(sn: string, reason: string, wentHome: boolean): void {
+  dispatchEvent(makeEvent(
+    sn,
+    'patrol_failed',
+    TITLE_BY_TYPE.patrol_failed,
+    `The night patrol stopped (${reason}).`
+      + (wentHome ? ' The mower was sent back to its dock.' : ' The mower did not leave its dock.'),
+    { reason, went_home: wentHome },
   ));
 }
 

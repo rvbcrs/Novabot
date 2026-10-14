@@ -42,7 +42,8 @@ interface ExpoPushResponse {
 function toMessage(token: string, ev: MowerEvent): ExpoPushMessage {
   // Stuck / error events get high priority so iOS doesn't coalesce
   // them with the next mowing_started 5 minutes later.
-  const isAlert = ev.type === 'stuck' || ev.type === 'error' || ev.type === 'low_battery';
+  const isAlert = ev.type === 'stuck' || ev.type === 'error' || ev.type === 'low_battery'
+    || ev.type === 'patrol_detection';
   // Prefix the title with the friendly device label so households with
   // multiple mowers can tell at a glance which one fired the push.
   const label = getDeviceLabel(ev.sn);

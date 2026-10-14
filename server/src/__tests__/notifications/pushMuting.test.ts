@@ -11,7 +11,7 @@ describe('push muting', () => {
   });
   it('maps every event type to a category', () => {
     for (const cat of Object.values(CATEGORY_BY_TYPE)) {
-      expect(['activity', 'errors', 'safety', 'battery', 'maintenance']).toContain(cat);
+      expect(['activity', 'errors', 'safety', 'battery', 'maintenance', 'patrol']).toContain(cat);
     }
     expect(CATEGORY_BY_TYPE.map_error).toBe('errors');
   });
