@@ -821,6 +821,11 @@ def ros2_run(args, timeout=10):
     etc. from setup.bash to find message types and service definitions.
     ROS_LOCALHOST_ONLY=1 and rmw_cyclonedds_cpp are required to match the
     running novabot ROS2 nodes.
+
+    Timing gelogd per aanroep: de CLI kost ~4 s op een idle A55 en
+    burst onder load ruim boven z'n timeout (session_crash-familie,
+    live 2026-10-04/09). Zonder deze metingen is niet te zien wélke
+    stap de tijd vreet.
     """
     cmd = (
         "source /opt/ros/galactic/setup.bash && "
@@ -833,11 +838,24 @@ def ros2_run(args, timeout=10):
         "ROS_LOCALHOST_ONLY": "1",
         "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
     }
-    return subprocess.run(
-        ["bash", "-c", cmd],
-        capture_output=True, text=True, timeout=timeout,
-        env=env
-    )
+    t0 = time.monotonic()
+    try:
+        result = subprocess.run(
+            ["bash", "-c", cmd],
+            capture_output=True, text=True, timeout=timeout,
+            env=env
+        )
+        log(f"[ros2_run] {args[1]} {' '.join(args[2:])[:60]} | "
+            f"{time.monotonic() - t0:.1f}s | rc={result.returncode}")
+        return result
+    except subprocess.TimeoutExpired:
+        log(f"[ros2_run] {args[1]} {' '.join(args[2:])[:60]} | "
+            f"TIMEOUT na {time.monotonic() - t0:.1f}s (grens {timeout}s)")
+        raise
+    except Exception as ex:
+        log(f"[ros2_run] {args[1]} {' '.join(args[2:])[:60]} | "
+            f"FOUT na {time.monotonic() - t0:.1f}s: {ex}")
+        raise
 
 
 def obstacle_detect_window_seconds():
@@ -2490,6 +2508,18 @@ def handle_start_edge_cut(params, respond):
         /coverage_planner_server/cover_task_stop, which cancels NTCP the
         same way it cancels BoundaryFollow.
     """
+    # Edge-cut wil OP de rand rijden: dunne obstakelband. Auto-map zet
+    # observation_persistence op 1.0 (dempen van 90-gradersrukken, live
+    # 2026-10-09) maar dat verbreedt de band en duwt het volgen van de
+    # polygon-lijn eraf. Terug op 0 voor deze pass; auto-map zet zijn
+    # eigen waarde weer bij z'n volgende sessie.
+    try:
+        ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
+                  "obstacle_layer.observation_persistence", "0.0"],
+                 timeout=45)
+    except Exception as ex:
+        log(f"edge_cut: persistence-reset faalde (ga door): {ex}")
+
     # Safe non-blocking cleanup: clear any stale obstacle observations
     # in the nav2 costmaps so the edge planner doesn't inherit false
     # blockers from a prior run. Do NOT call cover_task_stop here — it

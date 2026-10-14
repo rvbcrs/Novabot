@@ -45,9 +45,22 @@ RESULT_NAMES = {
 
 def boundary_goal_yaml():
     """Goal voor `ros2 action send_goal /boundary_follow
-    coverage_planner/action/BoundaryFollow` (maart-flow: follow_mode=0,
-    start_follow_wait=false; coverage_planner configureert perceptie zelf)."""
-    return "{follow_mode: 0, start_follow_wait: false}"
+    coverage_planner/action/BoundaryFollow` (follow_mode=0).
+
+    start_follow_wait + more_close_to_boundary AAN: zonder deze vlaggen
+    aborteert de action direct met 'No valid boundary need robot!!!'
+    (status 1) — met de vlaggen vindt hij de boundary en start het volgen
+    (live bewezen 2026-10-09: zelfde positie, zelfde costmap, alleen deze
+    vlaggen anders → status 3 'boundary complex' i.p.v. status 1)."""
+    # inflation_radius 0.4: met de default 0.0 brak het volgen na ~25 s af
+    # (FOLLOW_FAILED, meerdere posities); met 0.4 reed hij direct en bleef
+    # rijden tot de goal extern geannuleerd werd (live 2026-10-09).
+    # close_loop_stop true: de action stopt zelf bij het dichten van de lus.
+    # De sessie bewaakt het als vangnet (zie de loop-closure check in de
+    # goal-monitor) — live bleek de mower anders eindeloos door te rijden.
+    return ("{follow_mode: 0, start_follow_wait: true, "
+            "more_close_to_boundary: true, inflation_radius: 0.4, "
+            "close_loop_stop: true}")
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
@@ -111,10 +124,13 @@ class AutoMapSession:
     last_status (concurrent geraadpleegd door get_auto_map_status); de rest
     van de sessie draait op de eigen achtergrondthread zonder verdere locking."""
 
-    def __init__(self, publish_status, radius_m, timeout_s):
+    def __init__(self, publish_status, radius_m, timeout_s,
+                 depart_from_dock=False, depart_seconds=4.0):
         self.publish_status = publish_status   # dict -> None (MQTT publish)
         self.radius_m = radius_m
         self.timeout_s = timeout_s
+        self.depart_from_dock = bool(depart_from_dock)
+        self.depart_seconds = min(max(float(depart_seconds), 1.0), 10.0)
         self.lock = threading.Lock()
         # Synchroon al op "preparing" zetten (niet pas in de thread) zodat de
         # already_running-gate in main() geen race heeft met een tweede
@@ -143,59 +159,203 @@ class AutoMapSession:
                 pass
 
 
+def _preflight_node(name_prefix):
+    """Kortlevende rclpy-node voor preflight-checks, zelfde idioom als
+    _wait_for_perception_data. De ros2-CLI kost op deze A55 ~4 s per
+    aanroep (live gemeten, rustige tuin) en overschrijdt onder mapping-load
+    z'n eigen timeout — de session_crash van 2026-10-04 (set_infer_model)
+    en 2026-10-09 (topic info) waren allebei precies dit. In-process is
+    milliseconden zodra de node eenmaal bestaat."""
+    import rclpy
+    from rclpy.node import Node
+    # EIGEN context, nooit de default: extended_commands draait een shared
+    # executor op de default context en twee spinners daarop racen (les uit
+    # de RtkRelay-code). Mijn spin_once op de default context wurgde de
+    # callback-levering voor latere default-context subscriptions — de
+    # perceptie-wacht hieronder kreeg daardoor NOOIT een frame (py-spy-bewezen
+    # 2026-10-09). Eigen context = volledig geisoleerd.
+    ctx = rclpy.Context()
+    rclpy.init(context=ctx)
+    return Node(f"{name_prefix}_{os.getpid()}_"
+                f"{int(time.monotonic() * 1000) % 1000000}", context=ctx), ctx
+
+
+def _docked_on_pile(ec, lat, lng):
+    """Staat de maaier op de lader? Positie-gebaseerd: afstand tussen de
+    huidige GPS-fix en de dock-GPS. De dock-Gps volgt uit twee lokale
+    bestanden: pos.json (utm_origin) + het unicom-anker (dockpositie in
+    kaartframe). Signaal 'laadstroom' deugt niet: een volle accel op de
+    lader trekt 0 mA — ononderscheidbaar van 'los in het veld' (live
+    2026-10-09)."""
+    if lat is None or lng is None:
+        return False
+    try:
+        import json as _json, math as _math
+
+        # Dock-anker in kaartframe: eerste punt unicom-csv (grondwaarheid).
+        ax = ay = None
+        for path in ("/userdata/lfi/maps/home0/csv_file/map0tocharge_unicom.csv",
+                     "/userdata/lfi/maps/home0/x3_csv_file/map0tocharge_unicom.csv"):
+            try:
+                with open(path) as f:
+                    ax, ay = (float(v) for v in f.readline().strip().split(",")[:2])
+                break
+            except Exception:
+                continue
+        if ax is None:
+            return False
+
+        with open("/userdata/pos.json") as f:
+            org = _json.load(f)["utm_origin"]
+        dx = org["x"] + ax      # dock-UTM = origin + kaartframe-anker
+        dy = org["y"] + ay
+        zone = int(org.get("utm_zone", 31))
+
+        # UTM -> WGS84 (Karney/Snyder, zelfde formules als reanchor_pos).
+        a = 6378137.0; f = 1 / 298.257223563; k0 = 0.9996
+        e2 = f * (2 - f); e1 = (1 - _math.sqrt(1 - e2)) / (1 + _math.sqrt(1 - e2))
+        xx = dx - 500000.0; M = dy / k0
+        mu = M / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
+        phi1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * _math.sin(2 * mu)
+                + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * _math.sin(4 * mu)
+                + (151 * e1 ** 3 / 96) * _math.sin(6 * mu))
+        ep2 = e2 / (1 - e2); C1 = ep2 * _math.cos(phi1) ** 2
+        T1 = _math.tan(phi1) ** 2
+        N1 = a / _math.sqrt(1 - e2 * _math.sin(phi1) ** 2)
+        R1 = a * (1 - e2) / (1 - e2 * _math.sin(phi1) ** 2) ** 1.5
+        D = xx / (N1 * k0)
+        lat_d = phi1 - (N1 * _math.tan(phi1) / R1) * (D ** 2 / 2
+                - (5 + 3 * T1 + 10 * C1 - 4 * C1 ** 2 - 9 * ep2) * D ** 4 / 24
+                + (61 + 90 * T1 + 298 * C1 + 45 * T1 ** 2 - 252 * ep2
+                   - 3 * C1 ** 2) * D ** 6 / 720)
+        lon0 = _math.radians(6 * zone - 183)
+        lon_d = lon0 + (D - (1 + 2 * T1 + C1) * D ** 3 / 6
+                + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * ep2
+                   + 24 * T1 ** 2) * D ** 5 / 120) / _math.cos(phi1)
+        d = haversine_m(lat, lng, _math.degrees(lat_d), _math.degrees(lon_d))
+        ec.log(f"[auto_map] dock-afstand: {d:.2f} m")
+        return d < 2.5
+    except Exception as ex:
+        ec.log(f"[auto_map] dock-positie-check faalde: {ex}")
+        return False
+
+
 def _relay_alive(ec):
-    """Is lawn_edge_relay actief? Check publisher-count op het relay-topic."""
-    r = ec.ros2_run(["ros2", "topic", "info", "/perception/points_relabeled"], timeout=15)
-    return r.returncode == 0 and "Publisher count: 0" not in (r.stdout or "")
+    """Is lawn_edge_relay actief? Publisher-count via SUBPROCESS met vers
+    python-proces. Reden: de in-process variant (eigen Context,
+    count_publishers + discovery-ticks) gaf false negatives in het
+    session-proces — relay aantoonbaar aan het streamen, check zei
+    relay_missing (live 2026-10-09). Zelfde proces-lokale wispelturigheid
+    als bij de perceptie-levering: een vers proces ontdekt en ontvangt
+    betrouwbaar, het session-proces niet altijd. CLI topic-info werkt ook
+    (vers proces) maar kost 4+ s; dit script is sneller."""
+    script = (
+        "import sys, rclpy, time\n"
+        "rclpy.init()\n"
+        "node = rclpy.create_node('auto_map_relaycheck_subproc')\n"
+        "n = 0\n"
+        "end = time.monotonic() + 8.0\n"
+        "while time.monotonic() < end and n == 0:\n"
+        "    n = node.count_publishers('/perception/points_relabeled')\n"
+        "    rclpy.spin_once(node, timeout_sec=0.5)\n"
+        "print(n)\n"
+    )
+    try:
+        out = subprocess.run(
+            ["python3", "-c", script],
+            capture_output=True, text=True, timeout=25.0,
+            env={**os.environ,
+                 "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                 "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
+                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+                 "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+                 "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
+        count = int((out.stdout or "0").strip() or 0)
+        ec.log(f"[auto_map] relay-check (subprocess): {count} publishers")
+        return count > 0
+    except Exception as ex:
+        ec.log(f"[auto_map] relay-check subprocess faalde: {ex}")
+        return False
 
 
 def _wait_for_perception_data(ec, deadline_s=90.0):
-    """Wacht tot er echt labeled-punten op het relay-topic stromen, via een
-    EIGEN rclpy-subscription (zelfde patroon als terrain_scan). NIET via de
-    ros2-CLI: `topic echo/hz` ziet deze stroom niet eens terwijl de relay
-    aantoonbaar berichten verwerkt (live .244, 2026-07-23 — CLI blind door
-    QoS/daemon-eigenaardigheid van deze firmware), en Galactic kent `--once`
-    niet. Deadline ruim (90 s): camera- en model-spin-up na koud aanzetten
-    duurt tot ~60 s."""
-    got = {"data": False}
+    """Wacht tot er echt labeled-punten op het relay-topic stromen.
+
+    Gedraaid als SUBPROCESS met eigen python-proces. Reden: in het
+    session-proces leverde de rclpy-subscription (ook op een eigen
+    Context) geen enkele frame — 0 in 90 s — terwijl een vers
+    python-proces op hetzelfde moment 41-54 frames per 8-10 s op
+    hetzelfde topic, dezelfde QoS-varianten ontving (live 2026-10-09,
+    meerdere keren herhaald). De oorzaak zit diep in het process-lokale
+    rmw/CycloneDDS/iceoryx-gedrag van dit proces (shared executor van
+    extended_commands draait op de default context); tot die ondergrond
+    begrepen is, is een vers proces de enige bewezen betrouwbare
+    ontvanger. CLI-echo is hiervoor blind (QoS/daemon, bekend), maar
+    een eigen python-subprocess werkt — het onderscheid is het
+    process, niet de API.
+    """
+    script = (
+        "import sys, rclpy, time\n"
+        "from rclpy.node import Node\n"
+        "from sensor_msgs.msg import PointCloud2\n"
+        "deadline=float(sys.argv[1])\n"
+        "rclpy.init()\n"
+        "node=Node('auto_map_datacheck_subproc')\n"
+        "n=[0]\n"
+        "node.create_subscription(PointCloud2,\n"
+        "    '/perception/points_relabeled',\n"
+        "    lambda m: n.__setitem__(0, n[0]+1), 5)\n"
+        "end=time.monotonic()+deadline\n"
+        "while time.monotonic()<end and n[0]<3:\n"
+        "    rclpy.spin_once(node, timeout_sec=0.5)\n"
+        "print(n[0])\n"
+    )
     try:
-        import rclpy
-        from rclpy.node import Node
-        from sensor_msgs.msg import PointCloud2
-        try:
-            rclpy.init()
-        except RuntimeError:
-            pass
-        node = Node(f"auto_map_datacheck_{os.getpid()}_"
-                    f"{int(time.monotonic() * 1000) % 1000000}")
-
-        def on_msg(msg):
-            if msg.data:
-                got["data"] = True
-
-        # Queue depth 1 on every big-message topic: a queued sample holds a 4 MB
-        # iceoryx chunk out of a pool of 50 that the stock stack already fills to
-        # ~32. These callbacks only ever use the newest frame (they throttle on
-        # time), so a deeper queue bought nothing and starved camera_307_cap.
-        node.create_subscription(PointCloud2, "/perception/points_relabeled", on_msg, 1)
-        end_at = time.monotonic() + deadline_s
-        while not got["data"] and time.monotonic() < end_at:
-            rclpy.spin_once(node, timeout_sec=1.0)
-        node.destroy_node()
+        out = subprocess.run(
+            ["python3", "-c", script, str(deadline_s)],
+            capture_output=True, text=True, timeout=deadline_s + 20.0,
+            env={**os.environ,
+                 "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                 "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
+                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+                 "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+                 "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
+        count = int((out.stdout or "0").strip() or 0)
+        ec.log(f"[auto_map] perceptie-datacheck (subprocess): {count} frames")
+        return count > 0
     except Exception as ex:
-        ec.log(f"[auto_map] perceptie-datacheck faalde: {ex}")
+        ec.log(f"[auto_map] perceptie-datacheck subprocess faalde: {ex}")
         return False
-    return got["data"]
 
 
 def _set_costmap_topic(ec):
-    """Runtime costmap-param (NOOIT YAML, maart-les). Verifieer met param get."""
-    ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
-                 "obstacle_layer.pointcloud.topic", "/perception/points_relabeled"],
-                timeout=20)
-    r = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
-                     "obstacle_layer.pointcloud.topic"], timeout=20)
-    return "points_relabeled" in (r.stdout or "")
+    """Costmap-param op orde — best-effort, NOOIT fataal.
+
+    De param staat persistent op de costmap-node (overleeft sessies;
+    live geverifieerd 2026-10-09). Onder avond-load werd de ros2-CLI
+    zó traag dat zowel get als set door hun time-out gingen en de
+    sessie twee keer stierf aan een check waar de werkelijkheid al
+    goed was. Korte time-outs, elke uitzondering = loggen + doorgaan:
+    een mapping-sessie vermoorden omdat een graadmeter traag is, is
+    erger dan plannen met een param die al uren klopt."""
+    def _try(args):
+        try:
+            return ec.ros2_run(args, timeout=12)
+        except Exception as ex:
+            ec.log(f"[auto_map] costmap CLI traag/fail ({args[1]}): {ex}")
+            return None
+    g = _try(["ros2", "param", "get", "/local_costmap/local_costmap",
+              "obstacle_layer.pointcloud.topic"])
+    if g is not None and "points_relabeled" in (g.stdout or ""):
+        ec.log("[auto_map] costmap-topic stond al goed")
+    else:
+        _try(["ros2", "param", "set", "/local_costmap/local_costmap",
+              "obstacle_layer.pointcloud.topic",
+              "/perception/points_relabeled"])
+    _try(["ros2", "param", "set", "/local_costmap/local_costmap",
+          "obstacle_layer.observation_persistence", "1.0"])
+    ec.log("[auto_map] costmap-stap afgerond (best-effort)")
+    return True
 
 
 def _cancel_follow(ec):
@@ -316,31 +476,6 @@ def _run_session_body(sess, ec):
         sess.status("error", error="costmap_param_failed")
         return
 
-    # Maart-flow stap 1+2: camera's aan + perceptie aan. Zonder rijdende
-    # maaibeurt staan de camera's UIT en blijft de costmap leeg — dan komt
-    # BoundaryFollow direct terug met "No valid boundary need robot!!!"
-    # (live gezien op .244, 2026-07-23). Alle drie SetBool true; best-effort
-    # (staan ze al aan dan zijn dit no-ops).
-    for srv in ("/camera/preposition/start_camera",
-                "/camera/tof/start_camera",
-                "/perception/do_perception"):
-        try:
-            ec.ros2_run(["ros2", "service", "call", srv,
-                         "std_srvs/srv/SetBool", "'{data: true}'"], timeout=20)
-        except Exception as ex:
-            ec.log(f"[auto_map] {srv} aanzetten faalde (ga door): {ex}")
-
-    # Enige perceptie-instelling die wij zetten: SEG_HIGH (mode 3, maart-flow).
-    # coverage_planner_server regelt semantic/detection-mode ZELF bij de goal.
-    ec.ros2_run(["ros2", "service", "call", "/perception/set_infer_model",
-                 "general_msgs/srv/SetUint8", "'{value: 3}'"], timeout=15)
-
-    # Maart-flow stap 3: wachten tot er echt labeled-data stroomt (camera's
-    # hebben spin-up nodig). Drie pogingen van ~15 s elk; geen data → abort.
-    if not _wait_for_perception_data(ec):
-        sess.status("error", error="no_perception_data")
-        return
-
     # GPS-volger voor de geofence: één achtergrond-subscription op NavSatFix.
     _start_gps_watch(sess)
     deadline = time.monotonic() + 30
@@ -348,6 +483,102 @@ def _run_session_body(sess, ec):
         time.sleep(0.5)
     if sess.start_gps is None:
         sess.status("error", error="no_gps_fix")
+        return
+
+
+    # EERST van de dock af, dan pas de routine: camera's en perceptie
+    # warmen op met zicht op het gazon i.p.v. het dock-plateau, en de
+    # grasrand-zoekfase begint op de plek waar je wilt starten. Vertrek
+    # alleen bij gedetecteerde lader of expliciete param. departSeconds =
+    # achteruit-afstand in seconden @ 0.25 m/s (1-10, default 4); niet
+    # elke basisstation-plek heeft gras op 1 m (owner-idee 2026-10-09).
+    if sess.depart_from_dock or _docked_on_pile(
+            ec, sess.start_gps[0] if sess.start_gps else None,
+            sess.start_gps[1] if sess.start_gps else None):
+        why = ("param" if sess.depart_from_dock else "op de lader gedetecteerd (GPS)")
+        ec.log(f"[auto_map] dock-departure ({why}): "
+               f"{sess.depart_seconds:.1f} s achteruit")
+        try:
+            ec._depart_pile(seconds=sess.depart_seconds)
+        except Exception as ex:
+            ec.log(f"[auto_map] depart_pile faalde: {ex} - goal toch proberen")
+
+
+    # Maart-flow stap 1+2: camera's aan + perceptie aan. Zonder rijdende
+    # maaibeurt staan de camera's UIT en blijft de costmap leeg — dan komt
+    # BoundaryFollow direct terug met "No valid boundary need robot!!!"
+    # (live gezien op .244, 2026-07-23). Alle drie SetBool true; best-effort
+    # (staan ze al aan dan zijn dit no-ops).
+    # In-process SetBool-calls (zelfde idioom als set_infer_model hieronder):
+    # de CLI-vorm time-outte live alle drie tegelijk onder load (2026-10-09,
+    # 20.2/20.1/20.2 s) terwijl de in-process call in dezelfde sessie
+    # binnen een seconde slaagde — zonder camera's is de sessie blind.
+    try:
+        import rclpy
+        from std_srvs.srv import SetBool
+        node, ctx = _preflight_node("auto_map_camstart")
+        try:
+            for srv in ("/camera/preposition/start_camera",
+                        "/camera/tof/start_camera",
+                        "/perception/do_perception"):
+                try:
+                    cli = node.create_client(SetBool, srv)
+                    if not cli.wait_for_service(timeout_sec=10.0):
+                        ec.log(f"[auto_map] {srv}: service niet gevonden (ga door)")
+                        continue
+                    fut = cli.call_async(SetBool.Request(data=True))
+                    end_at = time.monotonic() + 10.0
+                    while not fut.done() and time.monotonic() < end_at:
+                        rclpy.spin_once(node, timeout_sec=0.5)
+                    ec.log(f"[auto_map] {srv}: "
+                           + ("ok" if fut.done() and fut.result().success
+                              else ("time-out (ga door)" if not fut.done()
+                                    else f"weigerde: {fut.result().message}")))
+                except Exception as ex:
+                    ec.log(f"[auto_map] {srv} aanzetten faalde (ga door): {ex}")
+        finally:
+            node.destroy_node()
+            try:
+                ctx.shutdown()
+            except Exception:
+                pass
+    except Exception as ex:
+        ec.log(f"[auto_map] camera-start blok faalde (ga door): {ex}")
+
+    # Enige perceptie-instelling die wij zetten: SEG_HIGH (mode 3, maart-flow).
+    # coverage_planner_server regelt semantic/detection-mode ZELF bij de goal.
+    # In-process service call: de CLI-vorm time-outte live (session_crash
+    # 2026-10-04, 15 s) terwijl de call zelf milliseconden werk is.
+    try:
+        import rclpy
+        from general_msgs.srv import SetUint8
+        node, ctx = _preflight_node("auto_map_infermodel")
+        try:
+            cli = node.create_client(SetUint8, "/perception/set_infer_model")
+            if not cli.wait_for_service(timeout_sec=10.0):
+                ec.log("[auto_map] set_infer_model: service niet gevonden (ga door)")
+            else:
+                fut = cli.call_async(SetUint8.Request(value=3))
+                end_at = time.monotonic() + 10.0
+                while not fut.done() and time.monotonic() < end_at:
+                    rclpy.spin_once(node, timeout_sec=0.5)
+                if not fut.done():
+                    ec.log("[auto_map] set_infer_model: call time-out (ga door)")
+                else:
+                    ec.log(f"[auto_map] set_infer_model ok: {fut.result()}")
+        finally:
+            node.destroy_node()
+            try:
+                ctx.shutdown()
+            except Exception:
+                pass
+    except Exception as ex:
+        ec.log(f"[auto_map] set_infer_model faalde (ga door): {ex}")
+
+    # Maart-flow stap 3: wachten tot er echt labeled-data stroomt (camera's
+    # hebben spin-up nodig). Drie pogingen van ~15 s elk; geen data → abort.
+    if not _wait_for_perception_data(ec):
+        sess.status("error", error="no_perception_data")
         return
 
     # BoundaryFollow-goal via CLI, output naar ACTION_LOG voor result-parse.
@@ -372,6 +603,7 @@ def _run_session_body(sess, ec):
 
         following_reported = False
         result_code = None
+        farthest_from_start = 0.0
         while True:
             time.sleep(2.0)
             elapsed = time.monotonic() - sess.started
@@ -402,9 +634,21 @@ def _run_session_body(sess, ec):
                     _wait_proc(proc)
                     sess.status("aborted", error="geofence", dist_m=round(d, 1))
                     return
+                farthest_from_start = max(farthest_from_start, d)
                 if not following_reported and elapsed > 10:
                     following_reported = True
                     sess.status("following", dist_m=round(d, 1))
+                # Loop-closure vangnet: volgend, ver genoeg geweest, en weer
+                # terug binnen 1.5 m van het startpunt -> rondje klaar.
+                if (following_reported and elapsed > 60
+                        and farthest_from_start > 8.0 and d < 1.5):
+                    ec.log(f"[auto_map] lus gesloten na {int(elapsed)} s, "
+                           f"{round(farthest_from_start, 1)} m verste punt")
+                    _cancel_follow(ec)
+                    _wait_proc(proc)
+                    sess.status("result", code=0, name="LOOP_CLOSED",
+                                dist_m=round(d, 1))
+                    return
             if proc.poll() is not None:
                 try:
                     with open(ACTION_LOG) as f:
@@ -437,38 +681,73 @@ def _run_session_body(sess, ec):
 
 
 def _start_gps_watch(sess):
-    """NavSatFix-subscriber in eigen thread (patroon: calibration-drive in
-    extended_commands). Vult sess.start_gps (eerste fix) en sess.last_gps."""
-    def _spin():
+    """GPS-wachter via SUBPROCESS: een klein python-proces streamt elke
+    seconde 'lat lng' naar stdout, de thread leest dat en vult de sessie.
+    Reden: de in-process rclpy-subscription verhongerde na ~2,5 min —
+    sessie brak veilig af met gps_stale terwijl de GPS-data aantoonbaar
+    naar de server bleef stromen (zelfde proces-lokale
+    leveringsziekte als de perceptie-wacht, derde verschijning,
+    live 2026-10-09). Een vers proces levert betrouwbaar; dit patroon
+    is al twee keer bewezen in deze sessie-infrastructuur."""
+    # BestPos i.p.v. /gps_raw: raw-jitter (meter-sprongen) gaf valse
+    # loop-closures en gps-ruis in de geofence (live 2026-10-09: sessie
+    # sloot bij >8 m 'verste punt' terwijl de gefuseerde positie 3 cm
+    # bewoog — en vermoordde daarmee het goal vóór het kon rijden).
+    # BestPos is dezelfde RTK-bron als de telemetrie; qual >= 2 filtert
+    # de loose fixes eruit.
+    script = (
+        "import time\n"
+        "import rclpy\n"
+        "from novabot_msgs.msg import BestPos\n"
+        "rclpy.init()\n"
+        "node = rclpy.create_node('auto_map_gps_subproc')\n"
+        "def on_fix(m):\n"
+        "    # qual is de eenvoudige 0-4-code (4 = RTK Fixed, zelfde als\n"
+        "    # de telemetrie; de pos_type-mapping in de msg-comment is\n"
+        "    # misleidend — live gemeten: fixed==4). >=3 = float of beter.\n"
+        "    if m.latitude != 0.0 and m.longitude != 0.0 and m.qual >= 3:\n"
+        "        print(f'{m.latitude} {m.longitude}', flush=True)\n"
+        "node.create_subscription(BestPos, '/bestpos_parsed_data', on_fix, 5)\n"
+        "while True:\n"
+        "    rclpy.spin_once(node, timeout_sec=1.0)\n"
+    )
+    proc = subprocess.Popen(
+        ["python3", "-c", script],
+        stdout=subprocess.PIPE, text=True,
+        env={**os.environ,
+             "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+             "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
+             "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+             "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+             "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
+
+    def _read():
         try:
-            import rclpy
-            from rclpy.node import Node
-            from sensor_msgs.msg import NavSatFix
-            try:
-                rclpy.init()
-            except RuntimeError:
-                pass
-            # Unieke naam per sessie: voorkomt botsing met een nog uitdovende
-            # node van een vorige (net gestopte) sessie-thread.
-            node = Node(f"auto_map_gps_watch_{os.getpid()}_"
-                        f"{int(time.monotonic() * 1000) % 1000000}")
-
-            def on_fix(msg):
-                if msg.latitude == 0.0 and msg.longitude == 0.0:
-                    return
+            for line in proc.stdout:
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                lat, lng = float(parts[0]), float(parts[1])
                 if sess.start_gps is None:
-                    sess.start_gps = (msg.latitude, msg.longitude)
-                sess.last_gps = (msg.latitude, msg.longitude)
+                    sess.start_gps = (lat, lng)
+                sess.last_gps = (lat, lng)
                 sess.last_fix_mono = time.monotonic()
+                if sess.stop_requested or sess.last_status.get("phase") in (
+                        "result", "error", "aborted"):
+                    break
+        except Exception:
+            pass
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                proc.kill()
 
-            node.create_subscription(NavSatFix, "/gps_raw", on_fix, 5)
-            while not sess.stop_requested and sess.last_status.get("phase") not in (
-                    "result", "error", "aborted"):
-                rclpy.spin_once(node, timeout_sec=1.0)
-            node.destroy_node()
-        except Exception as ex:
-            _ec().log(f"[auto_map] gps watch dood: {ex}")
-    threading.Thread(target=_spin, daemon=True).start()
+    import threading
+    t = threading.Thread(target=_read, daemon=True,
+                         name="gps-watch-subproc-reader")
+    t.start()
 
 
 def main():
@@ -506,13 +785,17 @@ def main():
             try:
                 radius = float(params.get("radiusM", DEFAULT_RADIUS_M))
                 timeout = int(params.get("timeoutS", DEFAULT_TIMEOUT_S))
+                depart = bool(params.get("departFromDock", False))
+                depart_s = float(params.get("departSeconds", 4.0))
             except (TypeError, ValueError) as ex:
                 respond("start_auto_map_test_respond",
                         {"result": 1, "error": f"param type error: {ex}"})
                 return
             radius = max(5.0, min(200.0, radius))
             timeout = max(60, min(3600, timeout))
-            sess = AutoMapSession(publish_status, radius, timeout)
+            sess = AutoMapSession(publish_status, radius, timeout,
+                                  depart_from_dock=depart,
+                                  depart_seconds=depart_s)
             state["session"] = sess
             threading.Thread(target=_run_session, args=(sess, ec), daemon=True).start()
             respond("start_auto_map_test_respond", {"result": 0})
