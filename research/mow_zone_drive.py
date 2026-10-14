@@ -27,6 +27,7 @@ Emits one line per phase to stdout (the caller maps these to mow_zone_status):
     PHASE error <message>
 Diagnostic lines are prefixed LOG and ignored by the caller.
 """
+import json
 import math
 import os
 import re
@@ -260,6 +261,59 @@ def map_names_for(map_ids):
     return [f"map{slot}.yaml" for slot in slots_from_map_ids(map_ids)]
 
 
+# ── Nachtpatrouille: kijken ─────────────────────────────────────────────────
+# perception_node zet detecties als label id+100 in /perception/points_labeled
+# (perception_conf/infer_class.json: 100 person, 101 animal). Eén bericht is één
+# camerabeeld met de ToF-punten erin; per bericht tellen we de punten per klasse.
+# Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
+PATROL_LABELS = {100: "person", 101: "animal"}
+# camera_stream.py op de maaier zelf; die zet de camera zelf aan (tot 15 s).
+SNAPSHOT_URL = "http://127.0.0.1:8000/snapshot?topic={topic}"
+# /led_set (std_msgs/UInt8, 0..100) -> chassis_control_node -> MCU 0x0D, koplamp.
+LED_TOPIC = "/led_set"
+PROBE_DIR = "/tmp/patrol_probe"
+
+
+def label_offset(fields):
+    """Byte offset of the `label` field in a points_labeled point; 12 (right
+    after x, y, z float32) when the message does not name it."""
+    for f in fields or []:
+        if getattr(f, "name", None) == "label":
+            return int(f.offset)
+    return 12
+
+
+def label_counts(data, point_step, offset):
+    """Points per patrol class in one packed points_labeled buffer."""
+    counts = {name: 0 for name in PATROL_LABELS.values()}
+    if point_step <= offset:
+        return counts
+    labels = bytes(data)[offset::point_step]
+    for label_id, name in PATROL_LABELS.items():
+        counts[name] = labels.count(label_id)
+    return counts
+
+
+def steady_count(per_frame):
+    """The count a class reached in at least two frames. One frame with a
+    spike is noise; two frames are something standing there."""
+    if len(per_frame) < 2:
+        return 0
+    return sorted(per_frame)[-2]
+
+
+def fetch_snapshot(topic, timeout=25.0):
+    """One JPEG from camera_stream.py; None when the camera gave nothing."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(SNAPSHOT_URL.format(topic=topic), timeout=timeout) as r:
+            body = r.read()
+    except Exception as e:
+        log(f"snapshot {topic}: {e}")
+        return None
+    return body if body[:2] == b"\xff\xd8" else None
+
+
 class Driver:
     def __init__(self, node):
         self.node = node
@@ -277,6 +331,14 @@ class Driver:
         self._tf_buf = None
         self._status = None
         self._recharge = None
+        # Nachtpatrouille: koplamp-publisher, servicecliënten en het
+        # points_labeled-abonnement komen lui en precies één keer: elk nieuw
+        # ROS-object kost iceoryx-blokken die pas vrijkomen als het proces stopt
+        # (zie _probe).
+        self._pub_led = None
+        self._clients = {}
+        self._label_sub = None
+        self._label_buf = None
 
     def spin(self, sec):
         rclpy.spin_once(self.node, timeout_sec=sec)
@@ -823,6 +885,68 @@ class Driver:
         rclpy.spin_until_future_complete(self.node, fut, timeout_sec=15.0)
         r = fut.result()
         return bool(r and r.success)
+
+    def _client(self, srv_type, name):
+        """One cached service client per service name."""
+        cli = self._clients.get(name)
+        if cli is None:
+            cli = self._clients[name] = self.node.create_client(srv_type, name)
+        return cli
+
+    def _call(self, srv_type, name, req, timeout=8.0):
+        cli = self._client(srv_type, name)
+        if not cli.wait_for_service(timeout_sec=timeout):
+            return False
+        fut = cli.call_async(req)
+        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=timeout)
+        return fut.result() is not None
+
+    def set_headlight(self, level):
+        """Headlight 0..100 on /led_set. Only the Phase-0 probe uses this;
+        during a patrol the server switches the light (patrolService.ts)."""
+        if self._pub_led is None:
+            self._pub_led = self.node.create_publisher(
+                UInt8, LED_TOPIC, QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        m = UInt8()
+        m.data = max(0, min(100, int(level)))
+        self._pub_led.publish(m)
+
+    def ensure_perception(self):
+        """Both cameras, perception and the detection model on. Outside a task
+        the cameras are off (auto_map_node.py, live .244 2026-07-23) and
+        robot_decision may switch them off again, so this runs before every
+        look. Every call is idempotent. True when all four answered."""
+        from general_msgs.srv import SetUint8   # alleen op de maaier aanwezig
+        ok = True
+        for name in ("/camera/preposition/start_camera", "/camera/tof/start_camera",
+                     "/perception/do_perception"):
+            req = SetBool.Request()
+            req.data = True
+            ok = self._call(SetBool, name, req) and ok
+        req = SetUint8.Request()
+        req.value = 2   # detection: person, animal, obstacle, ...
+        return self._call(SetUint8, "/perception/set_infer_model", req) and ok
+
+    def watch_labels(self, seconds):
+        """Patrol counts per points_labeled message for `seconds`.
+        Returns ({"person": [...], "animal": [...]}, number_of_messages)."""
+        probe = self._probe()
+        if self._label_sub is None:
+            from sensor_msgs.msg import PointCloud2
+
+            def _on(msg):
+                if self._label_buf is not None:
+                    self._label_buf.append(label_counts(msg.data, msg.point_step,
+                                                        label_offset(msg.fields)))
+            self._label_sub = probe.create_subscription(
+                PointCloud2, "/perception/points_labeled", _on,
+                QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        self._label_buf = []
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            rclpy.spin_once(probe, timeout_sec=0.2)
+        got, self._label_buf = self._label_buf, None
+        return {name: [c[name] for c in got] for name in PATROL_LABELS.values()}, len(got)
 
 
 DOCK_HOME_RADIUS = 1.2   # within this of the map origin counts as "home"
@@ -1512,6 +1636,41 @@ def do_goto(drv, x, y, yaw):
     return 0 if ok else 1
 
 
+def _probe_photos(led, second):
+    for topic in ("front", "tof_gray"):
+        jpeg = fetch_snapshot(topic)
+        path = os.path.join(PROBE_DIR, f"led{led}_{topic}_{second:02d}.jpg")
+        if jpeg:
+            with open(path, "wb") as fh:
+                fh.write(jpeg)
+        log(f"probe photo {topic}: {path if jpeg else 'none'}")
+
+
+def do_probe(drv, seconds, led):
+    """Phase-0 night test. NO motion: cameras and the detection model on,
+    headlight at `led`, a photo per camera every 15 s in PROBE_DIR, and once a
+    second the highest patrol counts. The light goes back off, also on an error."""
+    os.makedirs(PROBE_DIR, exist_ok=True)
+    phase("probing")
+    if not drv.ensure_perception():
+        log("probe: not every perception switch answered, counting anyway")
+    drv.set_headlight(led)
+    try:
+        for second in range(max(1, int(seconds))):
+            if second % 15 == 0:
+                _probe_photos(led, second)
+            per_frame, frames = drv.watch_labels(1.0)
+            print("PROBE", json.dumps({
+                "t": second, "frames": frames,
+                "person": max(per_frame["person"] or [0]),
+                "animal": max(per_frame["animal"] or [0]),
+            }), flush=True)
+    finally:
+        drv.set_headlight(0)
+    phase("done")
+    return 0
+
+
 def check_mow(drv, to_slot):
     """Dry run: say what stands in the way BEFORE the mower drives anywhere.
 
@@ -1663,6 +1822,14 @@ def main():
             else:
                 rc = do_mow(drv, args[1], int(args[2]), int(args[3]),
                             None if args[4] == "-" else int(args[4]))
+        elif mode == "probe":
+            try:
+                secs = int(args[1]) if len(args) > 1 else 60
+                led = int(args[2]) if len(args) > 2 else 100
+            except ValueError:
+                phase("error", "usage: mow_zone_drive.py probe [seconds] [led 0-100]")
+            else:
+                rc = do_probe(drv, max(1, min(600, secs)), max(0, min(100, led)))
         else:
             phase("error", f"unknown_mode:{mode}")
     except Exception as e:
