@@ -51,13 +51,16 @@ class FakeProc:
     def __init__(self, text, running=True):
         self.stdout = iter(text.splitlines(True))
         self._running = running
-        self.killed = False
+        self.killed = self.terminated = False
 
     def poll(self):
         return None if self._running else 0
 
     def kill(self):
         self.killed = True
+
+    def terminate(self):
+        self.terminated = True
 
 
 def run_watch(echo_text, edge_running=True):
@@ -76,7 +79,9 @@ def run_watch(echo_text, edge_running=True):
 calls, responses, watcher = run_watch(QUIET + QUIET + STOP)
 check("STOP during the edge cut kills the goal and stops the planner", calls == ["kill", "cover_task_stop"])
 check("and tells the server why", responses == [("edge_cut_stopped", {"reason": "error_push_button_stop"})])
-check("the echo process is cleaned up", watcher.killed)
+# SIGTERM, not SIGKILL: the echo runs under `timeout`, which passes SIGTERM on to ros2 and
+# exits with it. A SIGKILL ends only `timeout` and leaves ros2 topic echo running.
+check("the echo process is ended with SIGTERM", watcher.terminated and not watcher.killed)
 
 calls, responses, _ = run_watch(QUIET + STOP, edge_running=False)
 check("after the edge cut ended a STOP changes nothing", calls == [] and responses == [])

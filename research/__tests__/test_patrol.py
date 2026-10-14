@@ -584,8 +584,12 @@ class DepartureDriver(mzd.Driver):
         self.calls.append(("recharge_active", timeout))
         return self.recharging
 
+    def _prepare_release(self):
+        self.calls.append(("prepare_release",))
+
     def stop_task(self, timeout=None):
         self.calls.append(("stop_task", timeout))
+        self._step("stop_task" if timeout is None else "release_stop_task")
         self._status = (mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP)   # parked
         return True
 
@@ -657,6 +661,105 @@ def test_a_sigterm_while_the_robot_reports_a_recharge_does_not_stop_it():
     assert "stop_task" not in names(drv) and "quit_mapping_mode" not in names(drv), drv.calls
 
 
+def test_a_second_sigterm_does_not_cut_the_release_short():
+    # stop_mow_zone sends SIGTERM, and pkill another one 3 s later: the release
+    # holds signals, so the second one cannot stop it half way.
+    drv = DepartureDriver(sigterm_in="robot_xy")
+    drv.fail_in = None
+    real_step = drv._step
+
+    def step(name):
+        real_step(name)
+        if name == "release_stop_task":
+            os.kill(os.getpid(), signal.SIGTERM)
+    drv._step = step
+    code, _pos = depart(drv)
+    assert code == 143
+    assert "quit_mapping_mode" in names(drv), drv.calls
+
+
+def test_a_departure_that_hands_over_runs_no_release():
+    drv = DepartureDriver()
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos == (1.0, 1.0)
+    # The handover's own stop and clear, no release after it.
+    assert [c for c in drv.calls if c[0] in ("stop_task", "quit_mapping_mode")] == [
+        ("stop_task", None), ("quit_mapping_mode", None)], drv.calls
+    assert "recharge_active" not in names(drv), drv.calls
+
+
+def test_the_release_clients_are_made_when_the_departure_starts():
+    drv = DepartureDriver(sigterm_in="robot_xy")
+    depart(drv)
+    n = names(drv)
+    assert n[0] == "prepare_release" and n.index("prepare_release") < n.index("start_cov"), drv.calls
+
+
+class ServiceNode:
+    """A node whose service clients answer at once. Records every client it makes."""
+
+    def __init__(self):
+        self.clients = []
+
+    def create_publisher(self, msg_type, topic, qos):
+        return FakePub(0)
+
+    def create_client(self, srv_type, name):
+        self.clients.append(name)
+
+        class Client:
+            def wait_for_service(self, timeout_sec=0.0):
+                return True
+
+            def call_async(self, req):
+                return Done(types.SimpleNamespace(success=True))
+        return Client()
+
+
+def test_stop_task_and_quit_mapping_mode_reuse_the_clients_made_at_the_start():
+    real = (mzd.SetBool, mzd.Empty, getattr(mzd.rclpy, "spin_until_future_complete", None))
+    mzd.SetBool = types.SimpleNamespace(Request=lambda: types.SimpleNamespace(data=None))
+    mzd.Empty = types.SimpleNamespace(Request=lambda: object())
+    mzd.rclpy.spin_until_future_complete = lambda node, fut, timeout_sec=None: None
+    try:
+        node = ServiceNode()
+        drv = mzd.Driver(node)
+        drv._prepare_release()
+        made = list(node.clients)
+        assert drv.stop_task(timeout=0.3) is True and drv.quit_mapping_mode(timeout=0.3) is True
+        assert drv.stop_task() is True and drv.quit_mapping_mode() is True
+    finally:
+        mzd.SetBool, mzd.Empty = real[0], real[1]
+        if real[2] is None:
+            del mzd.rclpy.spin_until_future_complete
+        else:
+            mzd.rclpy.spin_until_future_complete = real[2]
+    assert made == [f"{mzd.DECISION}/stop_task", f"{mzd.DECISION}/quit_mapping_mode"], made
+    assert node.clients == made, node.clients   # no discovery wait for a new client in the release
+
+
+def test_an_inherited_ignored_sighup_stays_ignored():
+    # Under nohup SIGHUP comes in ignored: a logout must not end the drive.
+    real = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    try:
+        previous = mzd._install_stop_handlers()
+        try:
+            assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+            assert signal.getsignal(signal.SIGTERM) is mzd._stop_on_signal
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+        signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        previous = mzd._install_stop_handlers()
+        try:
+            assert signal.getsignal(signal.SIGHUP) is mzd._stop_on_signal
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+    finally:
+        signal.signal(signal.SIGHUP, real)
+
+
 def test_a_refused_departure_leaves_robot_decision_alone():
     class Refused(DepartureDriver):
         def start_cov(self, map_ids, cutterhigh, direction):
@@ -664,7 +767,7 @@ def test_a_refused_departure_leaves_robot_decision_alone():
             return False
     drv = Refused()
     assert depart(drv) == (None, None)
-    assert names(drv) == ["start_cov"], drv.calls
+    assert names(drv) == ["prepare_release", "start_cov"], drv.calls   # no stop, no clear
 
 
 class Done:

@@ -818,12 +818,19 @@ class Driver:
                 return self._recharge in RECHARGE_DRIVING
         return False
 
+    def _prepare_release(self):
+        """Make the clients a departure release needs (stop_task, quit_mapping_mode)
+        when the departure starts: their discovery happens during the departure,
+        and a release after a SIGTERM never waits for it."""
+        self._client(SetBool, f"{DECISION}/stop_task")
+        self._client(Empty, f"{DECISION}/quit_mapping_mode")
+
     def quit_mapping_mode(self, timeout=None):
         """Clear a parked task: robot_decision goes back to COVERAGE/WAIT.
         `timeout` bounds both the service wait and the reply (the release
         after a SIGTERM); without it the normal handover's 5 s and 10 s apply."""
         wait, reply = (5.0, 10.0) if timeout is None else (timeout, timeout)
-        cli = self.node.create_client(Empty, f"{DECISION}/quit_mapping_mode")
+        cli = self._client(Empty, f"{DECISION}/quit_mapping_mode")
         if not cli.wait_for_service(timeout_sec=wait):
             return False
         fut = cli.call_async(Empty.Request())
@@ -834,7 +841,7 @@ class Driver:
         """Stop a running coverage task (SetBool data:true; false means CONTINUE).
         `timeout` as for quit_mapping_mode."""
         wait, reply = (5.0, 10.0) if timeout is None else (timeout, timeout)
-        cli = self.node.create_client(SetBool, f"{DECISION}/stop_task")
+        cli = self._client(SetBool, f"{DECISION}/stop_task")
         if not cli.wait_for_service(timeout_sec=wait):
             return False
         req = SetBool.Request()
@@ -896,6 +903,7 @@ class Driver:
         """
         log("not localized: asking the firmware to initialise the frame")
         phase("localizing")
+        self._prepare_release()
         requested = handed_over = stop_sent = False
         try:
             requested = True   # a kill during the request itself may still start the task
@@ -1779,9 +1787,15 @@ STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 
 
 def _install_stop_handlers():
-    """SIGTERM/SIGHUP raise SystemExit from here on. Returns the handlers they
-    replaced, to put back afterwards."""
-    return {sig: signal.signal(sig, _stop_on_signal) for sig in STOP_SIGNALS}
+    """SIGTERM/SIGHUP raise SystemExit from here on, except a SIGHUP the parent
+    left ignored (nohup): a logout must not end the run then. Returns the
+    handlers they replaced, to put back afterwards."""
+    previous = {}
+    for sig in STOP_SIGNALS:
+        if sig == signal.SIGHUP and signal.getsignal(sig) == signal.SIG_IGN:
+            continue
+        previous[sig] = signal.signal(sig, _stop_on_signal)
+    return previous
 
 
 @contextlib.contextmanager

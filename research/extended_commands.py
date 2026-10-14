@@ -1798,6 +1798,19 @@ _MOW_DRIVE_PROC = [None]
 _MOW_DRIVE_STOPPED = [False]
 # The registered drive that kill_stale_mow_drives is about to kill for a newer start.
 _MOW_DRIVE_SUPERSEDED = [None]
+# The first kill of the last registered drive: (proc, time.time_ns()). It is the stamp of every
+# stop cleanup until a newer drive registers, so a second stop_mow_zone for a drive already on
+# its way out never cancels a docking goal that a go_pile started in between.
+_MOW_DRIVE_KILL = [None]
+
+
+def _note_drive_kill(proc):
+    """Caller holds _MOW_DRIVE_LOCK. Remember now as the kill time of `proc`, unless it was
+    killed before. Returns its first kill time."""
+    last = _MOW_DRIVE_KILL[0]
+    if last is None or last[0] is not proc:
+        _MOW_DRIVE_KILL[0] = last = (proc, time.time_ns())
+    return last[1]
 
 
 def find_stale_mow_drives(proc_root="/proc", self_pid=None):
@@ -1880,6 +1893,7 @@ def _register_mow_drive(proc):
     with _MOW_DRIVE_LOCK:
         _MOW_DRIVE_PROC[0] = proc
         _MOW_DRIVE_STOPPED[0] = False
+        _MOW_DRIVE_KILL[0] = None
 
 
 def _unregister_mow_drive(proc):
@@ -2227,7 +2241,9 @@ def _terminate_patrol_drive(proc):
     goal and the headlight; SIGKILL after 3 s), then cancel the nav2 goals
     accepted up to that moment and restore the transit params, which a drive
     that had to be killed never does."""
-    killed_at_ns = time.time_ns()
+    with _MOW_DRIVE_LOCK:
+        # The registered drive's first kill, which a later stop_mow_zone keeps.
+        killed_at_ns = _note_drive_kill(proc) if _MOW_DRIVE_PROC[0] is proc else time.time_ns()
     if proc.poll() is None:
         proc.terminate()
         try:
@@ -2299,15 +2315,26 @@ def recover_patrol_status_after_restart():
     patrol was still running when the mower or this daemon went down: its
     drive is gone and will never report the end. Report it once as error
     mower_restarted (the server docks the mower when it is out, and says so):
-    that status replaces the one on disk, and the first connect sends it.
-    Returns the status, or None when there is nothing to report."""
+    that status replaces the one on disk, and the first connect sends it. A
+    status older than PATROL_STATUS_MAX_AGE_S is not reported; its file is
+    cleared. Returns the status, or None when there is nothing to report."""
     try:
         with open(PATROL_STATUS_FILE) as fh:
-            body = json.load(fh)["body"]
+            entry = json.load(fh)
+        body = entry["body"]
         phase, run = body["phase"], str(body["run"])
+        age = time.time() - float(entry["t"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
     if phase in PATROL_END_PHASES or not re.fullmatch(r"\d{1,20}", run):
+        return None
+    if age > PATROL_STATUS_MAX_AGE_S:
+        # A patrol of hours or days ago, not one that was running just now.
+        log(f"patrol: run {run} was at {phase} {int(age)} s ago; too old to report, cleared")
+        try:
+            os.remove(PATROL_STATUS_FILE)
+        except OSError:
+            pass
         return None
     status = {"phase": "error", "run": run, "error": "mower_restarted"}
     log(f"patrol: run {run} was at {phase} when the mower restarted; reporting {status}")
@@ -2355,6 +2382,12 @@ def handle_patrol(params, respond):
     server, sn = _server_from_config(), _sn_from_config()
     if not server or not sn:
         respond("patrol_respond", {"result": 1, "error": "server_unknown"})
+        return
+    if _edge_cut_running():
+        # An NTCP edge cut drives on this mower, or is about to (before the server
+        # knows it, or started straight on /extended): no patrol beside it. A refusal
+        # before anything moved, which the server never answers with a docking.
+        respond("patrol_respond", {"result": 1, "error": "edge_cut_running"})
         return
     run = clean["run"]
     clean["upload"] = f"http://{server}/api/nova-file-server/patrol/uploadFrame?sn={sn}&run={run}&token={clean['token']}"
@@ -2653,19 +2686,22 @@ def handle_stop_mow_zone(params, respond):
     """
     killed = False
     proc = None
-    # The goal cancel below spares whatever nav2 accepts after this moment:
-    # the docking of the go_pile / go_to_charge that follows a stop.
-    killed_at_ns = time.time_ns()
+    # The goal cancel below spares whatever nav2 accepts after the drive's
+    # first kill: the docking of the go_pile / go_to_charge that follows a
+    # stop. A second stop for a drive already on its way out, or gone, keeps
+    # that first kill time (until a newer drive registers).
     with _MOW_DRIVE_LOCK:
         proc = _MOW_DRIVE_PROC[0]
         if proc is not None and proc.poll() is None:
             _MOW_DRIVE_STOPPED[0] = True
             try:
-                killed_at_ns = time.time_ns()
+                _note_drive_kill(proc)
                 proc.terminate()
                 killed = True
             except Exception:
                 pass
+        last_kill = _MOW_DRIVE_KILL[0]
+        killed_at_ns = last_kill[1] if last_kill is not None else time.time_ns()
     if killed:
         try:
             proc.wait(timeout=3)
@@ -2779,6 +2815,41 @@ def _echo_messages(lines):
         yield msg
 
 
+# An NTCP edge cut on this mower (#147), from start_edge_cut's acceptance until its
+# goal process exists: the departure off the dock and the perception switch come
+# first, and the server's edge_active only follows the first edge_cut_status.
+_EDGE_CUT_STARTING = [None]   # time.monotonic() of the acceptance, None outside that window
+EDGE_CUT_START_WINDOW_S = 60
+
+
+def _edge_cut_running(proc_root="/proc", self_pid=None):
+    """True while an NTCP edge cut drives on this mower, or is about to: inside
+    start_edge_cut's start window, or while its `ros2 action send_goal
+    /navigate_through_coverage_paths` process lives (the only thing on the mower
+    that sends that goal from the command line). Read from procfs, like
+    find_stale_mow_drives, so it holds for any start path and survives a restart
+    of this daemon."""
+    started = _EDGE_CUT_STARTING[0]
+    if started is not None and time.monotonic() - started < EDGE_CUT_START_WINDOW_S:
+        return True
+    me = os.getpid() if self_pid is None else self_pid
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return False
+    for name in entries:
+        if not name.isdigit() or int(name) == me:
+            continue
+        try:
+            with open(f"{proc_root}/{name}/cmdline", "rb") as fh:
+                cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if re.search(r"send_goal\b.*/navigate_through_coverage_paths\b", cmd):
+            return True
+    return False
+
+
 def _watch_chassis_stop(proc, on_stop, label, max_s=2000):
     """Call on_stop(flag) once when a /chassis_incident stop flag appears while
     `proc` runs: the edge cut (#147) and the night patrol, both outside
@@ -2816,7 +2887,10 @@ def _watch_chassis_stop(proc, on_stop, label, max_s=2000):
         log(f"{label} safety watch error: {e}")
     finally:
         try:
-            watcher.kill()
+            # SIGTERM, not SIGKILL: `timeout` passes it on to ros2 topic echo and
+            # both exit at once. A SIGKILL ends only `timeout`, and the echo runs on
+            # until its next write finds the pipe closed.
+            watcher.terminate()
         except Exception:
             pass
 
@@ -2911,6 +2985,17 @@ def handle_start_edge_cut(params, respond):
         respond("start_edge_cut_respond", {"result": 1, "error": f"param type error: {e}"})
         return
 
+    # From here until its goal process exists, an edge cut counts as running on
+    # this mower: a patrol start in that window is refused (_edge_cut_running).
+    _EDGE_CUT_STARTING[0] = time.monotonic()
+    try:
+        _start_edge_cut_accepted(map_name, blade_mm, depart_from_dock, obstacle_level, respond)
+    finally:
+        _EDGE_CUT_STARTING[0] = None
+
+
+def _start_edge_cut_accepted(map_name, blade_mm, depart_from_dock, obstacle_level, respond):
+    """handle_start_edge_cut after its parameters were accepted."""
     # A zone drive or a night patrol still running would drive on beside the
     # edge cut (nav2 goals outside robot_decision): end it first, as every
     # other drive start does. From mow_zone's edge flow the drive that just

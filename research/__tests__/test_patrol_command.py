@@ -112,13 +112,16 @@ class EchoProc:
 
     def __init__(self, text):
         self.stdout = iter(text.splitlines(True))
-        self.killed = False
+        self.killed = self.terminated = False
 
     def poll(self):
         return None
 
     def kill(self):
         self.killed = True
+
+    def terminate(self):
+        self.terminated = True
 
 
 QUIET_ECHO = "error_push_button_stop: false\nwarning_upraise_stop: false\n---\n"
@@ -160,6 +163,7 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
         "_publish_blade_height": lambda h: calls.append(("blade_height", h)) or "",
         "_stop_mow_zone_cleanup": cleanup,
         "_patrol_headlight_off": lambda: lights.append(0),
+        "_edge_cut_running": lambda: False,
         "_ros_env": lambda: {},
     }
     defaults.update(patches or {})
@@ -419,7 +423,7 @@ check("and leaves a registered drive it does not kill unmarked", marked_at_first
 
 # ── Final fix wave ───────────────────────────────────────────────────────────
 
-def edge_cut_start(params):
+def edge_cut_start(params, extra=None):
     """handle_start_edge_cut with the ROS side faked. The order of what it did, and its answers."""
     order, answers = [], []
     patches = {
@@ -429,6 +433,7 @@ def edge_cut_start(params):
         "_apply_edge_perception_low": lambda: False,
         "_watch_edge_cut_safety": lambda *a, **k: None,
     }
+    patches.update(extra or {})
     real = {k: getattr(ec, k, MISSING) for k in patches}
     real_popen, real_thread = ec.subprocess.Popen, ec.threading.Thread
     for k, v in patches.items():
@@ -460,7 +465,8 @@ check("a STOP press during a patrol ends it as stopped, with the flag",
                    {"phase": "stopped", "run": "1791", "error": "error_push_button_stop"}])
 check("the drive is terminated with SIGTERM, not killed", seen["proc"].terminated and not seen["proc"].killed)
 check("and the stop cleanup releases the nav goal after that", seen["cleanups"] == [(True, False)])
-check("the watcher's echo process is cleaned up", seen.get("echo") is not None and seen["echo"].killed)
+check("the watcher's echo process is ended with SIGTERM, which timeout passes on to ros2",
+      seen.get("echo") is not None and seen["echo"].terminated and not seen["echo"].killed)
 check("the headlight goes off on the mower", seen["lights"] == [0])
 sent, calls, seen = run(["PHASE patrolling", "PHASE done"], echo=QUIET_ECHO * 3)
 check("quiet chassis messages change nothing",
@@ -719,6 +725,83 @@ sent, calls, seen = run(["PHASE patrolling", "PHASE done"])
 check("a drive that finished switched it off itself, before its done", seen["lights"] == [])
 sent, calls, seen = run(["PHASE patrolling", "PHASE error checkpoints_unreachable"], rc=1)
 check("a drive that ended with its own error: the same", seen["lights"] == [])
+
+
+# R2: a second stop_mow_zone for a drive already on its way out keeps the FIRST kill time as the
+# goal-cancel stamp, or it cancels the docking goal a go_pile started in between
+stop_stamps = []
+real = {k: getattr(ec, k, MISSING) for k in ("_stop_mow_zone_cleanup",)}
+real_run, real_thread = ec.subprocess.run, ec.threading.Thread
+ec._stop_mow_zone_cleanup = lambda killed_at_ns=None: stop_stamps.append(killed_at_ns)
+ec.subprocess.run, ec.threading.Thread = (lambda *a, **k: None), SyncThread
+
+
+def stop(pause=0.002):
+    time.sleep(pause)   # every stop a little later than the one before
+    ec.handle_stop_mow_zone({}, lambda name, body: None)
+
+
+try:
+    reset_mow_state()
+    first = FakeProc([])
+    ec._register_mow_drive(first)
+    stop()                                  # kills it: the first kill time
+    stop()                                  # registered still, on its way out
+    ec._unregister_mow_drive(first)
+    stop()                                  # gone: no newer drive has started since
+    second = FakeProc([])
+    ec._register_mow_drive(second)
+    stop()                                  # a newer drive: its own kill time
+    third = FakeProc([])
+    ec._register_mow_drive(third)
+    time.sleep(0.002)
+    ec._terminate_patrol_drive(third)       # the patrol handler stops its drive (STOP button)
+    stop()                                  # and the owner's stop follows
+finally:
+    restore(real)
+    ec.subprocess.run, ec.threading.Thread = real_run, real_thread
+    reset_mow_state()
+check("a second stop for a drive on its way out keeps the first kill time",
+      len(stop_stamps) == 6 and stop_stamps[0] == stop_stamps[1] == stop_stamps[2])
+check("a newer drive gets its own kill time", stop_stamps[3] > stop_stamps[0])
+check("a stop after the handler stopped the drive itself keeps the handler's kill time",
+      stop_stamps[4] == stop_stamps[5] and stop_stamps[4] > stop_stamps[3])
+
+# R6: a status on disk older than 6 h is no patrol of now: no mower_restarted, the file goes
+old_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+with open(old_file, "w") as fh:
+    json.dump({"body": {"phase": "patrolling", "run": "1791"}, "t": time.time() - 6 * 3600 - 60}, fh)
+check("a status older than 6 h is not reported after a restart", start_up(old_file) == [])
+check("and its file is cleared", not os.path.exists(old_file))
+
+# R9: no patrol while an NTCP edge cut drives on the mower (before the server knows, or started
+# straight on /extended): a refusal before anything moved
+sent, calls, seen = run(["PHASE patrolling", "PHASE done"], patches={"_edge_cut_running": lambda: True})
+check("a patrol is refused while an edge cut runs on the mower",
+      sent == [("patrol_respond", {"result": 1, "error": "edge_cut_running"})]
+      and "kill_stale" not in seen["events"] and "proc" not in seen)
+
+
+def proc_root(cmdlines):
+    root = tempfile.mkdtemp()
+    for pid, argv in cmdlines.items():
+        os.makedirs(os.path.join(root, str(pid)))
+        with open(os.path.join(root, str(pid), "cmdline"), "wb") as fh:
+            fh.write("\0".join(argv).encode())
+    return root
+
+
+EDGE_GOAL = ["timeout", "1800", "ros2", "action", "send_goal", "--feedback", "/navigate_through_coverage_paths",
+             "coverage_planner/action/NavigateThroughCoveragePaths", "{only_edge_mode: true}"]
+check("the edge cut's goal process counts as an edge cut running",
+      ec._edge_cut_running(proc_root=proc_root({4711: EDGE_GOAL})) is True)
+quiet = proc_root({4712: ["python3", "/root/novabot/scripts/mow_zone_drive.py", "patrol", "/tmp/p.json"]})
+check("a mower without one has none", ec._edge_cut_running(proc_root=quiet) is False)
+during = []
+edge_cut_start({"mapName": "map0", "departFromDock": True},
+               extra={"_depart_pile": lambda *a, **k: during.append(ec._edge_cut_running(proc_root=quiet))})
+check("from the start_edge_cut until its goal process exists (the departure) it counts too", during == [True])
+check("and once the goal was dispatched only that process counts", ec._edge_cut_running(proc_root=quiet) is False)
 
 
 class Relay:
