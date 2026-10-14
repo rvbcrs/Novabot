@@ -99,7 +99,7 @@ All remaining commands go directly to the mower via WiFi MQTT. The charger does 
 |----------|----------|
 | **Mapping** | `start_scan_map`, `stop_scan_map`, `add_scan_map`, `save_map`, `delete_map`, `reset_map`, `rename_map`, `get_map_list`, `get_map_outline`, `get_map_info`, `get_map_plan_path`, `get_mapping_path2d`, `request_map_ids`, `start_assistant_build_map`, `start_erase_map`, `stop_erase_map`, `quit_mapping_mode`, `area_set`, `update_virtual_wall` |
 | **Navigation** | `start_navigation`, `stop_navigation`, `pause_navigation`, `resume_navigation`, `navigate_to_position`, `start_time_navigation`, `stop_time_navigation`, `set_navigation_max_speed` |
-| **Patrol** | `start_patrol`, `stop_patrol` |
+| **Patrol** (stubs: they only answer) | `start_patrol`, `stop_patrol` |
 | **Charging** | `go_to_charge`, `stop_to_charge`, `auto_recharge`, `auto_charge_threshold`, `get_recharge_pos`, `save_recharge_pos` |
 | **Manual control** | `start_move`, `stop_move` |
 | **Coverage preview** | `get_preview_cover_path`, `generate_preview_cover_path` |

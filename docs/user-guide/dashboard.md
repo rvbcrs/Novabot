@@ -204,6 +204,73 @@ height and direction. Then the parts that make it useful:
 Schedules are server-side: the server starts the mower, so they work on stock
 firmware and do not depend on the app being open.
 
+## Night patrol
+
+!!! warning "Custom firmware 50 or newer"
+    Night patrol needs OpenNova custom firmware **50 or newer**. On stock
+    firmware, or on an older custom build, the dashboard refuses to start it
+    and says why. (Stock firmware has a `start_patrol` command, but it only
+    answers and does nothing.)
+
+On a button press, or every night on a schedule, the mower leaves its dock,
+drives a route through the garden and stops at checkpoints to look with its
+camera. When it sees a person or an animal, the server sends you a
+notification. Every checkpoint gets a photo, so you can look through the whole
+round afterwards. At the end the mower drives back and docks the same way it
+does after mowing. The blades never turn during a patrol.
+
+The server plans the route: a checkpoint about every 6 m along the inside of
+each chosen work area, 60 at most. Between work areas the mower only drives
+over a recorded channel or where two areas touch, like the edge cut does; an
+area it cannot reach that way is skipped.
+
+The **Night patrol** card sits in the drawer, which the activity icon in the
+header opens (*Diagnostics & logs*):
+
+- **Phase line with a Start / Stop button.** The line says what the patrol is
+  doing: ready, on patrol, coming back, back and docking, stopped, or the
+  error that stopped it. The button is **Start** when nothing runs. As soon as
+  the mower has accepted the patrol it becomes **Stop**, and it stays Stop for
+  the whole drive, from the moment the mower leaves the dock until it is back.
+  Stop ends the drive where the mower stands and does not send it home; use
+  *Go to charger* for that. The normal stop and go-to-charger buttons, in the
+  apps too, end a patrol as well.
+- **Zones.** One checkbox per work area. With none ticked, the patrol covers
+  the area the dock stands in.
+- **Headlight.** A switch for the mower's headlight during the patrol, on by
+  default. The light goes on once the mower drives and goes off again before
+  it docks, so the dock marker sees the same light as after mowing.
+- **Every night at HH:MM.** One patrol schedule per mower: a time and an on/off
+  switch. The server starts it by itself, so it does not depend on an app
+  being open. It does not appear in the Schedule tab or in the stock app's
+  plans. *No mowing after dark* does not hold it back, since a patrol is meant
+  for the night; *No mowing in frost* does (Settings → Weather & time). Rain
+  does not pause it.
+- **Last patrol.** A photo for every checkpoint of the latest patrol, labelled
+  *person*, *animal*, *nothing* or *no camera data*.
+
+*No camera data* means the camera gave nothing usable at that checkpoint
+(fewer than two detection readings), so nobody knows what was there. It does
+not mean the garden was empty. Such a checkpoint never raises a notification
+and is never counted as all clear.
+
+The photos and results of the last 10 patrols are kept on your own server;
+older ones are deleted. A notification is text only, the photo is in the card.
+A person or an animal gives a *Patrol alert* (at most one per kind every two
+minutes during a patrol), and a patrol that stops with an error gives
+*Patrol stopped*. See [Notifications & Push](../guide/notifications.md).
+
+The dashboard refuses to start a patrol, and says why, when the mower is
+offline or busy with a task or a map operation, when its map frame is not
+validated yet, when the battery is below 50 %, or when there is no checkpoint
+to visit.
+
+!!! warning "It drives at night"
+    Keep the garden clear of anything the mower should not meet. During a
+    patrol the camera's detection layer is on, so a person or an animal such
+    as a hedgehog is treated as an obstacle that the mower plans around. That
+    helps the route planner; it is not a guarantee.
+
 ## Settings
 
 Obstacle sensitivity, maximum speed and handling, headlight, speaker,

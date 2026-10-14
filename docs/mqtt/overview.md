@@ -88,7 +88,7 @@ See [Encryption](encryption.md) for full details.
 | Category | Commands | Page |
 |----------|----------|------|
 | Mowing | `start_navigation`, `pause_navigation`, `resume_navigation`, `stop_navigation` (v6.x active path); `start_run`, `stop_run`, `pause_run`, `resume_run`, `stop_time_run` (legacy charger-relay path); `timer_task`, `timer_task_active`, `timer_task_stop` | [Mowing](mowing-commands.md) |
-| Navigation | `start_navigation`, `stop_navigation`, `navigate_to_position`, `go_to_charge`, `go_pile`, `start_patrol`, `stop_patrol`, `set_navigation_max_speed` | [Navigation](navigation-commands.md) |
+| Navigation | `start_navigation`, `stop_navigation`, `navigate_to_position`, `go_to_charge`, `go_pile`, `start_patrol` and `stop_patrol` (stubs, they only answer), `set_navigation_max_speed` | [Navigation](navigation-commands.md) |
 | Mapping | `start_scan_map`, `save_map`, `area_set`, `delete_map`, `rename_map`, `get_mapping_path2d` | [Mapping](mapping-commands.md) |
 | Device Management | `get_para_info`, `set_para_info`, `ota_upgrade_cmd`, `get_current_pose`, `get_vel_odom`, `set_control_mode`, `get_control_mode` | [Device Management](device-management.md) |
 | Status Reports | `report_state_robot`, `report_exception_state`, `up_status_info`, `report_state_to_server_work`, `report_state_unbind` | [Status Reports](status-reports.md) |

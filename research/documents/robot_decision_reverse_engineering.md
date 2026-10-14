@@ -12,7 +12,7 @@ Platform: ROS 2 Galactic, ARM64 (aarch64), NOT stripped (~17920 strings)
 
 ## 1. State Machine — All States
 
-### Task Modes (task_mode in RobotStatus.msg)
+### Task Modes (the `merged_work_status` enum in RobotStatus.msg)
 | Value | Name | Description |
 |-------|------|-------------|
 | 0 | `FREE` | Idle, ready for commands |
@@ -21,6 +21,8 @@ Platform: ROS 2 Galactic, ARM64 (aarch64), NOT stripped (~17920 strings)
 | 3 | `MAPPING` | Mapping session active |
 | 4 | `CHARGING` | On charger, fully charged or charging |
 | 5 | `STOP` | Stopped |
+
+Correction (2026-10-14): this table is the `merged_work_status` enum, not the `task_mode` values. `RobotStatus.msg` says so above the constants ("enum is used for merged_work_status"). Its comment on `task_mode` reads "cover mode/ mapping mode/ patrolling mode/control or no task mode/ other mode". `PATROLLING` is task type 3 and only a name in `robot_status::TaskTypeString`: it is never set (firmware survey 2026-10-14: every `updateTaskType` caller passes 1 or 2).
 
 ### Internal State Machine States
 | State | Context |
@@ -47,7 +49,7 @@ Platform: ROS 2 Galactic, ARM64 (aarch64), NOT stripped (~17920 strings)
 | `BOUNDARY_COVERING` | Mowing along boundary/edges |
 | `COVERING_MISSING` | Covering missed areas |
 | `MOVING` | Robot moving |
-| `PATROLLING` | Patrol mode |
+| `PATROLLING` | Task type 3. Only a name in `robot_status::TaskTypeString`, never set. Stock `start_patrol` / `stop_patrol` are stubs in mqtt_node (they only answer); OpenNova's night patrol is the extended command `patrol`, see `docs/superpowers/specs/2026-10-14-night-patrol-design.md` |
 | `SEARCHING_VISUAL` | Searching for visual markers (ArUco?) |
 | `SETTING_CHARGING_STATION` | Setting/saving charger position |
 | `RETURN_TO_PILE` | Returning to charger |

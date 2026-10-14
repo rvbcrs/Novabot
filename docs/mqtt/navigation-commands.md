@@ -103,7 +103,9 @@ Set the maximum speed during navigation.
 ## Patrol Mode (deprecated / no-op stubs)
 
 !!! danger "`start_patrol` and `stop_patrol` are no-op stubs"
-    Stock `mqtt_node` JSON-echoes `start_patrol` and `stop_patrol` without making any ROS call (verified, see `research/extended_commands.py:1101`). They will NOT drive the mower along the boundary.
+    `start_patrol` / `stop_patrol` are stubs in stock mqtt_node (they only answer). OpenNova's night patrol is the extended command `patrol`; see `docs/superpowers/specs/2026-10-14-night-patrol-design.md`.
+
+    Stock `mqtt_node` JSON-echoes both commands without making any ROS call (verified in the Ghidra decompile: `api_start_patrol` at `0x2c2db8`, `api_stop_patrol` at `0x2c32b8`; see `research/documents/edge-cut-flow.md`). They do not drive the mower anywhere, so they are neither an edge cut nor a boundary patrol.
 
     For boundary/edge cutting use [start_edge_cut](mowing-commands.md#start_edge_cut-custom-firmware-only) on custom firmware. `cov_mode:2` and direct `/boundary_follow` action calls also do NOT work for saved-polygon edge cutting.
 

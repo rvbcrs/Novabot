@@ -59,7 +59,7 @@ The default screen after login. Shows everything happening with the active mower
   - **Start mowing** — opens the StartMowSheet (pick which map, blade height, edge-only mode).
   - **Pause / Resume** — only enabled mid-session.
   - **Go home / Charge** — sends the mower back to the charger.
-  - **Edge cut** — boundary-only mowing pass (uses the NTCP action behind the scenes; "start_patrol" in the stock app does *not* do this — that's a no-op).
+  - **Edge cut**: boundary-only mowing pass (uses the NTCP action behind the scenes). The stock MQTT `start_patrol` does *not* do this: `start_patrol` / `stop_patrol` are stubs in stock mqtt_node (they only answer). OpenNova's night patrol is a separate feature, the extended command `patrol`; see `docs/superpowers/specs/2026-10-14-night-patrol-design.md`.
 - **Schedule chip** — shows the next scheduled mow. Tap to jump to the Schedule screen.
 - **Live updates** — battery, position, work status all refresh from MQTT every couple of seconds while the screen is open.
 - **Time left** — a chip while mowing (`~23m left`) from the firmware's own estimate (`cov_estimate_time`), next to the elapsed time. Hidden while returning, docking or idle because the estimate is stale there.

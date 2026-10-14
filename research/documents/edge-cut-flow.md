@@ -150,8 +150,8 @@ Documenting the paths we tried and abandoned so we don't re-try them:
 
 ### B. Stock MQTT `start_patrol`
 
-- mqtt_node binary has `api_start_patrol` (at 0x1c2db8) and
-  `api_stop_patrol` (at 0x1c32b8) handlers.
+- mqtt_node binary has `api_start_patrol` (at 0x2c2db8) and
+  `api_stop_patrol` (at 0x2c32b8) handlers.
 - Live test: app → `{start_patrol:null}` → mqtt_node responds
   `{result:0}` immediately, robot_decision log shows **nothing**.
 - Disasm of mqtt_node's `api_start_patrol` (follow-up disasm pass):
@@ -162,6 +162,9 @@ Documenting the paths we tried and abandoned so we don't re-try them:
 - The stock Novabot app v2.4.0 Flutter bundle has no `start_patrol`
   reference (confirmed via blutter pp.txt + asm grep) — no edge button
   in the official UI either. The handler is dead code in the firmware.
+- `start_patrol` / `stop_patrol` are stubs in stock mqtt_node (they only
+  answer). OpenNova's night patrol is the extended command `patrol`, not
+  an edge cut; see docs/superpowers/specs/2026-10-14-night-patrol-design.md.
 
 ### C. `/robot_decision/start_assistant_mapping` (std_srvs/SetBool)
 

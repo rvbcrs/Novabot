@@ -23,8 +23,12 @@ The notification dispatcher watches your mower's MQTT reports and emits a typed 
 | `initialization_error` | code 133 | "Mower not yet initialized. Wait one minute and retry." |
 | `hardware_fault` | TOF / camera / chassis (134, 136, 137, 170, 221, 444) | curated stock-app text |
 | `blade_maintenance` | mowing hours since the last blade change reach the interval set in the app (History → Blades); once per change | hours since + interval |
+| `patrol_detection` | a night patrol checkpoint where the person or animal score reaches `patrol_min_points` (default 40); at most once per kind per patrol per 2 minutes. A checkpoint with fewer than 2 detection readings counts as "no data" and never alerts | "The patrol saw a person at checkpoint 7. The photo is in the patrol overview." (an animal likewise; "No photo was taken there." when the checkpoint has no photo) |
+| `patrol_failed` | a night patrol ends with an error (the mower reports phase `error`) | "The night patrol stopped (reason). The mower was sent back to its dock." or "The mower did not leave its dock." |
 
 The body for mapped error codes uses the **same English text the official Novabot v2.4.0 app shows** — extracted from the stock app's `mower_error_text.dart`. Unmapped codes fall through to the generic `error` event with the firmware's own `error_msg` as body, so nothing is lost.
+
+**Night patrol events.** Both belong to their own `patrol` category. `patrol_detection` has the title "Patrol alert", goes out as a high-priority Expo push, and carries `run`, `seq`, `kind` (`person` or `animal`), `points` (the detection score) and `image` (whether the checkpoint has a photo) in its data. `patrol_failed` has the title "Patrol stopped" and carries `reason` and `went_home` (whether the server sent the mower back to its dock). The notification is text only: the photo is in the Night patrol card of the dashboard. See [Night patrol](../user-guide/dashboard.md#night-patrol).
 
 ## Channel 1 — ntfy.sh (free, no account)
 
@@ -146,7 +150,7 @@ Native iOS/Android push via Expo's free relay. **Auto-enabled** when you install
 
 The app registers its push token with the server via `POST /api/push/register` on launch. Server stores per `(token, sn)` and fans out via `https://exp.host/--/api/v2/push/send` on every event. Stale tokens are GC'd automatically (Expo returns `DeviceNotRegistered` on next push, server deletes the row).
 
-**Per-category muting.** In the app, Settings → Notifications has a switch per category: Activity (`mowing_started`, `mowing_finished`, `docked`), Errors (`error`, `error_cleared`, `stuck`, `dock_failed`, `map_error`, `initialization_error`, `hardware_fault`, `gps_weak`, `connection_lost`), Safety (`safety`, `pin_locked`), Battery (`low_battery`) and Maintenance (`dock_drift`, `firmware_required`, `blade_maintenance`). The app sends the muted list as `muted` in `POST /api/push/register`; the server stores it per `(token, sn)` and skips those events for that installation only. ntfy and Home Assistant are not affected.
+**Per-category muting.** In the app, Settings → Notifications has a switch per category: Activity (`mowing_started`, `mowing_finished`, `docked`), Errors (`error`, `error_cleared`, `stuck`, `dock_failed`, `map_error`, `initialization_error`, `hardware_fault`, `gps_weak`, `connection_lost`), Safety (`safety`, `pin_locked`), Battery (`low_battery`), Maintenance (`dock_drift`, `firmware_required`, `blade_maintenance`) and Patrol (`patrol_detection`, `patrol_failed`). The app sends the muted list as `muted` in `POST /api/push/register`; the server stores it per `(token, sn)` and skips those events for that installation only. ntfy and Home Assistant are not affected.
 
 Expo Push limit: 600 notifications/sec/project worldwide. With realistic mower-event rates (~5/day/mower) you'd need 10M concurrent users to saturate. Non-issue at any sensible scale.
 

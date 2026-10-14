@@ -95,7 +95,7 @@ graph TB
 | `/camera/tof/point_cloud` | 3D point cloud |
 | `/perception/points_labeled` | **Main output**: labeled obstacles |
 | `/perception/labeled_img/compressed` | Debug: segmented image |
-| `/perception/pedestrian_detect` | Detected persons/animals |
+| `/perception/pedestrian_detect` | Advertised but never published (its publisher functions have no callers). Detections reach other nodes only as labels 100+ in `/perception/points_labeled` |
 
 ## Inference Configuration
 

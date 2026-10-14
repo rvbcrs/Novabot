@@ -80,7 +80,7 @@ The number printed there is the actual height in millimeters. If it stays at the
 
 ## "Edge cut" or "Boundary cut" never starts
 
-Use the dashboard or app's "Edge cut" button, not "Start patrol". Stock `start_patrol` MQTT is a no-op stub in `mqtt_node` — it returns "OK" but does nothing.
+Use the dashboard or app's "Edge cut" button. The stock `start_patrol` MQTT command does not cut edges: `start_patrol` / `stop_patrol` are stubs in stock mqtt_node (they only answer, so they return "OK" and do nothing). The [night patrol](dashboard.md#night-patrol) is a separate OpenNova feature (the extended command `patrol`); it drives checkpoints with the blades off and never cuts an edge.
 
 If the button is there and you click it but the mower stays put:
 - Make sure the mower is on the map you want to edge (not just near it).

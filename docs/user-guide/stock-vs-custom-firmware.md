@@ -47,7 +47,8 @@ The custom firmware build installs `/root/novabot/scripts/extended_commands.py`,
 
 | Feature | App location | What it does |
 |---------|--------------|--------------|
-| **Edge cut / boundary mow** | Home → Edge cut | `start_edge_cut` dispatches the `/navigate_through_coverage_paths` NTCP action with `only_edge_mode:true`. Stock has `start_patrol` MQTT but it's a no-op stub. |
+| **Edge cut / boundary mow** | Home → Edge cut | `start_edge_cut` dispatches the `/navigate_through_coverage_paths` NTCP action with `only_edge_mode:true`. Stock has no standalone edge cut command: `start_patrol` / `stop_patrol` are stubs in stock mqtt_node (they only answer). |
+| **Night patrol** | Dashboard → Night patrol card | The extended command `patrol` (custom firmware 50 or newer): the mower drives checkpoints with the blades off, looks with its camera and reports to the server. Not the stock `start_patrol`, which is a stub. See [Night patrol](dashboard.md#night-patrol). |
 | **Edge pass: when you choose** | Settings → Edge cut after every mow; dashboard schedule → Edge cut on | Stock ends every mowing session with an edge pass. The custom firmware takes that pass out of the session, so a normal mow cuts no edge. The server then starts a separate edge cut right after the mow, after every mow when the setting is on and otherwise only on the edge days of a schedule: it breaks off the drive home and cuts the edge from where the mower is, then sends it home. With less than 30% battery it docks first and starts once it has charged to 30%. A session over several zones only gets the edge of its first zone. |
 | **Stop boundary follow** | Home (kill edge cut) | `stop_boundary_follow` cancels the NTCP goal and any boundary action client |
 | **Blade on / off (joystick)** | Joystick screen | `blade_on` / `blade_off` over the serial bus to STM32. No equivalent MQTT command on stock. |

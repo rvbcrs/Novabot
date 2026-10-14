@@ -393,13 +393,15 @@ curl -X POST http://<server>/api/dashboard/command/<SN> \
 
 ### GET `/api/dashboard/schedules/:sn`
 
-Get all dashboard schedules for a mower.
+Get all dashboard schedules for a mower. The list holds mowing schedules only
+(`kind: "mow"`); add `?kind=patrol` to list the night patrol schedules instead.
 
 ```json title="Response"
 {
   "schedules": [
     {
       "scheduleId": "uuid",
+      "kind": "mow",
       "mowerSn": "LFIN2230700XXX",
       "scheduleName": "Morning Mow",
       "startTime": "08:00",
@@ -440,6 +442,28 @@ Create a new schedule. Also pushes `timer_task` + `set_para_info` via MQTT.
 }
 ```
 
+Add `"kind": "patrol"` to create a night patrol schedule instead of a mowing
+schedule (default `"mow"`). The mower must run custom firmware, otherwise the
+answer is 409. A patrol schedule follows its own rules:
+
+- The server runs it by itself. It is never sent to the mower as `timer_task`
+  (the firmware would mow), and it is not mirrored into the stock app's plans.
+- `"enabled": false` is honored, so a time can be stored with the schedule
+  switched off.
+- It never gets a rain pause.
+- The night guard ("No mowing after dark") does not apply to it, the frost
+  guard does.
+
+```json title="Request (night patrol schedule)"
+{
+  "kind": "patrol",
+  "startTime": "23:30",
+  "weekdays": [0, 1, 2, 3, 4, 5, 6],
+  "enabled": true,
+  "timezone": "Europe/Amsterdam"
+}
+```
+
 ---
 
 ### PATCH `/api/dashboard/schedules/:sn/:scheduleId`
@@ -457,6 +481,136 @@ Delete a schedule.
 ### POST `/api/dashboard/schedules/:sn/:scheduleId/send`
 
 Push a schedule to the mower via MQTT (`timer_task` + `set_para_info`).
+
+A patrol schedule (`kind: "patrol"`) runs on the server and never goes to the
+mower, so for it this endpoint answers 409.
+
+---
+
+## Night Patrol Endpoints
+
+Night patrol is an OpenNova feature: the extended command `patrol`, which needs
+custom firmware build 50 or newer. The stock MQTT `start_patrol` / `stop_patrol`
+are stubs in `mqtt_node` (they only answer) and have nothing to do with it.
+Design: `docs/superpowers/specs/2026-10-14-night-patrol-design.md`.
+
+### POST `/api/dashboard/patrol/:sn`
+
+Start a patrol.
+
+```json title="Response (started)"
+{ "ok": true, "run": "1760471400000" }
+```
+
+A refusal answers 409 with the reason in `error`, in the language of the request:
+the mower is offline, runs stock firmware or a custom build older than 50, is
+busy with a task or a map operation, has a map frame that is not validated, has
+a battery below 50 %, or there is no checkpoint to visit.
+
+```json title="Response (refused)"
+{ "ok": false, "error": "..." }
+```
+
+---
+
+### POST `/api/dashboard/stop-patrol/:sn`
+
+Stop a patrol. Sends `stop_navigation` plus `stop_mow_zone`; the mower stays where
+it is and is not sent home.
+
+```json title="Response"
+{ "ok": true }
+```
+
+While a patrol drives (phases `starting`, `localizing`, `patrolling` and
+`returning`), every stop, pause, go-home or start command also ends it, whether it
+comes from the dashboard, the OpenNova app, the stock app or the server.
+
+---
+
+### GET `/api/dashboard/patrol/:sn/runs`
+
+The last 10 patrols, newest first, with one entry per checkpoint. `seen` says what
+the camera found: `null` means no data (fewer than two detection readings), `[]` means
+nothing, otherwise the classes (`"person"`, `"animal"`) whose score reached
+`patrol_min_points`.
+
+```json title="Response"
+{
+  "ok": true,
+  "runs": [
+    {
+      "run": "1760471400000",
+      "startedAt": 1760471400000,
+      "frames": [
+        { "seq": 1, "x": 12.345, "y": -3.21, "person": 0, "animal": 0, "frames": 14, "image": true, "ts": 1760471452000, "seen": [] },
+        { "seq": 2, "x": 14.1, "y": -1.5, "person": 57, "animal": 0, "frames": 12, "image": true, "ts": 1760471480000, "seen": ["person"] },
+        { "seq": 3, "x": 15.0, "y": 0.2, "person": 0, "animal": 0, "frames": 0, "image": false, "ts": 1760471510000, "seen": null }
+      ]
+    }
+  ]
+}
+```
+
+`x` and `y` are local map metres. `image` tells whether the checkpoint has a photo.
+
+---
+
+### GET `/api/dashboard/patrol/:sn/runs/:run/:seq.jpg`
+
+The photo of one checkpoint (`image/jpeg`). 404 when the checkpoint has no photo.
+The server keeps the last 10 runs per mower under `STORAGE_PATH/patrol/<SN>/<run>/`.
+
+---
+
+### POST `/api/nova-file-server/patrol/uploadFrame`
+
+Called by the mower, once per checkpoint. It is not a dashboard endpoint and it is
+not behind the login, so the run token below is what protects it.
+
+Query parameters:
+
+| Field | Description |
+|-------|-------------|
+| `sn` | Mower serial number |
+| `run` | Run id from `POST /api/dashboard/patrol/:sn` |
+| `token` | The 32-hex token of that run |
+| `seq` | Checkpoint number (1 to 200) |
+| `x`, `y` | Mower position, local map metres |
+| `frames` | Detection readings counted at the checkpoint |
+| `person`, `animal` | Detection score per class |
+
+Body: the raw JPEG (up to 3 MB), or empty when the camera gave nothing.
+
+The server issues a random 32-hex token for every run it starts and sends it to the
+mower in the `patrol` command; the mower repeats it in every upload. The server only
+accepts uploads for the run it started, with the right token, within 6 hours of the
+start. Anything else answers 403: nothing is stored and no alert is raised.
+Malformed parameters, or a body that is not a JPEG, answer 400.
+
+A score at or above `patrol_min_points` raises the `patrol_detection` notification
+(see [Notifications & Push](../guide/notifications.md)). A checkpoint that could not
+be stored answers 500; the alert is still raised.
+
+---
+
+### Patrol settings and status
+
+The settings are device settings, written with `POST /api/dashboard/sensor-override/:sn`
+and read with `GET /api/dashboard/device-settings/:sn`.
+
+| Key | Range | Default | Description |
+|-----|-------|---------|-------------|
+| `patrol_zones` | JSON array of `mapN` | `[]` | Zones to patrol; empty means the dock's zone |
+| `patrol_spacing_m` | 3 to 15 | 6 | Metres between checkpoints along the border |
+| `patrol_dwell_s` | 3 to 20 | 6 | Seconds spent looking at each checkpoint |
+| `patrol_headlight` | 0 to 100 | 100 | Headlight level during the patrol |
+| `patrol_min_points` | 5 to 2000 | 40 | Score at which a person or animal counts as seen |
+| `patrol_photo_topic` | `front`, `front_hd`, `tof_gray` | `front` | Camera used for the checkpoint photo |
+
+The mower reports its progress in the device sensors `patrol_phase` (`starting`,
+`localizing`, `patrolling`, `returning`, `done`, `error`, `stopped`) and, after an
+error, `patrol_error`.
 
 ---
 

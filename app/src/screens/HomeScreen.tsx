@@ -3016,8 +3016,9 @@ export default function HomeScreen() {
       </Modal>
 
       {/* Cutting-height picker voor edge & spot mow. Vuurt het juiste commando
-          af met de gekozen hoogte — edge heeft geen hoogte-parameter in de
-          firmware, dus we zetten de hoogte vóór start_patrol via set_para_info. */}
+          af met de gekozen hoogte: we zetten de hoogte eerst via set_para_info.
+          Een randmaai start met `start_edge_cut`, niet met `start_patrol`
+          (`start_patrol` is een stub in stock mqtt_node, het antwoordt alleen). */}
       {mower && heightPicker && (
         <CuttingHeightPickerModal
           visible={!!heightPicker}
@@ -3043,8 +3044,10 @@ export default function HomeScreen() {
               if (!url) return;
               const api = new ApiClient(url);
               // Pre-set de hoogte. Voor start_run gaat cutGrassHeight in het
-              // command zelf; voor start_patrol is er geen height-param, dus
-              // we sturen set_para_info eerst.
+              // command zelf; een randmaai (start_edge_cut) krijgt de hoogte
+              // als bladeHeight. De stock start_patrol is een stub zonder
+              // height-param en wordt hier niet gebruikt. We sturen
+              // set_para_info eerst.
               await api.sendCommand(mower.sn, {
                 set_para_info: { defaultCuttingHeight: wire },
               }).catch(() => { /* non-fatal */ });
@@ -3192,10 +3195,13 @@ export default function HomeScreen() {
         }
 
         // Edge mowing requires the `start_edge_cut` extended command,
-        // which only exists in OpenNova custom firmware. On stock firmware
-        // the equivalent stock MQTT (start_patrol) is a no-op stub, so we
-        // disable the menu item and explain why instead of letting the
-        // tap silently do nothing.
+        // which only exists in OpenNova custom firmware. Stock firmware has
+        // no equivalent: `start_patrol` / `stop_patrol` are stubs in stock
+        // mqtt_node (they only answer). OpenNova's night patrol is the
+        // extended command `patrol`; see
+        // docs/superpowers/specs/2026-10-14-night-patrol-design.md.
+        // So we disable the menu item and explain why instead of letting
+        // the tap silently do nothing.
         const edgeNeedsCustomFw = !isOpenNovaFirmware(mower?.firmwareVersion);
         items.push({
           label: t('hmEdgesOnly'),
