@@ -31,7 +31,9 @@ import json
 import math
 import os
 import re
+import signal
 import sys
+import threading
 import time
 
 import rclpy
@@ -901,15 +903,30 @@ class Driver:
         rclpy.spin_until_future_complete(self.node, fut, timeout_sec=timeout)
         return fut.result() is not None
 
-    def set_headlight(self, level):
+    def set_headlight(self, level, match_timeout=3.0):
         """Headlight 0..100 on /led_set. Only the Phase-0 probe uses this;
-        during a patrol the server switches the light (patrolService.ts)."""
+        during a patrol the server switches the light (patrolService.ts).
+
+        A volatile publisher drops a sample that goes out before the chassis
+        subscriber is matched, so wait for the match first. Without a
+        subscriber nothing is sent and this returns False."""
         if self._pub_led is None:
             self._pub_led = self.node.create_publisher(
                 UInt8, LED_TOPIC, QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        deadline = time.time() + match_timeout
+        count = self._pub_led.get_subscription_count()
+        while count == 0 and time.time() < deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+            count = self._pub_led.get_subscription_count()
+        if count == 0:
+            log(f"headlight: no {LED_TOPIC} subscriber, level {level} not sent")
+            return False
         m = UInt8()
         m.data = max(0, min(100, int(level)))
         self._pub_led.publish(m)
+        time.sleep(0.2)
+        self._pub_led.publish(m)
+        return True
 
     def ensure_perception(self):
         """Both cameras, perception and the detection model on. Outside a task
@@ -1636,37 +1653,64 @@ def do_goto(drv, x, y, yaw):
     return 0 if ok else 1
 
 
-def _probe_photos(led, second):
+def _probe_photos(run_dir, second):
     for topic in ("front", "tof_gray"):
         jpeg = fetch_snapshot(topic)
-        path = os.path.join(PROBE_DIR, f"led{led}_{topic}_{second:02d}.jpg")
+        path = os.path.join(run_dir, f"{topic}_{second:02d}.jpg")
         if jpeg:
             with open(path, "wb") as fh:
                 fh.write(jpeg)
         log(f"probe photo {topic}: {path if jpeg else 'none'}")
 
 
+def _stop_on_signal(signum, frame):
+    """SIGTERM or SIGHUP during a probe: unwind through do_probe's finally, so
+    the lamp goes off even when the SSH session is gone."""
+    raise SystemExit(143)
+
+
 def do_probe(drv, seconds, led):
     """Phase-0 night test. NO motion: cameras and the detection model on,
-    headlight at `led`, a photo per camera every 15 s in PROBE_DIR, and once a
-    second the highest patrol counts. The light goes back off, also on an error."""
-    os.makedirs(PROBE_DIR, exist_ok=True)
+    headlight at `led`, a photo per camera every 15 s in PROBE_DIR/<run>, taken
+    in the background so counting never pauses, and once per second the highest
+    patrol counts, timed on the wall clock. The light goes back off, also on an
+    error or a SIGTERM/SIGHUP."""
+    run_dir = os.path.join(PROBE_DIR, f"{time.strftime('%Y%m%d-%H%M%S')}_led{led}")
+    os.makedirs(run_dir, exist_ok=True)
     phase("probing")
-    if not drv.ensure_perception():
-        log("probe: not every perception switch answered, counting anyway")
-    drv.set_headlight(led)
+    previous = {sig: signal.signal(sig, _stop_on_signal)
+                for sig in (signal.SIGTERM, signal.SIGHUP)}
+    photos = []
     try:
-        for second in range(max(1, int(seconds))):
-            if second % 15 == 0:
-                _probe_photos(led, second)
+        if not drv.ensure_perception():
+            log("probe: not every perception switch answered, counting anyway")
+        if not drv.set_headlight(led):
+            log("probe: headlight level not confirmed")
+        start = time.monotonic()
+        next_mark = 0
+        elapsed = 0.0
+        while elapsed < seconds:
+            while elapsed >= next_mark:
+                photo = threading.Thread(
+                    target=_probe_photos, args=(run_dir, next_mark), daemon=True)
+                photo.start()
+                photos.append(photo)
+                next_mark += 15
             per_frame, frames = drv.watch_labels(1.0)
+            elapsed = time.monotonic() - start
             print("PROBE", json.dumps({
-                "t": second, "frames": frames,
+                "t": round(elapsed, 1), "frames": frames,
                 "person": max(per_frame["person"] or [0]),
                 "animal": max(per_frame["animal"] or [0]),
             }), flush=True)
     finally:
-        drv.set_headlight(0)
+        try:
+            for photo in photos:
+                photo.join(timeout=30)   # the photos are taken while the lamp is still on
+        finally:
+            drv.set_headlight(0)
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
     phase("done")
     return 0
 

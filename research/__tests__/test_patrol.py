@@ -5,11 +5,13 @@ Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
 Run: python3 research/__tests__/test_patrol.py
 ROS modules are stubbed; the patrol logic runs against fake Drivers.
 """
+import contextlib
 import importlib.util
 import os
 import struct
 import sys
 import tempfile
+import time
 import types
 import urllib.request
 
@@ -141,8 +143,10 @@ class ProbeDriver:
 
     def set_headlight(self, level):
         self.calls.append(("light", level))
+        return True
 
     def watch_labels(self, seconds):
+        time.sleep(seconds)   # the real window takes this long too
         return {"person": [3, 50], "animal": [0, 0]}, 2
 
 
@@ -157,7 +161,9 @@ def test_probe_takes_photos_and_switches_the_light_back_off():
         mzd.fetch_snapshot = real
     assert drv.calls[0] == ("perception",)
     assert ("light", 100) in drv.calls and drv.calls[-1] == ("light", 0)
-    assert sorted(os.listdir(mzd.PROBE_DIR)) == ["led100_front_00.jpg", "led100_tof_gray_00.jpg"]
+    runs = os.listdir(mzd.PROBE_DIR)
+    assert len(runs) == 1 and os.path.isdir(os.path.join(mzd.PROBE_DIR, runs[0]))
+    assert sorted(os.listdir(os.path.join(mzd.PROBE_DIR, runs[0]))) == ["front_00.jpg", "tof_gray_00.jpg"]
 
 
 def test_probe_switches_the_light_off_when_perception_breaks():
@@ -175,6 +181,66 @@ def test_probe_switches_the_light_off_when_perception_breaks():
     finally:
         mzd.fetch_snapshot = real
     assert drv.calls[-1] == ("light", 0)
+
+
+class FakePub:
+    """A /led_set publisher whose subscriber matches after `misses` polls."""
+
+    def __init__(self, misses):
+        self.misses = misses
+        self.polls = 0
+        self.sent = []   # (poll count at publish time, data)
+
+    def get_subscription_count(self):
+        self.polls += 1
+        return 0 if self.polls <= self.misses else 1
+
+    def publish(self, msg):
+        self.sent.append((self.polls, msg.data))
+
+
+class FakeNode:
+    """Driver.__init__ makes two publishers; the LED one is created last."""
+
+    def __init__(self, misses):
+        self.misses = misses
+        self.last = None
+
+    def create_publisher(self, msg_type, topic, qos):
+        self.last = FakePub(self.misses)
+        return self.last
+
+
+@contextlib.contextmanager
+def no_spin():
+    """The rclpy stub has no spin_once; the headlight wait spins it."""
+    had = hasattr(mzd.rclpy, "spin_once")
+    real = getattr(mzd.rclpy, "spin_once", None)
+    mzd.rclpy.spin_once = lambda node, timeout_sec=0.0: None
+    try:
+        yield
+    finally:
+        if had:
+            mzd.rclpy.spin_once = real
+        else:
+            del mzd.rclpy.spin_once
+
+
+def test_headlight_waits_for_its_subscriber_then_sends_twice():
+    node = FakeNode(misses=3)
+    with no_spin():
+        drv = mzd.Driver(node)
+        assert drv.set_headlight(100, match_timeout=2.0) is True
+    # both sends come after the fourth poll, the first one that saw a subscriber
+    assert node.last.sent == [(4, 100), (4, 100)]
+
+
+def test_headlight_without_a_subscriber_sends_nothing():
+    node = FakeNode(misses=10 ** 9)
+    with no_spin():
+        drv = mzd.Driver(node)
+        assert drv.set_headlight(100, match_timeout=0.3) is False
+    assert node.last.sent == []
 
 
 if __name__ == "__main__":
