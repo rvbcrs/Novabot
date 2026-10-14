@@ -19,7 +19,7 @@ vi.mock('../../notifications/eventDetector.js', () => ({
 
 import {
   startPatrol, stopPatrol, onPatrolStatus, onPatrolFrame, readPatrolSettings, alertKinds, _resetPatrolState,
-  PATROL_ALERT_GAP_MS, PATROL_HOME_DELAY_MS,
+  isActivePatrolRun, PATROL_ALERT_GAP_MS, PATROL_HOME_DELAY_MS, PATROL_RUN_TTL_MS,
 } from '../../services/patrolService.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
 import { publishToTopic } from '../../mqtt/mapSync.js';
@@ -39,6 +39,12 @@ function mower(fields: Record<string, string>) {
 /** What fresh telemetry says about the dock (positionTelemetry.freshPositionState). */
 function dockTelemetry(state: { dockKnown: boolean; docked: boolean }) {
   vi.mocked(freshPositionState).mockReturnValue({ fixed: false, running: false, pose: null, ...state });
+}
+
+/** The run and token of the patrol command that startPatrol published last. */
+function lastPatrol(): { run: string; token: string } {
+  const calls = vi.mocked(publishExtendedCommand).mock.calls;
+  return (calls[calls.length - 1][1] as { patrol: { run: string; token: string } }).patrol;
 }
 
 describe('patrol service', () => {
@@ -62,8 +68,9 @@ describe('patrol service', () => {
     deviceSettingsRepo.upsert(SN, 'patrol_dwell_s', '8');
     const r = startPatrol(SN, 1000);
     expect(r).toEqual({ ok: true, run: '1000' });
-    const cmd = vi.mocked(publishExtendedCommand).mock.calls[0][1] as { patrol: { run: string; zones: Array<{ zone: string; points: number[][] }>; dwell_s: number; photo_topic: string } };
+    const cmd = vi.mocked(publishExtendedCommand).mock.calls[0][1] as { patrol: { run: string; token: string; zones: Array<{ zone: string; points: number[][] }>; dwell_s: number; photo_topic: string } };
     expect(cmd.patrol.run).toBe('1000');
+    expect(cmd.patrol.token).toMatch(/^[0-9a-f]{32}$/);
     expect(cmd.patrol.zones[0].zone).toBe('map0');
     expect(cmd.patrol.zones[0].points.length).toBeGreaterThan(0);
     expect(cmd.patrol.dwell_s).toBe(8);
@@ -290,5 +297,28 @@ describe('patrol service', () => {
     expect(onPatrolFrame(SN, { ...f, run: '2' }, PATROL_ALERT_GAP_MS + 2)).toEqual(['person']);
     expect(dispatchPatrolDetectionEvent).toHaveBeenCalledTimes(3);
     expect(dispatchPatrolDetectionEvent).toHaveBeenCalledWith(SN, { run: '1', seq: 1, kind: 'person', points: 60, image: true });
+  });
+
+  it('accepts a patrol run only with the token the server issued for it, within the TTL', () => {
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    const { run, token } = lastPatrol();
+    expect(isActivePatrolRun(SN, run, token, 1000)).toBe(true);
+    expect(isActivePatrolRun(SN, run, '0'.repeat(32), 1000)).toBe(false);
+    expect(isActivePatrolRun(SN, run, 'abc', 1000)).toBe(false);
+    expect(isActivePatrolRun(SN, '999', token, 1000)).toBe(false);
+    expect(isActivePatrolRun('LFIN_PATROL_9999', run, token, 1000)).toBe(false);
+    expect(isActivePatrolRun(SN, run, token, 1000 + PATROL_RUN_TTL_MS)).toBe(true);
+    expect(isActivePatrolRun(SN, run, token, 1000 + PATROL_RUN_TTL_MS + 1)).toBe(false);
+  });
+
+  it('a newer patrol retires the token of the one before it', () => {
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    const first = lastPatrol();
+    expect(startPatrol(SN, 2000).ok).toBe(true);
+    const second = lastPatrol();
+    expect(isActivePatrolRun(SN, first.run, first.token, 2000)).toBe(false);
+    expect(isActivePatrolRun(SN, second.run, second.token, 2000)).toBe(true);
   });
 });

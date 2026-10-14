@@ -24,7 +24,8 @@ def check(name, ok):
     print(("ok   " if ok else "FAIL ") + name)
 
 
-GOOD = {"run": "1791", "zones": [{"zone": "map0", "points": [[1.5, 2.0], [3, 4]]}],
+GOOD = {"run": "1791", "token": "0123456789abcdef0123456789abcdef",
+        "zones": [{"zone": "map0", "points": [[1.5, 2.0], [3, 4]]}],
         "dwell_s": 6, "photo_topic": "front"}
 VALID_CHECKPOINT = ('CHECKPOINT {"seq": 1, "x": 1.5, "y": 2.0, "frames": 3, "photo": true, '
                     '"sent": true, "person": 60, "animal": 0}')
@@ -33,6 +34,8 @@ clean, err = ec.validate_patrol_params(GOOD)
 check("good params pass", err is None and clean["zones"][0]["points"] == [[1.5, 2.0], [3.0, 4.0]])
 for bad, why in [
     ({**GOOD, "run": "../x"}, "invalid_run"),
+    ({**GOOD, "token": "x"}, "invalid_token"),
+    ({k: v for k, v in GOOD.items() if k != "token"}, "invalid_token"),
     ({**GOOD, "zones": [{"zone": "map0;rm", "points": [[1, 1]]}]}, "invalid_zone"),
     ({**GOOD, "zones": [{"zone": "map0", "points": [[1, "a"]]}]}, "invalid_point"),
     ({**GOOD, "zones": [{"zone": "map0", "points": [[1, 900]]}]}, "invalid_point"),
@@ -229,7 +232,8 @@ check("the blade guard runs before detection goes on, detection restored after",
       and before(calls, ("blade_height", 7), "perception_on")
       and calls[-1:] == ["perception_off"])
 check("the drive gets the upload address", seen["params"]["upload"]
-      == "http://srv:8080/api/nova-file-server/patrol/uploadFrame?sn=LFIN2230700238&run=1791")
+      == "http://srv:8080/api/nova-file-server/patrol/uploadFrame?sn=LFIN2230700238&run=1791"
+                              "&token=0123456789abcdef0123456789abcdef")
 check("runs the patrol mode", seen["argv"][3:5] == ["patrol", seen["script"]]
       and 'patrol "$2"' in seen["argv"][2])
 check("cleans up the params file", not os.path.exists(seen["params_file"]))

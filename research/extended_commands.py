@@ -2173,6 +2173,9 @@ def validate_patrol_params(params):
     run = str(p.get("run", ""))
     if not re.fullmatch(r"\d{1,20}", run):
         return None, "invalid_run"
+    token = str(p.get("token", ""))
+    if not re.fullmatch(r"[0-9a-f]{32}", token):
+        return None, "invalid_token"
     zones, total = [], 0
     for z in p.get("zones") or []:
         name = str((z or {}).get("zone", ""))
@@ -2202,7 +2205,7 @@ def validate_patrol_params(params):
     topic = p.get("photo_topic", "front")
     if topic not in PATROL_PHOTO_TOPICS:
         return None, "invalid_photo_topic"
-    return {"run": run, "zones": zones, "dwell_s": dwell, "photo_topic": topic}, None
+    return {"run": run, "token": token, "zones": zones, "dwell_s": dwell, "photo_topic": topic}, None
 
 
 def _secure_patrol_blades(attempts=3, pause=1.0):
@@ -2251,7 +2254,7 @@ def handle_patrol(params, respond):
         respond("patrol_respond", {"result": 1, "error": "server_unknown"})
         return
     run = clean["run"]
-    clean["upload"] = f"http://{server}/api/nova-file-server/patrol/uploadFrame?sn={sn}&run={run}"
+    clean["upload"] = f"http://{server}/api/nova-file-server/patrol/uploadFrame?sn={sn}&run={run}&token={clean['token']}"
     params_file = f"/tmp/patrol_{run}.json"
     with open(params_file, "w") as fh:
         json.dump(clean, fh)

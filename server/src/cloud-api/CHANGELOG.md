@@ -11,6 +11,9 @@ Format: most-recent first. Each entry is dated and names the endpoint(s) affecte
   numbers or a body that is not a JPEG. Stored under
   `STORAGE_PATH/patrol/<sn>/<run>/`, keeping the last 10 runs per mower. New
   endpoint for the night-patrol feature, called by the mower's patrol mode.
+- Uploads need the run's `token` (issued in the patrol command): a missing or
+  malformed token is a 400; a run the server did not start, one superseded by a
+  newer patrol, or one older than 6 hours is a 403 and nothing is stored.
 
 ## 2026-10-10 - work-record fallback reads cov_work_time as minutes
 

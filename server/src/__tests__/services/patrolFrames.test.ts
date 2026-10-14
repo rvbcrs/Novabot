@@ -38,4 +38,12 @@ describe('patrol frames on disk', () => {
     expect(listPatrolRuns('../x')).toEqual([]);
     expect(() => savePatrolFrame(SN, '../9', meta(1), JPEG)).toThrow();
   });
+
+  it('a re-post of a checkpoint without a photo drops the photo an earlier post kept', () => {
+    savePatrolFrame(SN, '300', meta(1), JPEG);
+    expect(patrolImagePath(SN, '300', '1')).not.toBeNull();
+    savePatrolFrame(SN, '300', meta(1, { image: false }), null);
+    expect(patrolImagePath(SN, '300', '1')).toBeNull();
+    expect(listPatrolRuns(SN)[0].frames[0].image).toBe(false);
+  });
 });

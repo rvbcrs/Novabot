@@ -21,7 +21,9 @@ export function savePatrolFrame(sn: string, run: string, meta: PatrolFrameMeta, 
   if (!SN_RE.test(sn) || !RUN_RE.test(run)) throw new Error('invalid sn or run');
   const dir = path.join(PATROL_DIR, sn, run);
   fs.mkdirSync(dir, { recursive: true });
-  if (jpeg) fs.writeFileSync(path.join(dir, `${meta.seq}.jpg`), jpeg);
+  const jpgPath = path.join(dir, `${meta.seq}.jpg`);
+  if (jpeg) fs.writeFileSync(jpgPath, jpeg);
+  else fs.rmSync(jpgPath, { force: true });   // a re-post without a photo drops the one an earlier post kept
   fs.writeFileSync(path.join(dir, `${meta.seq}.json`), JSON.stringify(meta));
   const runs = fs.readdirSync(path.join(PATROL_DIR, sn)).filter(r => RUN_RE.test(r))
     .sort((a, b) => Number(a) - Number(b));

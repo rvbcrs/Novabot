@@ -4,6 +4,7 @@
  * the mower's patrol_status stream and checkpoint reports.
  * Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
  */
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { publishToTopic } from '../mqtt/mapSync.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
@@ -102,6 +103,11 @@ function goHomeAfterDelay(sn: string): void {
   }, PATROL_HOME_DELAY_MS));
 }
 
+/** How long a patrol run accepts checkpoint uploads after its start. */
+export const PATROL_RUN_TTL_MS = 6 * 3_600_000;
+// The run and token startPatrol issued per mower: the only uploads the server takes.
+const activeRuns = new Map<string, { run: string; token: string; startedAt: number }>();
+
 export function startPatrol(sn: string, now = Date.now()): PatrolResult {
   if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
   if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
@@ -127,9 +133,19 @@ export function startPatrol(sn: string, now = Date.now()): PatrolResult {
   // early error of this one count as "left the dock".
   cancelPendingHome(sn);
   outOnPatrol.delete(sn);
-  publishExtendedCommand(sn, { patrol: { run, zones, dwell_s: s.dwellS, photo_topic: s.photoTopic } });
+  const token = randomBytes(16).toString('hex');
+  activeRuns.set(sn, { run, token, startedAt: now });
+  publishExtendedCommand(sn, { patrol: { run, token, zones, dwell_s: s.dwellS, photo_topic: s.photoTopic } });
   console.log(`[Patrol] start ${sn} run=${run} ${zones.map(z => `${z.zone}:${z.points.length}`).join(',')}`);
   return { ok: true, run };
+}
+
+/** True when (run, token) is the patrol this server started for sn, within PATROL_RUN_TTL_MS. */
+export function isActivePatrolRun(sn: string, run: string, token: string, now = Date.now()): boolean {
+  const a = activeRuns.get(sn);
+  if (!a || a.run !== run || now - a.startedAt > PATROL_RUN_TTL_MS) return false;
+  const want = Buffer.from(a.token), got = Buffer.from(token);
+  return want.length === got.length && timingSafeEqual(want, got);
 }
 
 export function stopPatrol(sn: string): void {
@@ -205,6 +221,7 @@ export function onPatrolFrame(sn: string, f: PatrolFrameReport, now = Date.now()
 /** Tests only. */
 export function _resetPatrolState(): void {
   outOnPatrol.clear();
+  activeRuns.clear();
   lastAlert.clear();
   for (const timer of pendingHome.values()) clearTimeout(timer);
   pendingHome.clear();
