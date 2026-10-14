@@ -84,6 +84,7 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 
 import { dashboardRouter } from '../../routes/dashboard.js';
 import * as mapSync from '../../mqtt/mapSync.js';
+import { deviceCache } from '../../mqtt/sensorData.js';
 
 const app = express();
 app.use(express.json());
@@ -148,5 +149,105 @@ describe('POST /api/dashboard/command/:sn — encryption opt-out (#16)', () => {
     expect(r.body.encrypted).toBeUndefined();
     expect(mapSync.publishToDevice).toHaveBeenCalledTimes(1);
     expect(mapSync.publishRawToDevice).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The raw branches publish with publishRawToDevice, which skips publishToDevice
+ * and with it the gate that ends a running zone drive or night patrol before a
+ * stop, pause, go-home or start (mapSync.ts, edgeCutGuard.ts). The dashboard
+ * and OpenNova-app buttons come through this route, so it sends stop_mow_zone
+ * itself, first, as publishToDevice does. The publishToDevice branch gates
+ * itself and must not do it twice.
+ */
+describe('POST /api/dashboard/command/:sn: ending a running drive', () => {
+  beforeEach(() => { deviceCache.clear(); });
+
+  /** Call order of a mock's first call, to compare calls across mocks. */
+  const firstCall = (fn: unknown) => vi.mocked(fn as () => void).mock.invocationCallOrder[0];
+
+  it.each([
+    ['AES', undefined],
+    ['plain JSON', false],
+  ])('stop_navigation while a patrol patrols: stop_mow_zone goes out before the %s publish', async (_branch, encrypt) => {
+    deviceCache.set(LFI_SN, new Map([['patrol_phase', 'patrolling']]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${LFI_SN}`)
+      .send({ encrypt, command: { stop_navigation: { cmd_num: 5 } } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishToExtended).toHaveBeenCalledTimes(1);
+    expect(mapSync.publishToExtended).toHaveBeenCalledWith(LFI_SN, { stop_mow_zone: {} });
+    expect(mapSync.publishRawToDevice).toHaveBeenCalledTimes(1);
+    expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
+  });
+
+  it('stop_navigation while a zone drive follows the unicom: the same', async () => {
+    deviceCache.set(LFI_SN, new Map([['mow_zone_phase', 'following_unicom']]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${LFI_SN}`)
+      .send({ command: { stop_navigation: { cmd_num: 5 } } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishToExtended).toHaveBeenCalledTimes(1);
+    expect(mapSync.publishToExtended).toHaveBeenCalledWith(LFI_SN, { stop_mow_zone: {} });
+    expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
+  });
+
+  it.each(['stop_navigation', 'pause_navigation', 'go_to_charge', 'start_navigation'])(
+    '%s while a patrol returns also kills the patrol first', async command => {
+      deviceCache.set(LFI_SN, new Map([['patrol_phase', 'returning']]));
+      const r = await request(server)
+        .post(`/api/dashboard/command/${LFI_SN}`)
+        .send({ command: { [command]: { cmd_num: 6 } } });
+
+      expect(r.status).toBe(200);
+      expect(mapSync.publishToExtended).toHaveBeenCalledWith(LFI_SN, { stop_mow_zone: {} });
+      expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
+    });
+
+  it.each(['done', 'error', 'stopped'])('sends nothing extra once the patrol has ended (%s)', async phase => {
+    deviceCache.set(LFI_SN, new Map([['patrol_phase', phase]]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${LFI_SN}`)
+      .send({ command: { go_to_charge: { cmd_num: 8 } } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishToExtended).not.toHaveBeenCalled();
+    expect(mapSync.publishRawToDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends nothing extra for a command that ends nothing, also while a patrol patrols', async () => {
+    deviceCache.set(LFI_SN, new Map([['patrol_phase', 'patrolling']]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${LFI_SN}`)
+      .send({ command: { set_para_info: { path_direction: 90 } } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishToExtended).not.toHaveBeenCalled();
+    expect(mapSync.publishRawToDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a non-LFI SN to publishToDevice, which gates itself', async () => {
+    deviceCache.set(PLAIN_SN, new Map([['patrol_phase', 'patrolling']]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${PLAIN_SN}`)
+      .send({ command: { stop_navigation: { cmd_num: 5 } } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishToDevice).toHaveBeenCalledTimes(1);
+    expect(mapSync.publishToExtended).not.toHaveBeenCalled();
+  });
+
+  it('gates an explicit encrypt:true on a non-LFI SN too, since that publishes raw', async () => {
+    deviceCache.set(PLAIN_SN, new Map([['patrol_phase', 'patrolling']]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${PLAIN_SN}`)
+      .send({ encrypt: true, command: { stop_navigation: { cmd_num: 5 } } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishToDevice).not.toHaveBeenCalled();
+    expect(mapSync.publishToExtended).toHaveBeenCalledWith(PLAIN_SN, { stop_mow_zone: {} });
+    expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
   });
 });

@@ -2261,6 +2261,11 @@ def handle_patrol(params, respond):
     _stale = kill_stale_mow_drives()
     if _stale:
         log(f"patrol: {len(_stale)} vastgelopen run(s) opgeruimd voor de start: {_stale}")
+    # The drive process needs 11-15 s to come up on a loaded mower, and until it
+    # prints its first phase the server still holds the previous run's end as the
+    # patrol phase, so a stop in that window would not find a patrol running.
+    # Say we are on it now (as mow_zone does).
+    respond("patrol_status", {"phase": "starting", "run": run})
     wrapper = (
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "

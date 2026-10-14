@@ -26,6 +26,7 @@ import os from 'os';
 import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason, isScheduleWarning } from '../services/scheduleRunner.js';
+import { endsZoneDrive } from '../services/edgeCutGuard.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
@@ -3549,6 +3550,18 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     if (loraInfo.channel != null) loraChanges.set('lora_channel', String(loraInfo.channel));
     forwardToDashboard(sn, loraChanges);
     console.log(`[DASHBOARD] Cached LoRa config for ${sn}: addr=${loraInfo.addr} channel=${loraInfo.channel}`);
+  }
+
+  // The two raw branches below publish with publishRawToDevice, which skips
+  // publishToDevice and with it its gate (mapSync.ts). The dashboard and
+  // OpenNova-app Stop / Home / Start buttons come through here, so an ending
+  // command must kill a running zone drive or night patrol first, as the gate
+  // does. The third branch calls publishToDevice, which gates itself: no second
+  // stop_mow_zone from here.
+  if ((shouldEncrypt || sn.startsWith('LFI'))
+      && endsZoneDrive(command, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'))) {
+    console.log(`[DASHBOARD] ${sn}: zone or patrol drive running, stop_mow_zone before ${Object.keys(command)[0]}`);
+    publishToExtended(sn, { stop_mow_zone: {} });
   }
 
   if (shouldEncrypt) {

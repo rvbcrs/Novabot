@@ -24,10 +24,14 @@ export const ENDS_EDGE_CUT = new Set([
 const ZONE_DRIVE_PHASES = new Set(['starting', 'localizing', 'following_unicom', 'entering_zone']);
 
 /** Night patrol phases in which the patrol drive holds the wheels (the
- *  firmware's own departure task while localizing, then nav2 goals). The
- *  terminal phases done, error and stopped do not, so the server's own
- *  go_to_charge after a finished patrol passes untouched. */
-export const PATROL_DRIVE_PHASES = new Set(['localizing', 'patrolling', 'returning']);
+ *  firmware's own departure task while localizing, then nav2 goals), or is
+ *  about to: `starting` is the mower's acknowledgement of the start. The drive
+ *  process needs 11-15 s to come up and until it reports a phase the cache
+ *  still holds the previous run's end, so a stop in that window must already
+ *  find a patrol running. The terminal phases done, error and stopped hold
+ *  nothing, so the server's own go_to_charge after a finished patrol passes
+ *  untouched. */
+export const PATROL_DRIVE_PHASES = new Set(['starting', 'localizing', 'patrolling', 'returning']);
 
 /** An ending command while mow_zone_drive or a night patrol drives: kill that
  *  drive too (stop_mow_zone), or the mower keeps going to the zone or the next

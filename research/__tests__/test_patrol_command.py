@@ -115,13 +115,14 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
         ignores_terminate=False, proc_class=FakeProc):
     sent, calls, seen = [], [], {}
     cleanups, sleeps = [], []    # nav-goal cleanups (the drive's state then), the guard's pauses
-    seen.update(cleanups=cleanups, sleeps=sleeps)
+    events = []                  # the stale-run cleanup and every answer (name, phase), in order
+    seen.update(cleanups=cleanups, sleeps=sleeps, events=events)
     script = tempfile.NamedTemporaryFile(suffix=".py", delete=False).name
     defaults = {
         "PATROL_DRIVE_SCRIPT": script,
         "_server_from_config": lambda: "srv:8080",
         "_sn_from_config": lambda: "LFIN2230700238",
-        "kill_stale_mow_drives": lambda timeout=5.0: [],
+        "kill_stale_mow_drives": lambda timeout=5.0: events.append("kill_stale") or [],
         "_apply_edge_perception_low": lambda: calls.append("perception_on") or True,
         "_restore_edge_perception": lambda: calls.append("perception_off"),
         "_publish_blade_speed": lambda s: calls.append(("blade_speed", s)) or "",
@@ -139,6 +140,7 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
             failed.append(name)
             raise OSError("broker link down")
         sent.append((name, body))
+        events.append((name, body.get("phase")))
 
     seen["script"] = script
 
@@ -220,7 +222,7 @@ sent, calls, seen = run([
 ])
 statuses = [b["phase"] for n, b in sent if n == "patrol_status"]
 check("answers the start", ("patrol_respond", {"result": 0, "run": "1791"}) in sent)
-check("streams the phases", statuses == ["patrolling", "done"])
+check("streams the phases", statuses == ["starting", "patrolling", "done"])
 check("forwards the checkpoint with its run",
       ("patrol_checkpoint", {"seq": 1, "x": 1.5, "y": 2.0, "frames": 3, "photo": True, "sent": True,
                              "person": 60, "animal": 0, "run": "1791"}) in sent)
@@ -237,10 +239,16 @@ check("the drive gets the upload address", seen["params"]["upload"]
 check("runs the patrol mode", seen["argv"][3:5] == ["patrol", seen["script"]]
       and 'patrol "$2"' in seen["argv"][2])
 check("cleans up the params file", not os.path.exists(seen["params_file"]))
+# The drive process needs 11-15 s to come up. Until it prints its first phase the server still
+# holds the last run's end as the patrol phase, so a stop would not see a patrol running.
+check("says it is starting, with its run, before the drive's own phases",
+      sent[0] == ("patrol_status", {"phase": "starting", "run": "1791"}))
+check("and only after the stale runs are cleaned up",
+      seen["events"][:2] == ["kill_stale", ("patrol_status", "starting")])
 
 sent, calls, _seen = run(["PHASE patrolling"], rc=-15, stopped=True)
 check("a drive killed by stop reports stopped", [b["phase"] for n, b in sent if n == "patrol_status"]
-      == ["patrolling", "stopped"])
+      == ["starting", "patrolling", "stopped"])
 check("and still restores the detection", calls[-1] == "perception_off")
 
 sent, _calls, _seen = run(["PHASE patrolling"], rc=1)
@@ -249,12 +257,19 @@ check("a drive that died says so", ("patrol_status", {"phase": "error", "run": "
 sent, _calls, _seen = run([], params={**GOOD, "run": "x"})
 check("bad params never start a drive", sent == [("patrol_respond", {"result": 1, "error": "invalid_run"})])
 
+# a start that cannot go ahead never says it is starting
+for why, patch in [("drive_script_missing", {"PATROL_DRIVE_SCRIPT": "/nonexistent/mow_zone_drive.py"}),
+                   ("server_unknown", {"_server_from_config": lambda: ""})]:
+    sent, _calls, seen = run([], patches=patch)
+    check(f"{why} never says it is starting",
+          sent == [("patrol_respond", {"result": 1, "error": why})] and "kill_stale" not in seen["events"])
+
 # a. the blade guard cannot be met: the drive is terminated, nothing more is forwarded
 sent, calls, seen = run(
     ["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
     patches={"_publish_blade_speed": lambda s: "ros node not ready"})
 check("a failing blade guard stops the drive",
-      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "error"]
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "error"]
       and ("patrol_status", {"phase": "error", "run": "1791", "error": "blade_guard_failed"}) in sent
       and seen["proc"].terminated)
 check("and forwards no checkpoint from it", not any(n == "patrol_checkpoint" for n, _ in sent))
@@ -264,7 +279,7 @@ check("and never switches the detection on", "perception_on" not in calls)
 sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
                         respond_fails_on="patrol_checkpoint")
 check("a dropped publish does not end the supervision",
-      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "done"]
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "done"]
       and not seen["proc"].terminated and calls[-1:] == ["perception_off"])
 
 # c. a checkpoint line whose JSON is not an object is skipped, the lines after it still count
@@ -276,7 +291,7 @@ sent, calls, seen = run([
     "PHASE done",
 ])
 check("a malformed checkpoint line is skipped and the rest still counts",
-      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "done"]
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "done"]
       and ("patrol_skipped", {"zone": "map6", "reason": "no_route", "run": "1791"}) in sent
       and not any(n == "patrol_checkpoint" for n, _ in sent))
 
@@ -299,7 +314,7 @@ publish, attempts = guard_speed(1)
 sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
                         patches={"_publish_blade_speed": publish})
 check("a guard refused once and then holding lets the patrol go on",
-      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "done"]
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "done"]
       and any(n == "patrol_checkpoint" for n, _ in sent) and "perception_on" in calls)
 check("that is exactly two guard attempts with one pause between them",
       len(attempts) == 2 and seen["sleeps"] == [1.0] and not seen["proc"].terminated)
@@ -333,7 +348,7 @@ check("and its nav goal is released after the kill", seen["cleanups"] == [(True,
 sent, calls, seen = run(["PHASE patrolling"], rc=-15, proc_class=TakenOverProc)
 reset_mow_state()
 check("a drive taken over by a newer drive reports stopped",
-      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "stopped"])
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "stopped"])
 check("and sends no error for it",
       not any(b.get("phase") == "error" for n, b in sent if n == "patrol_status"))
 check("and leaves the newer drive's nav goal alone", seen["cleanups"] == [])
@@ -347,7 +362,7 @@ check("a drive that exits on its own with -15 still reports drive_exit_-15",
 sent, calls, seen = run(["PHASE patrolling"], rc=-15, proc_class=MarkedProc)
 reset_mow_state()
 check("a drive marked by kill_stale_mow_drives reports stopped",
-      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "stopped"]
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "stopped"]
       and seen["cleanups"] == [])
 
 # round 3: kill_stale_mow_drives marks the registered drive before its first signal, and only that drive

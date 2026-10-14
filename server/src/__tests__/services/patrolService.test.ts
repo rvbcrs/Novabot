@@ -131,6 +131,19 @@ describe('patrol service', () => {
     expect(goHome).toHaveBeenCalledTimes(1);
   });
 
+  it('starting is a no-op: no light, no docking, no failed event, and it does not count as having left the dock', () => {
+    vi.useFakeTimers();
+    onPatrolStatus(SN, 'starting');
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(publishToTopic).not.toHaveBeenCalled();
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).not.toHaveBeenCalled();
+    onPatrolStatus(SN, 'error', 'not_localized');   // the drive fails before it leaves the docked mower
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'not_localized', false);
+  });
+
   it('a stop leaves the mower where it is, light off', () => {
     onPatrolStatus(SN, 'patrolling');
     onPatrolStatus(SN, 'stopped');

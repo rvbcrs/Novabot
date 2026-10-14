@@ -81,7 +81,7 @@ describe('publishToDevice during an edge cut', () => {
 // reaches the mower while it localizes, patrols or returns must kill the patrol
 // first (stop_mow_zone), and the docking after a patrol that ended must not.
 describe('publishToDevice during a night patrol', () => {
-  it.each(['localizing', 'patrolling', 'returning'])('sends stop_mow_zone first, then the stop, while the patrol is %s', phase => {
+  it.each(['starting', 'localizing', 'patrolling', 'returning'])('sends stop_mow_zone first, then the stop, while the patrol is %s', phase => {
     deviceCache.set(SN, new Map([['patrol_phase', phase]]));
     publishToDevice(SN, { stop_navigation: { cmd_num: 1 } });
     expect(sent).toEqual([

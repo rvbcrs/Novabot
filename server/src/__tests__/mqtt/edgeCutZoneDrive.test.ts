@@ -27,8 +27,10 @@ describe('endsZoneDrive', () => {
 // server must kill a running patrol too (stop_mow_zone), but never the server's
 // own docking after a patrol that has ended.
 describe('endsZoneDrive for a night patrol', () => {
-  it('kills the patrol for a stop, pause, go home or new start while it localizes, patrols or returns', () => {
-    for (const phase of ['localizing', 'patrolling', 'returning']) {
+  // `starting` is the mower's acknowledgement of the start: the drive process
+  // needs 11-15 s to come up, and a stop in that window must still kill it.
+  it('kills the patrol for a stop, pause, go home or new start while it starts, localizes, patrols or returns', () => {
+    for (const phase of ['starting', 'localizing', 'patrolling', 'returning']) {
       expect(endsZoneDrive({ stop_navigation: {} }, undefined, phase)).toBe(true);
       expect(endsZoneDrive({ go_to_charge: {} }, undefined, phase)).toBe(true);
       expect(endsZoneDrive({ pause_navigation: {} }, undefined, phase)).toBe(true);
@@ -56,6 +58,6 @@ describe('endsZoneDrive for a night patrol', () => {
   });
 
   it('exports exactly the phases in which the patrol holds the wheels', () => {
-    expect([...PATROL_DRIVE_PHASES].sort()).toEqual(['localizing', 'patrolling', 'returning']);
+    expect([...PATROL_DRIVE_PHASES].sort()).toEqual(['localizing', 'patrolling', 'returning', 'starting']);
   });
 });
