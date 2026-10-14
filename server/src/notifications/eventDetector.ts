@@ -9,7 +9,7 @@
 import { dispatchEvent } from './dispatcher.js';
 import { lookupError } from './errorMap.js';
 import { MowerEvent, EventType } from './types.js';
-import { PATROL_DRIVE_PHASES } from '../services/edgeCutGuard.js';
+import { isPatrolDriving, patrolDockingUnderWay } from '../services/patrolRuns.js';
 
 const LOW_BATTERY_THRESHOLD = parseInt(process.env.LOW_BATTERY_THRESHOLD ?? '20', 10);
 
@@ -160,11 +160,16 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
   // makes short-lived connections) would emit a bogus
   // mowing_started → mowing_finished pair.
   // A night patrol leaves the dock through the firmware's own departure, a
-  // coverage task that reports Work:MOVING: no mowing started or finished
-  // while it drives. The snapshot still moves on, so a departure seen during
-  // the patrol is not reported once the patrol has ended either.
-  const patrolDrives = PATROL_DRIVE_PHASES.has(snValues.get('patrol_phase') ?? '');
-  if (prev.msg && next.msg && !patrolDrives) {
+  // coverage task that reports Work:MOVING, and after it the server's go home
+  // reports Work:MOVING again until the mower docks: no mowing started or
+  // finished for either. The snapshot still moves on, so a move seen then is
+  // not reported afterwards either. Docked as isDockedByValues (sensorData.ts)
+  // has it, which this module cannot import.
+  const rechargeStatus = snValues.get('recharge_status') ?? '';
+  const docked = rechargeStatus === '9' || rechargeStatus.startsWith('Charging')
+    || next.batteryState === 'CHARGING' || next.batteryState === 'FULL';
+  const patrolMoves = isPatrolDriving(sn, snValues.get('patrol_phase')) || patrolDockingUnderWay(sn, docked);
+  if (prev.msg && next.msg && !patrolMoves) {
     const wasMowing = isMowing(prev.msg);
     const nowMowing = isMowing(next.msg);
     if (!wasMowing && nowMowing) {
@@ -261,14 +266,16 @@ export function dispatchPatrolDetectionEvent(
   ));
 }
 
-/** The night patrol stopped with an error (patrolService.onPatrolStatus). */
-export function dispatchPatrolFailedEvent(sn: string, reason: string, wentHome: boolean): void {
+/** The night patrol stopped with an error, or on the mower itself (the STOP
+ *  button, a lift or a tilt: `stoppedOnMower`), patrolService.onPatrolStatus. */
+export function dispatchPatrolFailedEvent(sn: string, reason: string, wentHome: boolean, stoppedOnMower = false): void {
   dispatchEvent(makeEvent(
     sn,
     'patrol_failed',
     TITLE_BY_TYPE.patrol_failed,
     `The night patrol stopped (${reason}).`
-      + (wentHome ? ' The mower was sent back to its dock.' : ' The mower did not leave its dock.'),
+      + (wentHome ? ' The mower was sent back to its dock.'
+        : stoppedOnMower ? ' The mower stays where it stopped.' : ' The mower did not leave its dock.'),
     { reason, went_home: wentHome },
   ));
 }

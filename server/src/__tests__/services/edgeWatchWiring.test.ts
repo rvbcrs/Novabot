@@ -35,7 +35,7 @@ vi.mock('../../dashboard/socketHandler.js', () => ({
 import {
   startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch, firstMapName,
 } from '../../services/scheduleRunner.js';
-import { scheduleRepo, deviceSettingsRepo } from '../../db/repositories/index.js';
+import { scheduleRepo, deviceSettingsRepo, patrolRunsRepo } from '../../db/repositories/index.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
 
@@ -505,8 +505,13 @@ describe('altijd randmaaien', () => {
   // A night patrol's firmware departure may report Mode:COVERAGE Work:COVERING
   // for a moment. An armed watcher would then start an edge cut, blades and
   // all, once the patrol docks at night.
+  const patrolOut = (sn: string) => patrolRunsRepo.start({
+    mower_sn: sn, run: String(Date.now()), token: '0'.repeat(32), started_at: Date.now(), schedule_id: null,
+  });
+
   it.each(['starting', 'localizing', 'patrolling', 'returning'])('a night patrol that is %s arms nothing', phase => {
     const SN = `ALWAYS_PATROL_${phase}`;
+    patrolOut(SN);
     deviceSettingsRepo.upsert(SN, 'edge_always', '1');
     setIdleOnDock(SN);
     startScheduleRunner();
@@ -522,6 +527,7 @@ describe('altijd randmaaien', () => {
 
   it('a departure still reporting COVERING when the patrol was stopped arms nothing either', () => {
     const SN = 'ALWAYS_PATROL_STOPPED';
+    patrolOut(SN);
     deviceSettingsRepo.upsert(SN, 'edge_always', '1');
     setIdleOnDock(SN);
     startScheduleRunner();
@@ -534,6 +540,18 @@ describe('altijd randmaaien', () => {
     setDockedAfterFinishedMow(SN);
     vi.advanceTimersByTime(TICK_MS * 2);
     expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  // R5: a cached phase never expires; without a run that is out, COVERING is a mow.
+  it('a stale patrol phase without a live run does not keep the watcher from arming', () => {
+    const SN = 'ALWAYS_STALE_PATROL';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setIdleOnDock(SN);
+    startScheduleRunner();
+    setMowingMap3(SN);
+    deviceCache.get(SN)!.set('patrol_phase', 'patrolling');
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().get(SN)).toMatchObject({ scheduleId: null, mapName: 'map3' });
   });
 
   it('a mow after a patrol still arms the edge cut', () => {

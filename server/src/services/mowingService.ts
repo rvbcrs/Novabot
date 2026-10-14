@@ -23,7 +23,7 @@ import { freshPositionState } from './positionTelemetry.js';
 import { getPolygonAnchor } from './anchor.js';
 import { mapRepo } from '../db/repositories/maps.js';
 import { pointInPolygon } from '../maps/editGeometry.js';
-import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
+import { isPatrolDriving } from './patrolRuns.js';
 import { M, renderMsg, type Msg } from './serverText.js';
 
 /** Settle time (ms) between re-applying the saved para and start_navigation, so
@@ -394,7 +394,7 @@ export function edgeAlways(sn: string): boolean {
  *  task while it localizes). An edge cut started beside it would drive and
  *  cut at the same time, so the patrol has to be stopped first. */
 function patrolDrives(sn: string): boolean {
-  return PATROL_DRIVE_PHASES.has(deviceCache.get(sn)?.get('patrol_phase') ?? '');
+  return isPatrolDriving(sn, deviceCache.get(sn)?.get('patrol_phase'));
 }
 
 export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {

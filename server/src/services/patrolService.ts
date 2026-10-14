@@ -22,7 +22,9 @@ import { customBuildNumber } from './firmwareAdvisory.js';
 import { mowerSwVersion } from './mowingArea.js';
 import { freshPositionState } from './positionTelemetry.js';
 import { buildPatrolZones } from './patrolRoute.js';
-import { isOlderPatrolRun, isAfterPatrolEnd, PATROL_END_PHASES } from './patrolRuns.js';
+import {
+  isOlderPatrolRun, isAfterPatrolEnd, markPatrolDocking, PATROL_END_PHASES, PATROL_RUN_TTL_MS, _resetPatrolDocking,
+} from './patrolRuns.js';
 import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent } from '../notifications/eventDetector.js';
 import { M, renderMsg, type Msg } from './serverText.js';
 
@@ -98,16 +100,22 @@ function cancelPendingHome(sn: string): void {
   pendingHome.delete(sn);
 }
 
+/** goHome after a patrol. Its drive home reports Work:MOVING, which is no mow (patrolDockingUnderWay). */
+function sendHome(sn: string): void {
+  markPatrolDocking(sn);
+  goHome(sn);
+}
+
 function goHomeAfterDelay(sn: string): void {
   cancelPendingHome(sn);   // a repeated error docks once, not twice
   pendingHome.set(sn, setTimeout(() => {
     pendingHome.delete(sn);
-    goHome(sn);
+    sendHome(sn);
   }, PATROL_HOME_DELAY_MS));
 }
 
-/** How long a patrol run accepts checkpoint uploads after its start. */
-export const PATROL_RUN_TTL_MS = 6 * 3_600_000;
+/** How long a patrol run accepts checkpoint uploads after its start (patrolRuns.ts). */
+export { PATROL_RUN_TTL_MS };
 // The run and token startPatrol issued per mower, the only uploads the server
 // takes, are in patrol_runs (services/patrolRuns.ts): a server restart in the
 // middle of a patrol keeps taking that run's uploads.
@@ -170,13 +178,15 @@ export function stopPatrol(sn: string): void {
 
 /**
  * False when this end of `run` was handled before: the mower re-sends its last
- * status after every MQTT reconnect, also after a server restart. A run this
- * server did not start last has nothing to compare with and counts as new.
+ * status after every MQTT reconnect, also after a server restart. An end of a
+ * run the database has no row for (restored or reset) is recorded as the
+ * mower's last run, so its re-sends are recognised too.
  */
 function firstEndOfRun(sn: string, run: string, phase: string): boolean {
   const last = patrolRunsRepo.get(sn);
-  if (!last || last.run !== run) return true;
-  return patrolRunsRepo.markEnded(sn, run, phase);
+  if (last && last.run === run) return patrolRunsRepo.markEnded(sn, run, phase);
+  if (/^\d{1,20}$/.test(run)) patrolRunsRepo.recordEnded(sn, run, phase, Number(run));
+  return true;
 }
 
 /**
@@ -225,9 +235,12 @@ export function onPatrolStatus(sn: string, phase: string, error?: string, run?: 
   console.log(`[Patrol] ${sn} ${phase}${error ? ` (${error})` : ''}, ${goesHome ? 'sending it home' : 'leaving it'}`);
   if (goesHome) {
     if (phase === 'error') goHomeAfterDelay(sn);
-    else goHome(sn);
+    else sendHome(sn);
   }
   if (phase === 'error') dispatchPatrolFailedEvent(sn, error || 'unknown', goesHome);
+  // Stopped on the mower (STOP button, lift, tilt): the owner hears of it; the
+  // mower stays where it stopped. The owner's own stop carries no flag.
+  else if (phase === 'stopped' && error) dispatchPatrolFailedEvent(sn, error, false, true);
 }
 
 /**
@@ -282,6 +295,7 @@ export function onPatrolFrame(sn: string, f: PatrolFrameReport, now = Date.now()
 /** Tests only. `keepRuns`: a server restart, what is on disk stays. */
 export function _resetPatrolState(opts: { keepRuns?: boolean } = {}): void {
   outOnPatrol.clear();
+  _resetPatrolDocking();
   if (!opts.keepRuns) patrolRunsRepo.clearAll();
   lastAlert.clear();
   for (const timer of pendingHome.values()) clearTimeout(timer);

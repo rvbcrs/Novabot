@@ -26,7 +26,7 @@ import os from 'os';
 import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason, isScheduleWarning } from '../services/scheduleRunner.js';
-import { stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
+import { stopDriveBeforeEnding, departureGate } from '../services/edgeCutGuard.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
@@ -3558,11 +3558,20 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   // command must kill a running zone drive or night patrol first, as the gate
   // does. The third branch calls publishToDevice, which gates itself: no second
   // stop_mow_zone from here.
-  if ((shouldEncrypt || sn.startsWith('LFI'))
-      && stopDriveBeforeEnding(sn, command, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'),
-        { toTopic: publishToTopic, toExtended: publishToExtended })) {
+  const rawPublish = shouldEncrypt || sn.startsWith('LFI');
+  const zonePhase = deviceCache.get(sn)?.get('mow_zone_phase');
+  const patrolPhase = deviceCache.get(sn)?.get('patrol_phase');
+  if (rawPublish
+      && stopDriveBeforeEnding(sn, command, zonePhase, patrolPhase, { toTopic: publishToTopic, toExtended: publishToExtended })) {
     console.log(`[DASHBOARD] ${sn}: zone or patrol drive running, stop_mow_zone sent before ${Object.keys(command)[0]}`);
   }
+  // A go home or a start waits for a departing drive's release (departureGate):
+  // the answer goes out at once, the publish after the hold.
+  const holdMs = rawPublish ? departureGate(sn, command, zonePhase, patrolPhase).delayMs : 0;
+  const publishRaw = (payload: Buffer, q: 0 | 1) => {
+    if (holdMs > 0) setTimeout(() => publishRawToDevice(sn, payload, q), holdMs);
+    else publishRawToDevice(sn, payload, q);
+  };
 
   if (shouldEncrypt) {
     const KEY_PREFIX = 'abcdabcd1234';
@@ -3576,8 +3585,8 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
     cipher.setAutoPadding(false);
     const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
-    console.log(`[DASHBOARD] Encrypted command (${json.length}B → ${encrypted.length}B) voor ${sn}: ${json}`);
-    publishRawToDevice(sn, encrypted, (qos === 1 ? 1 : 0) as 0 | 1);
+    console.log(`[DASHBOARD] Encrypted command (${json.length}B → ${encrypted.length}B) voor ${sn}: ${json}${holdMs > 0 ? ` (held ${holdMs} ms)` : ''}`);
+    publishRaw(encrypted, (qos === 1 ? 1 : 0) as 0 | 1);
     res.json({ ok: true, command: Object.keys(command)[0], encrypted: true, size: encrypted.length, demo: isDemoMode(sn) });
   } else if (sn.startsWith('LFI')) {
     // Issue #16: when the operator passes `encrypt: false` for an LFI* SN,
@@ -3585,8 +3594,8 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     // silently re-encrypt and the override would never reach the wire.
     // waltervl hit exactly this on stock v5.x firmware.
     const json = JSON.stringify(command);
-    publishRawToDevice(sn, Buffer.from(json, 'utf8'), (qos === 1 ? 1 : 0) as 0 | 1);
-    console.log(`[DASHBOARD] Raw (unencrypted) command voor ${sn}: ${json}`);
+    publishRaw(Buffer.from(json, 'utf8'), (qos === 1 ? 1 : 0) as 0 | 1);
+    console.log(`[DASHBOARD] Raw (unencrypted) command voor ${sn}: ${json}${holdMs > 0 ? ` (held ${holdMs} ms)` : ''}`);
     res.json({ ok: true, command: Object.keys(command)[0], encrypted: false, demo: isDemoMode(sn) });
   } else {
     // Non-LFI device — publishToDevice is safe (no auto-encrypt branch

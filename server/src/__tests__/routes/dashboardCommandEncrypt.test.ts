@@ -13,7 +13,7 @@
 
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -85,6 +85,7 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 import { dashboardRouter } from '../../routes/dashboard.js';
 import * as mapSync from '../../mqtt/mapSync.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
+import { DEPARTURE_SETTLE_MS, _resetEdgeCutGate } from '../../services/edgeCutGuard.js';
 
 const app = express();
 app.use(express.json());
@@ -255,5 +256,43 @@ describe('POST /api/dashboard/command/:sn: ending a running drive', () => {
     expect(mapSync.publishToDevice).not.toHaveBeenCalled();
     expect(mapSync.publishToExtended).toHaveBeenCalledWith(PLAIN_SN, { stop_mow_zone: {} });
     expect(firstCall(mapSync.publishToExtended)).toBeLessThan(firstCall(mapSync.publishRawToDevice));
+  });
+});
+
+/**
+ * R1: a drive killed while it departs releases the firmware's departure task on
+ * its way out. A go home or a start published before that release landed would
+ * be stopped by it: the route answers at once and publishes after the hold. A
+ * stop goes at once.
+ */
+describe('POST /api/dashboard/command/:sn while a drive departs', () => {
+  beforeEach(() => { deviceCache.clear(); _resetEdgeCutGate(); });
+  afterEach(() => { vi.useRealTimers(); _resetEdgeCutGate(); });
+
+  it.each([
+    ['AES', undefined],
+    ['plain JSON', false],
+  ])('answers go_pile at once and publishes it (%s) once the release had time to land', async (_branch, encrypt) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    deviceCache.set(LFI_SN, new Map([['patrol_phase', 'localizing']]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${LFI_SN}`)
+      .send({ encrypt, command: { go_pile: {} } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishToExtended).toHaveBeenCalledWith(LFI_SN, { stop_mow_zone: {} });
+    expect(mapSync.publishRawToDevice).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(DEPARTURE_SETTLE_MS);
+    expect(mapSync.publishRawToDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes stop_navigation at once', async () => {
+    deviceCache.set(LFI_SN, new Map([['mow_zone_phase', 'starting']]));
+    const r = await request(server)
+      .post(`/api/dashboard/command/${LFI_SN}`)
+      .send({ command: { stop_navigation: { cmd_num: 9 } } });
+
+    expect(r.status).toBe(200);
+    expect(mapSync.publishRawToDevice).toHaveBeenCalledTimes(1);
   });
 });

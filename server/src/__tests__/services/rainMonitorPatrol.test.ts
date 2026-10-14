@@ -37,6 +37,12 @@ vi.mock('../../db/repositories/index.js', () => ({
 
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { startRainMonitor, stopRainMonitor } from '../../services/rainMonitor.js';
+import { patrolRunsRepo } from '../../db/repositories/patrolRuns.js';
+
+/** A patrol run that is out for this mower (patrol_runs). */
+function patrolOut(sn: string) {
+  patrolRunsRepo.start({ mower_sn: sn, run: String(Date.now()), token: '0'.repeat(32), started_at: Date.now(), schedule_id: null });
+}
 
 // The monitor remembers a mower it sent home for two minutes: every case its own mowers.
 let n = 0;
@@ -69,6 +75,7 @@ afterEach(() => {
 
 describe('rain monitor and a night patrol', () => {
   it.each(['starting', 'localizing', 'patrolling', 'returning'])('leaves a patrol that is %s alone, and still pauses a mow', async phase => {
+    patrolOut(PATROL_SN);
     outInTask(PATROL_SN, 'Mode:COVERAGE Work:MOVING Prev work:WAIT Recharge: WAIT', { patrol_phase: phase });
     outInTask(MOW_SN, 'Mode:COVERAGE Work:COVERING Prev work:MOVING Recharge: WAIT');
     startRainMonitor();
@@ -79,10 +86,19 @@ describe('rain monitor and a night patrol', () => {
   });
 
   it('a departure that reports COVERING for a moment is no mow either', async () => {
+    patrolOut(PATROL_SN);
     outInTask(PATROL_SN, 'Mode:COVERAGE Work:COVERING Prev work:WAIT Recharge: WAIT', { patrol_phase: 'localizing' });
     startRainMonitor();
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(paused(PATROL_SN)).toEqual([]);
+  });
+
+  // R5: a cached phase never expires; without a run that is out it is a mow.
+  it('a stale patrol phase without a live run does not keep the rain pause away', async () => {
+    outInTask(PATROL_SN, 'Mode:COVERAGE Work:COVERING Prev work:MOVING Recharge: WAIT', { patrol_phase: 'patrolling' });
+    startRainMonitor();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(paused(PATROL_SN)).toHaveLength(1);
   });
 
   it('after the patrol ended a mow is paused again', async () => {

@@ -10,6 +10,8 @@ vi.mock('../../mqtt/mapSync.js', () => ({
 import { detectAndDispatch, resetEventState } from '../../notifications/eventDetector.js';
 import { dispatchEvent, getRecentEvents, setDashboardEventEmitter } from '../../notifications/dispatcher.js';
 import { publishToTopic } from '../../mqtt/mapSync.js';
+import { patrolRunsRepo } from '../../db/repositories/patrolRuns.js';
+import { markPatrolDocking, PATROL_DOCKING_MAX_MS, _resetPatrolDocking } from '../../services/patrolRuns.js';
 
 const SN = 'LFIN1231000211';
 
@@ -139,15 +141,22 @@ describe('eventDetector', () => {
 // coverage task that reports Work:MOVING: that is no mow, and "Mowing started"
 // on every patrol was a false push.
 describe('mowing events during a night patrol', () => {
-  const PSN = 'LFIN_NOTIFY_PATROL';
+  // Every case its own mower: the dispatcher's event list outlives a test.
+  let n = 0;
+  let PSN = '';
   const frame = (msg: string, patrolPhase?: string) => snap({
     error_status: '0', msg, battery_power: '90', recharge_status: '0', battery_state: 'DISCHARGING',
     ...(patrolPhase ? { patrol_phase: patrolPhase } : {}),
   });
   const mowingEvents = () => getRecentEvents(PSN, 50)
-    .filter(e => e.ts > startedAt && (e.type === 'mowing_started' || e.type === 'mowing_finished'));
-  let startedAt = 0;
-  beforeEach(() => { resetEventState(PSN); startedAt = Date.now() - 1; });
+    .filter(e => e.type === 'mowing_started' || e.type === 'mowing_finished');
+  beforeEach(() => {
+    n += 1;
+    PSN = `LFIN_NOTIFY_PATROL_${n}`;
+    resetEventState(PSN);
+    _resetPatrolDocking();
+    patrolRunsRepo.start({ mower_sn: PSN, run: String(Date.now()), token: '0'.repeat(32), started_at: Date.now(), schedule_id: null });
+  });
 
   it('no mowing started or finished while the patrol drives', () => {
     detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'starting'));
@@ -166,6 +175,44 @@ describe('mowing events during a night patrol', () => {
 
   it('a mow after the patrol is reported again', () => {
     detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'done'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:RUNNING', 'done'));
+    expect(mowingEvents().map(e => e.type)).toEqual(['mowing_started']);
+  });
+
+  // R5: a cached phase never expires; without a run that is out, a mow is a mow.
+  it('a stale patrol phase without a live run keeps no mowing push away', () => {
+    patrolRunsRepo.clearAll();
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'patrolling'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:RUNNING', 'patrolling'));
+    expect(mowingEvents().map(e => e.type)).toEqual(['mowing_started']);
+  });
+
+  // R8: after a patrol the server sends the mower home, and the firmware reports
+  // Work:MOVING on the way. From that go home until the mower is docked or
+  // charging (at most 15 minutes) that is no mow.
+  const docked = (msg: string) => snap({
+    error_status: '0', msg, battery_power: '90', recharge_status: '9', battery_state: 'CHARGING', patrol_phase: 'done',
+  });
+
+  it("no 'Mowing started' or 'Mowing finished' for the drive home after a patrol", () => {
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'done'));
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:MOVING', 'done'));
+    detectAndDispatch(PSN, docked('Mode:COVERAGE Work:FINISHED'));
+    expect(mowingEvents()).toEqual([]);
+  });
+
+  it('once it is docked, a mow is reported again', () => {
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'done'));
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, docked('Mode:COVERAGE Work:WAIT'));
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:RUNNING', 'done'));
+    expect(mowingEvents().map(e => e.type)).toEqual(['mowing_started']);
+  });
+
+  it('after 15 minutes without a dock it ends as well', () => {
+    detectAndDispatch(PSN, frame('Mode:COVERAGE Work:WAIT', 'done'));
+    markPatrolDocking(PSN, Date.now() - PATROL_DOCKING_MAX_MS - 1);
     detectAndDispatch(PSN, frame('Mode:COVERAGE Work:RUNNING', 'done'));
     expect(mowingEvents().map(e => e.type)).toEqual(['mowing_started']);
   });

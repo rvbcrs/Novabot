@@ -3,8 +3,10 @@
  * robot_decision) a stop from the app only reached the parked firmware task.
  * Every ending command must also kill that drive (stop_mow_zone).
  */
-import { describe, it, expect } from 'vitest';
-import { endsZoneDrive, stopDriveBeforeEnding, PATROL_DRIVE_PHASES } from '../../services/edgeCutGuard.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  endsZoneDrive, stopDriveBeforeEnding, departureGate, PATROL_DRIVE_PHASES, DEPARTURE_SETTLE_MS, _resetEdgeCutGate,
+} from '../../services/edgeCutGuard.js';
 
 describe('endsZoneDrive', () => {
   it('kills the drive for a stop, pause, go home or new start while it drives', () => {
@@ -94,5 +96,52 @@ describe('stopDriveBeforeEnding', () => {
   it('nothing for a command that ends nothing, or once the patrol has ended', () => {
     expect(gate({ set_para_info: {} }, undefined, 'patrolling')).toEqual({ fired: false, out: [] });
     expect(gate({ go_to_charge: {} }, undefined, 'done')).toEqual({ fired: false, out: [] });
+  });
+});
+
+// R1: a zone or patrol drive killed while it departs releases the firmware's
+// departure task on its way out (stop_task + quit_mapping_mode). A go home or a
+// start that reaches robot_decision before that release would be stopped by it,
+// so those wait until it landed. Stops and pauses do not: the release stops the
+// task anyway.
+describe('departureGate', () => {
+  const SN = 'LFIN_DEPART';
+  const REPLACING = ['go_pile', 'go_to_charge', 'start_run', 'start_navigation'];
+  const STOPPING = ['stop_navigation', 'stop_run', 'stop_task', 'stop_to_charge', 'pause_navigation', 'pause_run'];
+  beforeEach(() => _resetEdgeCutGate());
+
+  it.each([
+    ['zone drive', 'starting'], ['zone drive', 'localizing'], ['patrol', 'starting'], ['patrol', 'localizing'],
+  ])('while a %s is %s: what replaces the task waits, a stop or pause goes', (drive, phase) => {
+    const [zone, patrol] = drive === 'patrol' ? [undefined, phase] : [phase, undefined];
+    for (const name of REPLACING) {
+      _resetEdgeCutGate();
+      expect(departureGate(SN, { [name]: {} }, zone, patrol, 1_000)).toEqual({ delayMs: DEPARTURE_SETTLE_MS });
+    }
+    for (const name of STOPPING) {
+      _resetEdgeCutGate();
+      expect(departureGate(SN, { [name]: {} }, zone, patrol, 1_000)).toEqual({ delayMs: 0 });
+    }
+  });
+
+  it('holds nothing past the departure, after the end, or for a command that ends nothing', () => {
+    for (const [zone, patrol] of [['following_unicom', undefined], ['entering_zone', undefined], [undefined, 'patrolling'],
+      [undefined, 'returning'], [undefined, 'done'], ['done', 'stopped'], [undefined, undefined]] as const) {
+      expect(departureGate(SN, { go_pile: {} }, zone, patrol, 1_000)).toEqual({ delayMs: 0 });
+    }
+    expect(departureGate(SN, { set_para_info: {} }, undefined, 'localizing', 1_000)).toEqual({ delayMs: 0 });
+  });
+
+  it("a stop opens the window; go home's go_pile and its go_to_charge wait for the same moment, then pass", () => {
+    expect(departureGate(SN, { stop_navigation: {} }, undefined, 'localizing', 0)).toEqual({ delayMs: 0 });
+    expect(departureGate(SN, { go_pile: {} }, undefined, 'localizing', 200)).toEqual({ delayMs: DEPARTURE_SETTLE_MS - 200 });
+    expect(departureGate(SN, { go_to_charge: {} }, undefined, 'localizing', 700)).toEqual({ delayMs: DEPARTURE_SETTLE_MS - 700 });
+    // Re-sent when the window closes, with the phase still cached: through, no new window.
+    expect(departureGate(SN, { go_pile: {} }, undefined, 'localizing', DEPARTURE_SETTLE_MS)).toEqual({ delayMs: 0 });
+    expect(departureGate(SN, { go_to_charge: {} }, undefined, 'localizing', DEPARTURE_SETTLE_MS)).toEqual({ delayMs: 0 });
+  });
+
+  it('the release fits the window', () => {
+    expect(DEPARTURE_SETTLE_MS).toBe(3_000);   // the drive's release budget is 1.5 s (DEPARTURE_RELEASE_S)
   });
 });

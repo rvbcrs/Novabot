@@ -27,4 +27,13 @@ describe('patrol events', () => {
     expect(a.message).toContain('sent back to its dock');
     expect(b.message).toContain('did not leave its dock');
   });
+
+  // R3: the STOP button, a lift or a tilt stopped it in the garden.
+  it('a patrol stopped on the mower says the mower stays where it stopped', () => {
+    dispatchPatrolFailedEvent('LFIN1', 'error_push_button_stop', false, true);
+    const ev = vi.mocked(dispatchEvent).mock.calls[0][0];
+    expect(ev.type).toBe('patrol_failed');
+    expect(ev.message).toBe('The night patrol stopped (error_push_button_stop). The mower stays where it stopped.');
+    expect(ev.data).toMatchObject({ reason: 'error_push_button_stop', went_home: false });
+  });
 });

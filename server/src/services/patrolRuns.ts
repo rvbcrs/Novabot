@@ -7,6 +7,9 @@
 import { patrolRunsRepo } from '../db/repositories/patrolRuns.js';
 import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
 
+/** How long a patrol run counts as out after its start (also its upload window). */
+export const PATROL_RUN_TTL_MS = 6 * 3_600_000;
+
 /** A run id as the server makes them, String(Date.now()). */
 function isRun(run: unknown): run is string {
   return typeof run === 'string' && /^\d{1,20}$/.test(run);
@@ -29,6 +32,52 @@ export function isLivePatrolRun(sn: string, run: unknown): boolean {
 }
 
 export const PATROL_END_PHASES = new Set(['done', 'error', 'stopped']);
+
+/**
+ * True while a night patrol drives this mower: a driving phase in the cache AND
+ * a run that is out (started, its end not handled, within PATROL_RUN_TTL_MS). A
+ * cached phase alone never expires (a lost end, a reboot), and the gates that
+ * keep a patrol apart from the rain pause, the mowing pushes, the always-edge
+ * watcher and the edge cut must not hold for ever on it.
+ */
+export function isPatrolDriving(sn: string, cachedPhase: string | undefined, now = Date.now()): boolean {
+  if (!PATROL_DRIVE_PHASES.has(cachedPhase ?? '')) return false;
+  const last = patrolRunsRepo.get(sn);
+  return !!last && !last.ended_phase && now - last.started_at <= PATROL_RUN_TTL_MS;
+}
+
+/** How long the drive home after a patrol counts as the patrol's at most. */
+export const PATROL_DOCKING_MAX_MS = 15 * 60_000;
+// The server's go home after a patrol, per mower: the time it was sent.
+const dockingSince = new Map<string, number>();
+
+/** The server sends the mower home after a patrol (patrolService). */
+export function markPatrolDocking(sn: string, now = Date.now()): void {
+  dockingSince.set(sn, now);
+}
+
+/**
+ * True while the drive home after a patrol is under way: from the server's go
+ * home until the mower reports docked or charging, at most
+ * PATROL_DOCKING_MAX_MS. On its way the firmware reports Work:MOVING, which is
+ * no mow. The first docked report still belongs to the docking and ends it, so
+ * a later departure is a mow again.
+ */
+export function patrolDockingUnderWay(sn: string, docked: boolean, now = Date.now()): boolean {
+  const since = dockingSince.get(sn);
+  if (since === undefined) return false;
+  if (now - since > PATROL_DOCKING_MAX_MS) {
+    dockingSince.delete(sn);
+    return false;
+  }
+  if (docked) dockingSince.delete(sn);
+  return true;
+}
+
+/** Tests only. */
+export function _resetPatrolDocking(): void {
+  dockingSince.clear();
+}
 
 /**
  * True for a phase on the way (not an end) of the run whose end was handled
@@ -75,7 +124,9 @@ export function patrolReport(
     if (typeof b.phase !== 'string' || !b.phase || isOlderPatrolRun(sn, b.run)
         || isAfterPatrolEnd(sn, b.phase, b.run)) return null;
     return {
-      changes: new Map([['patrol_phase', b.phase], ['patrol_error', b.phase === 'error' ? (error ?? 'unknown') : '']]),
+      // A `stopped` with a flag (STOP button, lift, tilt) keeps it, so the card can say why.
+      changes: new Map([['patrol_phase', b.phase],
+        ['patrol_error', b.phase === 'error' ? (error ?? 'unknown') : b.phase === 'stopped' ? (error ?? '') : '']]),
       status: { phase: b.phase, error, run: typeof b.run === 'string' ? b.run : undefined },
     };
   }

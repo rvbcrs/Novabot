@@ -10,7 +10,7 @@ import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { isMapMqttPacketBlocked } from './mapCommandGuard.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { edgeCutGate, stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
+import { edgeCutGate, stopDriveBeforeEnding, departureGate } from '../services/edgeCutGuard.js';
 import { patrolReport } from '../services/patrolRuns.js';
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
@@ -598,13 +598,16 @@ export async function startMqttBroker(): Promise<void> {
               publishToExtended(sn, { stop_boundary_follow: {} });
             }
             // The app packet itself passes after this, when the callback below runs.
-            if (stopDriveBeforeEnding(sn, parsed, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'),
-              { toTopic: publishToTopic, toExtended: publishToExtended })) {
+            const zonePhase = deviceCache.get(sn)?.get('mow_zone_phase');
+            const patrolPhase = deviceCache.get(sn)?.get('patrol_phase');
+            if (stopDriveBeforeEnding(sn, parsed, zonePhase, patrolPhase, { toTopic: publishToTopic, toExtended: publishToExtended })) {
               console.log(`${C.cyan}[EDGE] ${sn}: zone or patrol drive running, stop_mow_zone sent before app ${Object.keys(parsed)[0]}${C.reset}`);
             }
-            if (edge.delayMs > 0) {
+            // A go home or a start waits for a departing drive's release (departureGate).
+            const delayMs = Math.max(edge.delayMs, departureGate(sn, parsed, zonePhase, patrolPhase).delayMs);
+            if (delayMs > 0) {
               const release = callback;
-              callback = (error) => { setTimeout(() => release(error), edge.delayMs); };
+              callback = (error) => { setTimeout(() => release(error), delayMs); };
             }
             if (parsed.ota_upgrade_cmd) {
               const originalTz = parsed.ota_upgrade_cmd.tz;

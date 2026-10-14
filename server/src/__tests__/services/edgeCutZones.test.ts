@@ -17,7 +17,7 @@ vi.mock('../../services/positionTelemetry.js', async original => ({
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
 import { freshPositionState } from '../../services/positionTelemetry.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
-import { mapRepo } from '../../db/repositories/index.js';
+import { mapRepo, patrolRunsRepo } from '../../db/repositories/index.js';
 import { startEdgeCut, startEdgeCuts, continueEdgeCuts, cancelEdgeCuts } from '../../services/mowingService.js';
 
 const SN = 'LFIN_EDGE_ZONES';
@@ -74,7 +74,13 @@ describe('startEdgeCuts', () => {
 // A night patrol drives outside robot_decision (nav2 goals). An edge cut started
 // beside it would drive and cut at the same time; the patrol is stopped first.
 describe('edge cuts during a night patrol', () => {
+  const patrolOut = () => patrolRunsRepo.start({
+    mower_sn: SN, run: String(Date.now()), token: '0'.repeat(32), started_at: Date.now(), schedule_id: null,
+  });
+  beforeEach(() => patrolRunsRepo.clearAll());
+
   it.each(['starting', 'localizing', 'patrolling', 'returning'])('are refused while the patrol is %s', phase => {
+    patrolOut();
     deviceCache.get(SN)!.set('patrol_phase', phase);
     for (const r of [startEdgeCuts(SN, ['map0', 'map1'], 40), startEdgeCut(SN, 'map0', 40, true)]) {
       expect(r.ok).toBe(false);
@@ -84,7 +90,14 @@ describe('edge cuts during a night patrol', () => {
     expect(continueEdgeCuts(SN)).toBe(false);   // nothing was queued either
   });
 
+  // R5: a cached phase never expires; only a run that is out counts.
+  it('a stale patrol phase without a live run holds no edge cut back', () => {
+    deviceCache.get(SN)!.set('patrol_phase', 'patrolling');
+    expect(startEdgeCuts(SN, ['map0'], 40).ok).toBe(true);
+  });
+
   it.each(['done', 'error', 'stopped'])('start again once the patrol has ended (%s)', phase => {
+    patrolOut();
     deviceCache.get(SN)!.set('patrol_phase', phase);
     expect(startEdgeCuts(SN, ['map0'], 40).ok).toBe(true);
     expect(sent()).toEqual([{ start_edge_cut: { mapName: 'map0', bladeHeight: 40, departFromDock: true } }]);

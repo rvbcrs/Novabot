@@ -36,7 +36,7 @@ import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSy
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceCache } from './sensorData.js';
-import { edgeCutGate, stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
+import { edgeCutGate, stopDriveBeforeEnding, departureGate } from '../services/edgeCutGuard.js';
 
 const TAG = '[MAP-SYNC]';
 
@@ -261,12 +261,15 @@ export function publishToDevice(
     console.log(`${TAG} ${sn}: edge cut running, stop_boundary_follow before ${Object.keys(command)[0]}`);
     publishToExtended(sn, { stop_boundary_follow: {} });
   }
-  if (stopDriveBeforeEnding(sn, command, deviceCache.get(sn)?.get('mow_zone_phase'), deviceCache.get(sn)?.get('patrol_phase'),
-    { toTopic: publishToTopic, toExtended: publishToExtended })) {
+  const zonePhase = deviceCache.get(sn)?.get('mow_zone_phase');
+  const patrolPhase = deviceCache.get(sn)?.get('patrol_phase');
+  if (stopDriveBeforeEnding(sn, command, zonePhase, patrolPhase, { toTopic: publishToTopic, toExtended: publishToExtended })) {
     console.log(`${TAG} ${sn}: zone or patrol drive running, stop_mow_zone sent before ${Object.keys(command)[0]}`);
   }
-  if (edge.delayMs > 0) {
-    setTimeout(() => publishToDevice(sn, command, opts), edge.delayMs);
+  // A go home or a start waits for a departing drive's release (departureGate).
+  const delayMs = Math.max(edge.delayMs, departureGate(sn, command, zonePhase, patrolPhase).delayMs);
+  if (delayMs > 0) {
+    setTimeout(() => publishToDevice(sn, command, opts), delayMs);
     return;
   }
 

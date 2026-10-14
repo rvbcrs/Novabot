@@ -14,7 +14,7 @@ import {
   startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut, EDGE_ALWAYS_KEY, edgeAlways,
 } from './mowingService.js';
 import { startPatrol } from './patrolService.js';
-import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
+import { isPatrolDriving } from './patrolRuns.js';
 import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
@@ -94,7 +94,7 @@ function armAlwaysEdge(nowMs: number): void {
     // blades spinning when the patrol docks at night. The transition is used
     // up here, so a COVERING still reported after the patrol was stopped does
     // not arm either.
-    if (PATROL_DRIVE_PHASES.has(cache?.get('patrol_phase') ?? '')) continue;
+    if (isPatrolDriving(sn, cache?.get('patrol_phase'))) continue;
     // Alleen op de overgang naar maaien: een stop of "naar huis" via de server
     // ontwapent de watcher terwijl de maaier nog even als maaiend rapporteert,
     // en die beurt mag dan niet opnieuw gearmd worden.

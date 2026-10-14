@@ -29,6 +29,7 @@ import { freshPositionState } from '../../services/positionTelemetry.js';
 import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent } from '../../notifications/eventDetector.js';
 import { mapRepo, deviceSettingsRepo, scheduleRepo } from '../../db/repositories/index.js';
 import { renderMsg, type Msg } from '../../services/serverText.js';
+import { patrolDockingUnderWay } from '../../services/patrolRuns.js';
 
 const SN = 'LFIN_PATROL_0001';
 const SQ = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
@@ -418,6 +419,74 @@ describe('patrol service', () => {
     expect(startPatrol(SN, 2000).ok).toBe(true);
     onPatrolStatus(SN, 'error', 'not_localized', '2000');   // docked: only "was out" could send it home
     expect(goHome).toHaveBeenCalledTimes(1);                // the first patrol's done, nothing more
+  });
+
+  // R3: the STOP button, a lift or a tilt end a patrol as `stopped` with that flag.
+  it('a patrol stopped on the mower tells the owner once, and sends nobody home', () => {
+    vi.useFakeTimers();
+    mower({});
+    dockTelemetry({ dockKnown: true, docked: false });
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');
+    onPatrolStatus(SN, 'stopped', 'error_push_button_stop', '1000');
+    onPatrolStatus(SN, 'stopped', 'error_push_button_stop', '1000');   // re-sent after a reconnect
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledTimes(1);
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'error_push_button_stop', false, true);
+    expect(publishToTopic).toHaveBeenLastCalledWith(`novabot/cmd/${SN}`, { led_set: 0 });
+  });
+
+  it("the owner's own stop notifies nobody", () => {
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');
+    onPatrolStatus(SN, 'stopped', undefined, '1000');
+    expect(dispatchPatrolFailedEvent).not.toHaveBeenCalled();
+    expect(goHome).not.toHaveBeenCalled();
+  });
+
+  // R4: the mower re-sends its last status after every reconnect, also when the
+  // server's database lost the run (restored or reset).
+  it('an end of a run the database does not know is handled once, and takes no uploads', () => {
+    vi.useFakeTimers();
+    dockTelemetry({ dockKnown: true, docked: false });
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '5000');
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '5000');
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '5000');
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).toHaveBeenCalledTimes(1);
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(publishToTopic).mock.calls.filter(c => (c[1] as { led_set: number }).led_set === 0)).toHaveLength(1);
+    expect(isActivePatrolRun(SN, '5000', '0'.repeat(32), 5000)).toBe(false);
+  });
+
+  // R8: the drive home after a patrol reports Work:MOVING; that is no mow.
+  it('marks the docking it starts after a patrol, at once after done and after the delay after an error', () => {
+    vi.useFakeTimers();
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');
+    expect(patrolDockingUnderWay(SN, false)).toBe(false);
+    onPatrolStatus(SN, 'done', undefined, '1000');
+    expect(patrolDockingUnderWay(SN, false)).toBe(true);
+
+    _resetPatrolState();
+    expect(startPatrol(SN, 2000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '2000');
+    onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '2000');
+    expect(patrolDockingUnderWay(SN, false)).toBe(false);
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(patrolDockingUnderWay(SN, false)).toBe(true);
+  });
+
+  it('a stop leaves the mower where it is: no docking to mark', () => {
+    mower({});
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'patrolling', undefined, '1000');
+    onPatrolStatus(SN, 'stopped', undefined, '1000');
+    expect(patrolDockingUnderWay(SN, false)).toBe(false);
   });
 
   it('a repeated done docks once', () => {

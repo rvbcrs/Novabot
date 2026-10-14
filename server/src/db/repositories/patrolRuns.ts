@@ -28,6 +28,13 @@ class PatrolRunsRepository {
   private _markEnded = db.prepare(
     'UPDATE patrol_runs SET ended_phase = ? WHERE mower_sn = ? AND run = ? AND ended_phase IS NULL',
   );
+  private _recordEnded = db.prepare(`
+    INSERT INTO patrol_runs (mower_sn, run, token, started_at, schedule_id, ended_phase)
+    VALUES (@mower_sn, @run, '', @started_at, NULL, @ended_phase)
+    ON CONFLICT(mower_sn) DO UPDATE SET
+      run = excluded.run, token = '', started_at = excluded.started_at,
+      schedule_id = NULL, ended_phase = excluded.ended_phase
+  `);
   private _clearAll = db.prepare('DELETE FROM patrol_runs');
 
   get(sn: string): PatrolRunRow | undefined {
@@ -42,6 +49,12 @@ class PatrolRunsRepository {
   /** Record the end of `run`. False when that run is not the mower's last, or its end was recorded before. */
   markEnded(sn: string, run: string, phase: string): boolean {
     return this._markEnded.run(phase, sn, run).changes > 0;
+  }
+
+  /** The end of a run this database has no row for (restored or reset): it becomes the
+   *  mower's last run, ended, without a token (no uploads). */
+  recordEnded(sn: string, run: string, phase: string, startedAt: number): void {
+    this._recordEnded.run({ mower_sn: sn, run, started_at: startedAt, ended_phase: phase });
   }
 
   /** Tests only. */
