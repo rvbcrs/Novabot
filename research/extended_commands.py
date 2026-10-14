@@ -2223,16 +2223,119 @@ def _secure_patrol_blades(attempts=3, pause=1.0):
 
 def _terminate_patrol_drive(proc):
     """Stop the patrol drive like stop_mow_zone does: end the process
-    (SIGTERM, SIGKILL after 3 s), then cancel its nav2 goal and restore
-    the transit params, which the killed drive's finally never does."""
+    (SIGTERM, so on its way out it releases its departure task, its own nav2
+    goal and the headlight; SIGKILL after 3 s), then cancel the nav2 goals
+    accepted up to that moment and restore the transit params, which a drive
+    that had to be killed never does."""
+    killed_at_ns = time.time_ns()
     if proc.poll() is None:
         proc.terminate()
         try:
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
-    threading.Thread(target=_stop_mow_zone_cleanup, daemon=True,
+    threading.Thread(target=_stop_mow_zone_cleanup, args=(killed_at_ns,), daemon=True,
                      name="patrol-stop-cleanup").start()
+
+
+# The last patrol_status sent, so the end of a patrol survives a dropped
+# message: main() sends it again after every MQTT (re)connect while it is
+# younger than PATROL_STATUS_MAX_AGE_S (the server's run TTL), and the server
+# ignores a repeat. It is kept on disk too, under /userdata so it survives a
+# reboot: a patrol that was still running when the mower (or this daemon) went
+# down is reported once as error mower_restarted at the next start.
+PATROL_STATUS_FILE = "/userdata/lfi/patrol_status.json"
+PATROL_STATUS_MAX_AGE_S = 6 * 3600
+PATROL_END_PHASES = ("done", "error", "stopped")
+_LAST_PATROL_STATUS = [None]   # {"body": {...}, "t": epoch seconds, "gen": patrol start}
+_LAST_PATROL_LOCK = threading.Lock()
+_PATROL_STARTS = [0]           # patrol starts so far, the `gen` of each start's statuses
+
+
+def _next_patrol_start():
+    with _LAST_PATROL_LOCK:
+        _PATROL_STARTS[0] += 1
+        return _PATROL_STARTS[0]
+
+
+def _remember_patrol_status(body, now=None, gen=0):
+    """Keep `body` as the last patrol_status sent, in memory and on disk. The
+    status of an earlier start (`gen`) never replaces one of a later start: a
+    run taken over by a newer patrol reports its end after the newer one said
+    it is starting."""
+    entry = {"body": dict(body), "t": time.time() if now is None else now, "gen": gen}
+    with _LAST_PATROL_LOCK:
+        last = _LAST_PATROL_STATUS[0]
+        if last is not None and last["gen"] > gen:
+            return
+        _LAST_PATROL_STATUS[0] = entry
+        try:
+            _write_file_atomic(PATROL_STATUS_FILE, json.dumps(entry))
+        except OSError as e:
+            log(f"patrol: last status not kept on disk: {e}")
+
+
+def reannounce_patrol_status(respond, now=None):
+    """After an MQTT (re)connect: the last patrol_status once more, when one was
+    sent and it is younger than PATROL_STATUS_MAX_AGE_S. True when it went out."""
+    with _LAST_PATROL_LOCK:
+        entry = _LAST_PATROL_STATUS[0]
+    if entry is None:
+        return False
+    age = (time.time() if now is None else now) - entry["t"]
+    if age > PATROL_STATUS_MAX_AGE_S:
+        return False
+    try:
+        respond("patrol_status", dict(entry["body"]))
+    except Exception as e:
+        log(f"patrol: last status not re-sent: {e}")
+        return False
+    log(f"patrol: last status re-sent after a connect: {entry['body']} ({int(age)} s old)")
+    return True
+
+
+def recover_patrol_status_after_restart():
+    """At start-up. When the last patrol status on disk is not an end, that
+    patrol was still running when the mower or this daemon went down: its
+    drive is gone and will never report the end. Report it once as error
+    mower_restarted (the server docks the mower when it is out, and says so):
+    that status replaces the one on disk, and the first connect sends it.
+    Returns the status, or None when there is nothing to report."""
+    try:
+        with open(PATROL_STATUS_FILE) as fh:
+            body = json.load(fh)["body"]
+        phase, run = body["phase"], str(body["run"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if phase in PATROL_END_PHASES or not re.fullmatch(r"\d{1,20}", run):
+        return None
+    status = {"phase": "error", "run": run, "error": "mower_restarted"}
+    log(f"patrol: run {run} was at {phase} when the mower restarted; reporting {status}")
+    _remember_patrol_status(status)
+    return status
+
+
+def _patrol_headlight_off():
+    """Headlight 0 from the mower itself, for a patrol drive that ended without
+    switching it off (stopped, killed, crashed): the light is off for the
+    docking even when the server never hears the end (dock LED = stock).
+    Through the blade relay's long-lived /led_set publisher, matched long ago;
+    a ros2 topic pub when the relay is not up."""
+    publish = getattr(_ROS_BLADE_NODE[0], "publish_headlight", None)
+    if callable(publish):
+        try:
+            publish(0)
+            log("patrol: headlight off")
+            return
+        except Exception as e:
+            log(f"patrol: headlight off through the relay failed: {e}")
+    err = _publish_topic_bg("/led_set", "std_msgs/msg/UInt8", "{data: 0}")
+    log(f"patrol: headlight off through ros2 topic pub{': ' + err if err else ''}")
+
+
+# How long the chassis safety watcher of a patrol may run: a patrol ends long
+# before the server stops taking its uploads (6 h).
+PATROL_WATCH_MAX_S = 6 * 3600
 
 
 def handle_patrol(params, respond):
@@ -2261,11 +2364,39 @@ def handle_patrol(params, respond):
     _stale = kill_stale_mow_drives()
     if _stale:
         log(f"patrol: {len(_stale)} vastgelopen run(s) opgeruimd voor de start: {_stale}")
+
+    end_lock = threading.Lock()
+    ended = [False]   # this run's end went out; nothing of the run follows it
+    safety = [None]   # the chassis stop flag that ended the run, if one did
+    gen = _next_patrol_start()
+
+    def _say(name, body):
+        if name == "patrol_status":
+            # Sent again after a reconnect, also when this send fails.
+            _remember_patrol_status(body, gen=gen)
+        try:
+            respond(name, body)
+        except Exception as e:  # a dropped MQTT link must not end the supervision of a driving mower
+            log(f"patrol: could not send {name}: {e}")
+
+    def _status(body):
+        """A phase on the way. After the run's end nothing more goes out."""
+        if not ended[0]:
+            _say("patrol_status", body)
+
+    def _end(body):
+        """The run's end, once: the drive's own, a stop, or a failure here."""
+        with end_lock:
+            if ended[0]:
+                return
+            ended[0] = True
+        _say("patrol_status", body)
+
     # The drive process needs 11-15 s to come up on a loaded mower, and until it
     # prints its first phase the server still holds the previous run's end as the
     # patrol phase, so a stop in that window would not find a patrol running.
     # Say we are on it now (as mow_zone does).
-    respond("patrol_status", {"phase": "starting", "run": run})
+    _say("patrol_status", {"phase": "starting", "run": run})
     wrapper = (
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "
@@ -2273,19 +2404,28 @@ def handle_patrol(params, respond):
     )
     argv = ["bash", "-c", wrapper, "patrol", PATROL_DRIVE_SCRIPT, params_file]
 
-    def _say(name, body):
-        try:
-            respond(name, body)
-        except Exception as e:  # a dropped MQTT link must not end the supervision of a driving mower
-            log(f"patrol: could not send {name}: {e}")
+    def _safety_stop(proc, reason):
+        """The STOP button, a lift or a tilt (as for the edge cut, #147): the
+        drive ends with SIGTERM, so it releases what it holds on its way out, the
+        stop cleanup releases the nav goals accepted up to then, and the run ends
+        as stopped with the flag. The server leaves the mower where it is."""
+        if ended[0]:
+            return
+        safety[0] = reason
+        _terminate_patrol_drive(proc)
+        _end({"phase": "stopped", "run": run, "error": reason})
 
     def _run():
-        terminal_seen = blades_secured = perception_changed = False
+        terminal_seen = blades_secured = perception_changed = drive_finished = False
         proc = None
         try:
             proc = subprocess.Popen(argv, env=_ros_env(), stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1)
             _register_mow_drive(proc)
+            threading.Thread(target=_watch_chassis_stop,
+                             args=(proc, lambda reason: _safety_stop(proc, reason), "patrol"),
+                             kwargs={"max_s": PATROL_WATCH_MAX_S},
+                             daemon=True, name="patrol-safety").start()
             for line in proc.stdout:
                 line = line.strip()
                 if line.startswith("PHASE "):
@@ -2295,22 +2435,24 @@ def handle_patrol(params, respond):
                         # The firmware departure runs a coverage task's init
                         # states; nothing of a patrol may cut.
                         blades_secured = True
-                        _say("patrol_status", {"phase": "patrolling", "run": run})
+                        _status({"phase": "patrolling", "run": run})
                         if not _secure_patrol_blades():
                             log("patrol: blade guard failed, terminating the drive")
                             _terminate_patrol_drive(proc)
-                            _say("patrol_status", {"phase": "error", "run": run,
-                                                   "error": "blade_guard_failed"})
+                            _end({"phase": "error", "run": run, "error": "blade_guard_failed"})
                             terminal_seen = True
                             break
                         perception_changed = _apply_edge_perception_low()
                         continue
-                    if ph in ("done", "error"):
-                        terminal_seen = True
                     msg = {"phase": ph, "run": run}
                     if ph == "error" and len(parts) > 2:
                         msg["error"] = parts[2]
-                    _say("patrol_status", msg)
+                    if ph in ("done", "error"):
+                        # The drive switched the headlight off before it said so.
+                        terminal_seen = drive_finished = True
+                        _end(msg)
+                    else:
+                        _status(msg)
                 elif line.startswith("CHECKPOINT ") or line.startswith("SKIPPED "):
                     kind, _, body = line.partition(" ")
                     try:
@@ -2328,20 +2470,29 @@ def handle_patrol(params, respond):
             proc.wait()
             superseded = _drive_superseded(proc)
             stopped = _unregister_mow_drive(proc)
-            if proc.returncode != 0 and not terminal_seen:
+            if safety[0]:
+                _end({"phase": "stopped", "run": run, "error": safety[0]})
+            elif not terminal_seen:
+                # Not gated on the exit code: main() ignores SIGCHLD, so the kernel
+                # reaps the drive and its returncode reads 0 even when it was killed.
+                # A drive that finished prints its own end; one that did not, ended
+                # some other way.
                 if superseded:
                     log("patrol: drive superseded by a newer drive, reported as stopped")
-                _say("patrol_status", {"phase": "stopped", "run": run} if (stopped or superseded) else
+                _end({"phase": "stopped", "run": run} if (stopped or superseded) else
                      {"phase": "error", "run": run, "error": f"drive_exit_{proc.returncode}"})
         except Exception as e:
             log(f"patrol error: {e}")
             if proc is not None:
                 # Nobody reads its output any more: take the drive down, do not leave it driving.
                 _terminate_patrol_drive(proc)
-            _say("patrol_status", {"phase": "error", "run": run, "error": str(e)})
+            _end({"phase": "error", "run": run, "error": str(e)})
         finally:
             if proc is not None:
                 _unregister_mow_drive(proc)
+                if not drive_finished:
+                    # Stopped, killed or crashed: it may not have got to its own.
+                    _patrol_headlight_off()
             if perception_changed:
                 _restore_edge_perception()
             try:
@@ -2353,15 +2504,23 @@ def handle_patrol(params, respond):
     respond("patrol_respond", {"result": 0, "run": run})
 
 
-def _stop_mow_zone_cleanup_cli():
+def _cancel_stamp(killed_at_ns):
+    """CancelGoal's stamp for a kill at `killed_at_ns` (epoch ns): (sec, nanosec)."""
+    return divmod(int(killed_at_ns), 10 ** 9)
+
+
+def _stop_mow_zone_cleanup_cli(killed_at_ns=None):
     """CLI-fallback voor _stop_mow_zone_cleanup wanneer rclpy niet importeert.
 
     Detached (zelfde patroon als _call_cover_task_stop): een bash die eerst de
     FollowPath cancel service aanroept en daarna de vijf transit-params
-    terugzet. Best-effort; output naar /tmp/stop_mow_zone.log.
+    terugzet. Best-effort; output naar /tmp/stop_mow_zone.log. The cancel
+    carries the kill time, as in the rclpy path.
     """
     def _cli_val(v):
         return str(v).lower() if isinstance(v, bool) else str(v)
+    sec, nanosec = _cancel_stamp(time.time_ns() if killed_at_ns is None else killed_at_ns)
+    request = f"'{{goal_info: {{stamp: {{sec: {sec}, nanosec: {nanosec}}}}}}}'"
     sets = "; ".join(
         f"timeout 20 ros2 param set {_NAV_NODE} {k} {_cli_val(v)}"
         for k, v in _TRANSIT_PARAM_DEFAULTS.items())
@@ -2369,9 +2528,9 @@ def _stop_mow_zone_cleanup_cli():
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "
         "( timeout 10 ros2 service call /follow_path/_action/cancel_goal "
-        "action_msgs/srv/CancelGoal '{}'; "
+        f"action_msgs/srv/CancelGoal {request}; "
         "timeout 10 ros2 service call /navigate_to_pose/_action/cancel_goal "
-        "action_msgs/srv/CancelGoal '{}'; "
+        f"action_msgs/srv/CancelGoal {request}; "
         + sets +
         " ) >> /tmp/stop_mow_zone.log 2>&1"
     )
@@ -2382,26 +2541,33 @@ def _stop_mow_zone_cleanup_cli():
         log(f"stop_mow_zone cleanup CLI-fallback faalde: {e}")
 
 
-def _stop_mow_zone_cleanup():
+def _stop_mow_zone_cleanup(killed_at_ns=None):
     """Cancel de in-flight nav2 FollowPath goal en herstel de transit-params.
 
     Een kill van mow_zone_drive.py laat twee dingen achter:
       1. De FollowPath goal blijft server-side EXECUTING; nav2 blijft cmd_vel
-         publiceren en de maaier rijdt het pad gewoon uit. De action cancel
-         service (/follow_path/_action/cancel_goal) met een LEEG request
-         (nul-UUID plus nul-timestamp) annuleert per ROS2 conventie ALLE
-         actieve goals; de controller server publiceert daarna zelf een
-         nul-Twist zodat de maaier echt remt in plaats van uitrijdt.
+         publiceren en de maaier rijdt het pad gewoon uit. The action cancel
+         service (/follow_path/_action/cancel_goal) gets the zero goal id and
+         the time of the kill as its stamp: by the ROS 2 CancelGoal rules that
+         cancels every goal accepted at or before that stamp, and nothing
+         accepted later. This cleanup lands 1 to 10 s after the stop, and an
+         empty request (zero stamp, every goal) also cancelled the docking goal
+         of the go_pile / go_to_charge that follows a stop. The controller
+         server publishes a zero Twist itself, so the mower brakes.
       2. De vijf gerelaxte controllerparams: de finally in mow_zone_drive.py
          die ze terugzet draait niet bij een kill, dus wij zetten ze hier
          terug op hun yaml-defaults (_TRANSIT_PARAM_DEFAULTS).
 
-    Draait in een achtergrondthread zodat het MQTT-antwoord niet blokkeert.
-    rclpy-pad: call_async verstuurt het request synchroon over DDS; het
-    antwoord afwachten zou spinnen vergen (conflicteert met de shared
-    executor van de blade relay) en is voor het effect niet nodig. Idempotent:
-    zonder actieve goal cancelt de service niets en zijn de param-sets no-ops.
+    `killed_at_ns`: when the drive was terminated (time.time_ns()); now when
+    the caller did not say. Draait in een achtergrondthread zodat het
+    MQTT-antwoord niet blokkeert. rclpy-pad: call_async verstuurt het request
+    synchroon over DDS; het antwoord afwachten zou spinnen vergen
+    (conflicteert met de shared executor van de blade relay) en is voor het
+    effect niet nodig. Idempotent: zonder actieve goal cancelt de service
+    niets en zijn de param-sets no-ops.
     """
+    if killed_at_ns is None:
+        killed_at_ns = time.time_ns()
     try:
         import rclpy  # type: ignore
         from action_msgs.srv import CancelGoal  # type: ignore
@@ -2409,7 +2575,7 @@ def _stop_mow_zone_cleanup():
         from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType  # type: ignore
     except ImportError as ex:
         log(f"stop_mow_zone cleanup: rclpy onbeschikbaar ({ex}), CLI-fallback")
-        _stop_mow_zone_cleanup_cli()
+        _stop_mow_zone_cleanup_cli(killed_at_ns)
         return
     try:
         try:
@@ -2421,11 +2587,16 @@ def _stop_mow_zone_cleanup():
             # FollowPath (transit) and NavigateToPose (nav_to_point, and the
             # approach inside mow_zone): a kill of the drive process leaves
             # either goal executing server-side, so both are cancelled.
+            sec, nanosec = _cancel_stamp(killed_at_ns)
             for srv in ("/follow_path/_action/cancel_goal", "/navigate_to_pose/_action/cancel_goal"):
                 cancel_cli = node.create_client(CancelGoal, srv)
                 if cancel_cli.wait_for_service(timeout_sec=5.0):
-                    cancel_cli.call_async(CancelGoal.Request())
-                    log(f"stop_mow_zone cleanup: cancel verstuurd naar {srv}")
+                    req = CancelGoal.Request()
+                    req.goal_info.goal_id.uuid = [0] * 16   # zero id: every goal up to the stamp
+                    req.goal_info.stamp.sec = sec
+                    req.goal_info.stamp.nanosec = nanosec
+                    cancel_cli.call_async(req)
+                    log(f"stop_mow_zone cleanup: cancel tot {sec}.{nanosec:09d} verstuurd naar {srv}")
                 else:
                     log(f"stop_mow_zone cleanup: {srv} niet gevonden (geen actieve nav2?)")
             param_cli = node.create_client(SetParameters, f"{_NAV_NODE}/set_parameters")
@@ -2454,7 +2625,7 @@ def _stop_mow_zone_cleanup():
             node.destroy_node()
     except Exception as ex:
         log(f"stop_mow_zone cleanup: rclpy-pad faalde ({ex}), CLI-fallback")
-        _stop_mow_zone_cleanup_cli()
+        _stop_mow_zone_cleanup_cli(killed_at_ns)
 
 
 def handle_stop_mow_zone(params, respond):
@@ -2482,11 +2653,15 @@ def handle_stop_mow_zone(params, respond):
     """
     killed = False
     proc = None
+    # The goal cancel below spares whatever nav2 accepts after this moment:
+    # the docking of the go_pile / go_to_charge that follows a stop.
+    killed_at_ns = time.time_ns()
     with _MOW_DRIVE_LOCK:
         proc = _MOW_DRIVE_PROC[0]
         if proc is not None and proc.poll() is None:
             _MOW_DRIVE_STOPPED[0] = True
             try:
+                killed_at_ns = time.time_ns()
                 proc.terminate()
                 killed = True
             except Exception:
@@ -2504,7 +2679,7 @@ def handle_stop_mow_zone(params, respond):
                        capture_output=True, timeout=5)
     except Exception:
         pass
-    threading.Thread(target=_stop_mow_zone_cleanup, daemon=True,
+    threading.Thread(target=_stop_mow_zone_cleanup, args=(killed_at_ns,), daemon=True,
                      name="stop-mow-zone").start()
     log(f"stop_mow_zone: killed={killed} (goal-cancel + param-herstel gedispatcht)")
     respond("stop_mow_zone_respond", {"result": 0, "killed": killed,
@@ -2604,18 +2779,21 @@ def _echo_messages(lines):
         yield msg
 
 
-def _watch_edge_cut_safety(edge_proc, respond):
-    """Stop the edge cut when a /chassis_incident stop flag appears.
+def _watch_chassis_stop(proc, on_stop, label, max_s=2000):
+    """Call on_stop(flag) once when a /chassis_incident stop flag appears while
+    `proc` runs: the edge cut (#147) and the night patrol, both outside
+    robot_decision, whose own reaction to a STOP press does not reach them.
 
     A fresh `ros2 topic echo` process, not an rclpy subscription in this
     process: in-process subscriptions were seen to starve on this mower
     (auto_map field report), and this one must not. ChassisIncident comes
-    every 2 s, so a STOP press is acted on within about that.
+    every 2 s, so a STOP press is acted on within about that. `max_s` bounds
+    the echo process; it should outlive the watched process.
     """
     cmd = (
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "
-        "exec timeout 2000 ros2 topic echo /chassis_incident novabot_msgs/msg/ChassisIncident"
+        f"exec timeout {int(max_s)} ros2 topic echo /chassis_incident novabot_msgs/msg/ChassisIncident"
     )
     try:
         watcher = subprocess.Popen(
@@ -2623,26 +2801,34 @@ def _watch_edge_cut_safety(edge_proc, respond):
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
         )
     except Exception as e:
-        log(f"edge_cut safety watch could not start: {e}")
+        log(f"{label} safety watch could not start: {e}")
         return
     try:
         for fields in _echo_messages(watcher.stdout):
-            if edge_proc.poll() is not None:
+            if proc.poll() is not None:
                 break
             reason = _edge_stop_reason(fields)
             if reason:
-                log(f"edge_cut stopped on the mower: {reason}")
-                _kill_ros2_action_clients()
-                _call_cover_task_stop()
-                respond("edge_cut_stopped", {"reason": reason})
+                log(f"{label} stopped on the mower: {reason}")
+                on_stop(reason)
                 break
     except Exception as e:
-        log(f"edge_cut safety watch error: {e}")
+        log(f"{label} safety watch error: {e}")
     finally:
         try:
             watcher.kill()
         except Exception:
             pass
+
+
+def _watch_edge_cut_safety(edge_proc, respond):
+    """Stop the edge cut when a /chassis_incident stop flag appears."""
+    def stop(reason):
+        _kill_ros2_action_clients()
+        _call_cover_task_stop()
+        respond("edge_cut_stopped", {"reason": reason})
+
+    _watch_chassis_stop(edge_proc, stop, "edge_cut")
 
 
 def handle_start_edge_cut(params, respond):
@@ -2724,6 +2910,14 @@ def handle_start_edge_cut(params, respond):
     except (TypeError, ValueError) as e:
         respond("start_edge_cut_respond", {"result": 1, "error": f"param type error: {e}"})
         return
+
+    # A zone drive or a night patrol still running would drive on beside the
+    # edge cut (nav2 goals outside robot_decision): end it first, as every
+    # other drive start does. From mow_zone's edge flow the drive that just
+    # printed edge_ready is on its way out already; this only waits for it.
+    _stale = kill_stale_mow_drives()
+    if _stale:
+        log(f"start_edge_cut: {len(_stale)} drive(s) ended before the edge cut: {_stale}")
 
     # Mirror the stock start_cov_task preamble: when launching from the
     # dock, drive ~1m back so NTCP can plan from a free pose. The app
@@ -6753,6 +6947,10 @@ def start_blade_telemetry_relay(sn, mqtt_ref):
                     self.speed_pub = self.create_publisher(Int16, '/blade_speed_set', 10)
                     self.height_pub = self.create_publisher(UInt8, '/blade_height_set', 10)
                     self.reset_pub = self.create_publisher(String, '/motor_driver_reset', 10)
+                    # Headlight (led_bridge.py's topic), for the end of a patrol
+                    # whose drive did not switch it off (_patrol_headlight_off).
+                    # Made now, so it is matched long before it is needed.
+                    self.led_pub = self.create_publisher(UInt8, '/led_set', 1)
                     # Sustained blade target: a lazy 10Hz timer publishes the
                     # current target speed/height only while manual blade control
                     # is active. Keeping that timer alive forever cost measurable
@@ -6803,6 +7001,14 @@ def start_blade_telemetry_relay(sn, mqtt_ref):
                     if self.target_blade_speed in (None, 0):
                         self._schedule_idle_disarm()
                     self._arm_blade_timer()
+
+                def publish_headlight(self, level):
+                    """/led_set 0..100, sent twice like Driver.set_headlight."""
+                    m = UInt8()
+                    m.data = max(0, min(100, int(level)))
+                    self.led_pub.publish(m)
+                    time.sleep(0.2)
+                    self.led_pub.publish(m)
 
                 def _arm_status_override(self):
                     """Create subscription + 50Hz republish timer. Idempotent.
@@ -7587,6 +7793,10 @@ def main():
     # Reference to current MQTT client (for publishing responses)
     mqtt_ref = [None]
 
+    # A patrol that was still running when the mower or this daemon went down
+    # is reported once, as error mower_restarted (sent at the first connect).
+    recover_patrol_status_after_restart()
+
     # Spin up the ROS -> MQTT blade-RPM relay in a background thread. It uses
     # mqtt_ref so it auto-picks-up the most recent connected client across
     # reconnects without needing its own MQTT loop.
@@ -7655,6 +7865,8 @@ def main():
             mqtt.connect()
             mqtt.subscribe(sub_topic)
             mqtt_ref[0] = mqtt
+            # The end of a patrol may have gone out while the link was down.
+            reannounce_patrol_status(respond)
             mqtt.loop_forever()
         except KeyboardInterrupt:
             log("Ctrl+C ontvangen")

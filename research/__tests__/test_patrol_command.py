@@ -9,7 +9,10 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import tempfile
+import time
+import types
 
 spec = importlib.util.spec_from_file_location(
     "ec", os.path.join(os.path.dirname(__file__), "..", "extended_commands.py"))
@@ -97,11 +100,32 @@ class MarkedProc(FakeProc):
 
 
 class SyncThread:
-    def __init__(self, target=None, daemon=None, name=None):
-        self._target = target
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None, name=None):
+        self._target, self._args, self._kwargs = target, args, kwargs or {}
 
     def start(self):
-        self._target()
+        self._target(*self._args, **self._kwargs)
+
+
+class EchoProc:
+    """`ros2 topic echo /chassis_incident` as the safety watcher reads it."""
+
+    def __init__(self, text):
+        self.stdout = iter(text.splitlines(True))
+        self.killed = False
+
+    def poll(self):
+        return None
+
+    def kill(self):
+        self.killed = True
+
+
+QUIET_ECHO = "error_push_button_stop: false\nwarning_upraise_stop: false\n---\n"
+STOP_ECHO = "error_push_button_stop: true\nwarning_upraise_stop: false\n---\n"
+
+
+MISSING = object()   # a module attribute a patch adds rather than replaces
 
 
 def reset_mow_state():
@@ -112,14 +136,21 @@ def reset_mow_state():
 
 
 def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=None,
-        ignores_terminate=False, proc_class=FakeProc):
+        ignores_terminate=False, proc_class=FakeProc, echo=""):
     sent, calls, seen = [], [], {}
     cleanups, sleeps = [], []    # nav-goal cleanups (the drive's state then), the guard's pauses
     events = []                  # the stale-run cleanup and every answer (name, phase), in order
-    seen.update(cleanups=cleanups, sleeps=sleeps, events=events)
+    lights, stamps = [], []      # headlight levels the handler set; the kill times the cleanups got
+    seen.update(cleanups=cleanups, sleeps=sleeps, events=events, lights=lights, stamps=stamps)
     script = tempfile.NamedTemporaryFile(suffix=".py", delete=False).name
+
+    def cleanup(killed_at_ns=None):
+        stamps.append(killed_at_ns)
+        cleanups.append((seen["proc"].terminated, seen["proc"].killed))
+
     defaults = {
         "PATROL_DRIVE_SCRIPT": script,
+        "PATROL_STATUS_FILE": tempfile.NamedTemporaryFile(suffix=".json", delete=False).name,
         "_server_from_config": lambda: "srv:8080",
         "_sn_from_config": lambda: "LFIN2230700238",
         "kill_stale_mow_drives": lambda timeout=5.0: events.append("kill_stale") or [],
@@ -127,11 +158,12 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
         "_restore_edge_perception": lambda: calls.append("perception_off"),
         "_publish_blade_speed": lambda s: calls.append(("blade_speed", s)) or "",
         "_publish_blade_height": lambda h: calls.append(("blade_height", h)) or "",
-        "_stop_mow_zone_cleanup": lambda: cleanups.append((seen["proc"].terminated, seen["proc"].killed)),
+        "_stop_mow_zone_cleanup": cleanup,
+        "_patrol_headlight_off": lambda: lights.append(0),
         "_ros_env": lambda: {},
     }
     defaults.update(patches or {})
-    real = {k: getattr(ec, k) for k in defaults}
+    real = {k: getattr(ec, k, MISSING) for k in defaults}
     real_popen, real_thread, real_sleep = ec.subprocess.Popen, ec.threading.Thread, ec.time.sleep
     failed = []
 
@@ -145,6 +177,9 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
     seen["script"] = script
 
     def fake_popen(argv, **kw):
+        if "topic echo" in argv[-1]:
+            seen["echo"] = EchoProc(echo)
+            return seen["echo"]
         seen["argv"] = argv
         with open(argv[-1]) as fh:
             seen["params"] = json.load(fh)
@@ -160,10 +195,19 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
         ec.handle_patrol(params or GOOD, respond)
     finally:
         ec.time.sleep = real_sleep
-        for k, v in real.items():
-            setattr(ec, k, v)
+        restore(real)
         ec.subprocess.Popen, ec.threading.Thread = real_popen, real_thread
     return sent, calls, seen
+
+
+def restore(real):
+    """Put patched module attributes back; drop the ones a patch added."""
+    for k, v in real.items():
+        if v is MISSING:
+            if hasattr(ec, k):
+                delattr(ec, k)
+        else:
+            setattr(ec, k, v)
 
 
 def before(calls, a, b):
@@ -371,6 +415,338 @@ check("kill_stale_mow_drives marks the registered drive before the first signal"
       marked_at_first == [True] and marked and bool(kills) and kills[0][1] == signal.SIGTERM)
 kills, marked_at_first, marked = kill_stale_probe(registered_pid=4242, stale_pids=[4343])
 check("and leaves a registered drive it does not kill unmarked", marked_at_first == [False] and not marked)
+
+
+# ── Final fix wave ───────────────────────────────────────────────────────────
+
+def edge_cut_start(params):
+    """handle_start_edge_cut with the ROS side faked. The order of what it did, and its answers."""
+    order, answers = [], []
+    patches = {
+        "_clear_costmaps": lambda: order.append("clear_costmaps"),
+        "kill_stale_mow_drives": lambda timeout=5.0: order.append("kill_stale") or [],
+        "_depart_pile": lambda *a, **k: order.append("depart"),
+        "_apply_edge_perception_low": lambda: False,
+        "_watch_edge_cut_safety": lambda *a, **k: None,
+    }
+    real = {k: getattr(ec, k, MISSING) for k in patches}
+    real_popen, real_thread = ec.subprocess.Popen, ec.threading.Thread
+    for k, v in patches.items():
+        setattr(ec, k, v)
+    ec.subprocess.Popen = lambda argv, **kw: order.append("dispatch") or FakeProc([])
+    ec.threading.Thread = SyncThread
+    try:
+        ec.handle_start_edge_cut(params, lambda name, body: answers.append((name, body)))
+    finally:
+        restore(real)
+        ec.subprocess.Popen, ec.threading.Thread = real_popen, real_thread
+    return order, answers
+
+
+# A2: an edge cut ends a running zone drive or patrol first, as every other drive start does
+order, answers = edge_cut_start({"mapName": "map0", "bladeHeight": 40, "departFromDock": True})
+check("an edge cut ends a running zone drive or patrol before it moves",
+      "kill_stale" in order and order.index("kill_stale") < order.index("depart") < order.index("dispatch"))
+check("and then starts as before", any(n == "start_edge_cut_respond" and b.get("result") == 0 for n, b in answers))
+order, answers = edge_cut_start({"mapName": "map0;rm -rf /"})
+check("a refused edge cut ends nothing", "kill_stale" not in order and "dispatch" not in order)
+
+# A3: the STOP button, a lift or a tilt ends a patrol: the drive is terminated (SIGTERM, so its
+# own release runs), the stop_mow_zone cleanup releases the nav goal, the end says why
+sent, calls, seen = run([], rc=-15, echo=QUIET_ECHO + STOP_ECHO)
+statuses = [b for n, b in sent if n == "patrol_status"]
+check("a STOP press during a patrol ends it as stopped, with the flag",
+      statuses == [{"phase": "starting", "run": "1791"},
+                   {"phase": "stopped", "run": "1791", "error": "error_push_button_stop"}])
+check("the drive is terminated with SIGTERM, not killed", seen["proc"].terminated and not seen["proc"].killed)
+check("and the stop cleanup releases the nav goal after that", seen["cleanups"] == [(True, False)])
+check("the watcher's echo process is cleaned up", seen.get("echo") is not None and seen["echo"].killed)
+check("the headlight goes off on the mower", seen["lights"] == [0])
+sent, calls, seen = run(["PHASE patrolling", "PHASE done"], echo=QUIET_ECHO * 3)
+check("quiet chassis messages change nothing",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "done"]
+      and not seen["proc"].terminated and seen["cleanups"] == [])
+lifted = STOP_ECHO.replace("error_push_button_stop: true", "error_push_button_stop: false") \
+                  .replace("warning_upraise_stop: false", "warning_upraise_stop: true")
+sent, calls, seen = run(["PHASE patrolling"], rc=-15, echo=lifted)
+check("lifting the mower ends the patrol the same way",
+      ("patrol_status", {"phase": "stopped", "run": "1791", "error": "warning_upraise_stop"}) in sent
+      and seen["proc"].terminated)
+check("and nothing after the end goes out for that run",
+      [b["phase"] for n, b in sent if n == "patrol_status"][-1] == "stopped")
+
+
+class FakeRos:
+    """rclpy and the message modules _stop_mow_zone_cleanup imports, recording each request."""
+
+    NAMES = ("rclpy", "action_msgs", "action_msgs.srv", "rcl_interfaces", "rcl_interfaces.srv",
+             "rcl_interfaces.msg")
+
+    def __init__(self):
+        self.sent = []
+        ns = types.SimpleNamespace
+        sent = self.sent
+
+        class Client:
+            def __init__(self, srv):
+                self.srv = srv
+
+            def wait_for_service(self, timeout_sec=None):
+                return True
+
+            def call_async(self, req):
+                sent.append((self.srv, req))
+
+        class Node:
+            def create_client(self, srv_type, srv):
+                return Client(srv)
+
+            def destroy_node(self):
+                pass
+
+        class CancelRequest:
+            def __init__(self):
+                self.goal_info = ns(goal_id=ns(uuid=None), stamp=ns(sec=0, nanosec=0))
+
+        class ParamRequest:
+            def __init__(self):
+                self.parameters = []
+
+        self.modules = {name: types.ModuleType(name) for name in self.NAMES}
+        self.modules["rclpy"].init = lambda *a, **k: None
+        self.modules["rclpy"].create_node = lambda name: Node()
+        self.modules["action_msgs.srv"].CancelGoal = ns(Request=CancelRequest)
+        self.modules["rcl_interfaces.srv"].SetParameters = ns(Request=ParamRequest)
+        self.modules["rcl_interfaces.msg"].Parameter = lambda: ns(name=None, value=None)
+        self.modules["rcl_interfaces.msg"].ParameterValue = lambda: ns(type=None, bool_value=None, double_value=None)
+        self.modules["rcl_interfaces.msg"].ParameterType = ns(PARAMETER_BOOL=1, PARAMETER_DOUBLE=3)
+
+    def __enter__(self):
+        self.real = {name: sys.modules.get(name) for name in self.NAMES}
+        sys.modules.update(self.modules)
+        self.real_sleep, ec.time.sleep = ec.time.sleep, (lambda seconds=0: None)
+        return self
+
+    def __exit__(self, *exc):
+        ec.time.sleep = self.real_sleep
+        for name, module in self.real.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        return False
+
+
+# A4: the stop cleanup cancels only the goals accepted up to the kill, so the docking
+# goal of a go_pile / go_to_charge that follows the stop survives it
+kill_ns = time.time_ns()
+with FakeRos() as ros:
+    ec._stop_mow_zone_cleanup(kill_ns)
+cancels = [(srv, req) for srv, req in ros.sent if srv.endswith("/_action/cancel_goal")]
+check("the cleanup cancels on both nav2 actions",
+      sorted(srv for srv, _req in cancels) == ["/follow_path/_action/cancel_goal",
+                                                 "/navigate_to_pose/_action/cancel_goal"])
+check("with the zero goal id", all(list(req.goal_info.goal_id.uuid) == [0] * 16 for _s, req in cancels))
+check("and the kill time as the stamp: only goals accepted up to the kill",
+      all(req.goal_info.stamp.sec * 10 ** 9 + req.goal_info.stamp.nanosec == kill_ns for _s, req in cancels)
+      and kill_ns > 0)
+check("the transit params still go back", any(srv.endswith("/set_parameters") for srv, _req in ros.sent))
+
+captured = []
+real_popen, ec.subprocess.Popen = ec.subprocess.Popen, (lambda argv, **kw: captured.append(argv))
+try:
+    ec._stop_mow_zone_cleanup_cli(kill_ns)
+finally:
+    ec.subprocess.Popen = real_popen
+sec, nanosec = divmod(kill_ns, 10 ** 9)
+check("the CLI fallback sends the same stamp to both actions",
+      bool(captured) and captured[-1][2].count(f"{{goal_info: {{stamp: {{sec: {sec}, nanosec: {nanosec}}}}}}}") == 2)
+
+stop_stamps, answers = [], []
+real = {k: getattr(ec, k, MISSING) for k in ("_stop_mow_zone_cleanup",)}
+real_run, real_thread = ec.subprocess.run, ec.threading.Thread
+ec._stop_mow_zone_cleanup = lambda killed_at_ns=None: stop_stamps.append(killed_at_ns)
+ec.subprocess.run, ec.threading.Thread = (lambda *a, **k: None), SyncThread
+running = FakeProc([])
+reset_mow_state()
+ec._register_mow_drive(running)
+try:
+    before = time.time_ns()
+    ec.handle_stop_mow_zone({}, lambda name, body: answers.append((name, body)))
+    after = time.time_ns()
+finally:
+    restore(real)
+    ec.subprocess.run, ec.threading.Thread = real_run, real_thread
+    reset_mow_state()
+check("stop_mow_zone hands the cleanup the time it terminated the drive",
+      running.terminated and len(stop_stamps) == 1 and stop_stamps[0] is not None
+      and before <= stop_stamps[0] <= after)
+
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+                        patches={"_apply_edge_perception_low": perception_gone})
+check("a terminated patrol drive hands its kill time to the cleanup too",
+      len(seen["stamps"]) == 1 and seen["stamps"][0] is not None and seen["stamps"][0] <= time.time_ns())
+
+
+def reannounced(now=None):
+    out = []
+    kwargs = {} if now is None else {"now": now}
+    ec.reannounce_patrol_status(lambda name, body: out.append((name, body)), **kwargs)
+    return out
+
+
+def forget_patrol_status():
+    if hasattr(ec, "_LAST_PATROL_STATUS"):
+        ec._LAST_PATROL_STATUS[0] = None
+
+
+# A5a: the last patrol_status goes out again after every MQTT (re)connect
+forget_patrol_status()
+check("nothing to re-announce before any patrol", reannounced() == [])
+run(["PHASE patrolling", "PHASE done"])
+check("after a reconnect the end of the last patrol goes out again",
+      reannounced() == [("patrol_status", {"phase": "done", "run": "1791"})])
+check("but not once it is older than 6 h", reannounced(now=time.time() + 6 * 3600 + 60) == [])
+run(["PHASE patrolling"], rc=-15, stopped=True)
+check("a stop is an end like any other", reannounced() == [("patrol_status", {"phase": "stopped", "run": "1791"})])
+
+
+class LateEndProc(FakeProc):
+    """A superseded drive whose end is reported after the newer patrol said it is starting."""
+
+    def wait(self, timeout=None):
+        if not getattr(self, "newer_started", False):
+            self.newer_started = True
+            run([], params={**GOOD, "run": "1792"})   # the newer patrol: starting, then nothing
+        return super().wait(timeout)
+
+
+run(["PHASE patrolling"], rc=-15, stopped=True, proc_class=LateEndProc)
+reset_mow_state()
+check("an older run's late end does not replace the newer run's last status",
+      [b["run"] for _n, b in reannounced()] == ["1792"])
+
+
+class FakeMQTT:
+    """MiniMQTT for main(): every connection publishes into `published`; the first
+    connection drops, the second ends the loop."""
+    published, connects = [], [0]
+
+    def __init__(self, host, port, client_id, on_message=None):
+        pass
+
+    def connect(self):
+        FakeMQTT.connects[0] += 1
+
+    def subscribe(self, topic):
+        pass
+
+    def publish(self, topic, payload):
+        FakeMQTT.published.append((topic, json.loads(payload)))
+
+    def loop_forever(self):
+        if FakeMQTT.connects[0] >= 2:
+            raise KeyboardInterrupt
+
+
+def start_up(status_file):
+    """One start of extended_commands (main) against FakeMQTT, with the ROS
+    relays off. The patrol_status messages it published, one list per connection."""
+    patches = {
+        "MiniMQTT": FakeMQTT, "PATROL_STATUS_FILE": status_file,
+        "read_config": lambda: ("LFIN2230700238", "127.0.0.1", 1883),
+        "start_blade_telemetry_relay": lambda *a: None, "start_rtk_telemetry_relay": lambda *a: None,
+        "enable_rtk_telemetry": lambda: False, "start_charging_station_guard": lambda: None,
+        "start_perception_model_client": lambda: None,
+    }
+    real = {k: getattr(ec, k, MISSING) for k in patches}
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGCHLD)}
+    real_sleep = ec.time.sleep
+    FakeMQTT.published, FakeMQTT.connects = [], [0]
+    forget_patrol_status()   # a new process remembers nothing but the file
+    for k, v in patches.items():
+        setattr(ec, k, v)
+    ec.time.sleep = lambda seconds=0: None
+    try:
+        ec.main()
+    finally:
+        ec.time.sleep = real_sleep
+        restore(real)
+        for sig, handler in handlers.items():
+            signal.signal(sig, handler)
+    return [body["patrol_status"] for topic, body in FakeMQTT.published
+            if topic == "novabot/extended_response/LFIN2230700238" and "patrol_status" in body]
+
+
+status_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+with open(status_file, "w") as fh:
+    json.dump({"body": {"phase": "patrolling", "run": "1791"}, "t": time.time() - 600}, fh)
+restarted = {"phase": "error", "run": "1791", "error": "mower_restarted"}
+check("a patrol that was running when the mower went down is reported as mower_restarted, "
+      "on the first connect and again after the reconnect", start_up(status_file) == [restarted, restarted])
+check("once: the next start-up has nothing to report", start_up(status_file) == [])
+os.remove(status_file)
+check("no file, no status: nothing is invented", start_up(status_file) == [])
+with open(status_file, "w") as fh:
+    json.dump({"body": {"phase": "done", "run": "1791"}, "t": time.time() - 600}, fh)
+check("a patrol that had ended is not reported again after a restart", start_up(status_file) == [])
+
+# The exit code is lost on the mower: main() ignores SIGCHLD (#60), so the kernel reaps every
+# child and Popen reads its returncode as 0. The end of a drive that did not report its own
+# must still go out, or the last status stays `patrolling` and every reconnect re-sends it.
+sent, calls, seen = run(["PHASE patrolling"], rc=0, stopped=True)
+check("a drive killed by stop reports stopped, also when its exit code reads 0",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "stopped"])
+sent, calls, seen = run(["PHASE patrolling"], rc=0, proc_class=TakenOverProc)
+reset_mow_state()
+check("a drive taken over by a newer one reports stopped, also with exit code 0",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["starting", "patrolling", "stopped"])
+sent, calls, seen = run(["PHASE patrolling"], rc=0)
+check("a drive that died without its end reports an error, also with exit code 0",
+      ("patrol_status", {"phase": "error", "run": "1791", "error": "drive_exit_0"}) in sent)
+check("and the last status to re-send is that end", reannounced()[-1][1]["phase"] == "error")
+
+# A5c: the handler switches the headlight off when the drive did not end by itself
+sent, calls, seen = run(["PHASE patrolling"], rc=-15, stopped=True)
+check("a drive killed by stop: the handler switches the headlight off", seen["lights"] == [0])
+sent, calls, seen = run(["PHASE patrolling"], rc=-15, proc_class=TakenOverProc)
+reset_mow_state()
+check("a drive taken over by a newer one: the same", seen["lights"] == [0])
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+                        patches={"_publish_blade_speed": lambda s: "ros node not ready"})
+check("a drive ended by a failing blade guard: the same", seen["lights"] == [0])
+sent, calls, seen = run(["PHASE patrolling", "PHASE done"])
+check("a drive that finished switched it off itself, before its done", seen["lights"] == [])
+sent, calls, seen = run(["PHASE patrolling", "PHASE error checkpoints_unreachable"], rc=1)
+check("a drive that ended with its own error: the same", seen["lights"] == [])
+
+
+class Relay:
+    """The blade relay's long-lived ROS node, as far as the headlight goes."""
+
+    def __init__(self):
+        self.levels = []
+
+    def publish_headlight(self, level):
+        self.levels.append(level)
+
+
+bg = []
+real = {k: getattr(ec, k, MISSING) for k in ("_publish_topic_bg",)}
+real_node = ec._ROS_BLADE_NODE[0]
+ec._publish_topic_bg = lambda topic, type_name, payload: bg.append((topic, type_name, payload)) or ""
+try:
+    relay = ec._ROS_BLADE_NODE[0] = Relay()
+    ec._patrol_headlight_off()
+    check("the handler's headlight-off goes through the relay's own /led_set publisher",
+          relay.levels == [0] and bg == [])
+    ec._ROS_BLADE_NODE[0] = None
+    ec._patrol_headlight_off()
+    check("and through a ros2 topic pub when the relay is not up",
+          bg == [("/led_set", "std_msgs/msg/UInt8", "{data: 0}")])
+finally:
+    ec._ROS_BLADE_NODE[0] = real_node
+    restore(real)
 
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)

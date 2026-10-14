@@ -27,6 +27,7 @@ Emits one line per phase to stdout (the caller maps these to mow_zone_status):
     PHASE error <message>
 Diagnostic lines are prefixed LOG and ignored by the caller.
 """
+import contextlib
 import json
 import math
 import os
@@ -73,6 +74,11 @@ TF_STATIC_QOS = QoSProfile(depth=10, history=QoSHistoryPolicy.KEEP_LAST)
 TASK_MODE_COVERAGE = 1
 WORK_STATUS_USER_STOP = 10
 WORK_STATUS_INIT_SUCCESS = 59  # robot_decision: init done, departure finished
+# Time a drive killed before its handover gets to stop and clear the
+# departure's task (Driver._release_departure). stop_mow_zone and the patrol
+# handler SIGKILL a drive 3 s after their SIGTERM; the goal cancel and the
+# headlight on the way out need the rest.
+DEPARTURE_RELEASE_S = 1.5
 
 
 def task_executing(task_mode, work_status):
@@ -341,6 +347,10 @@ class Driver:
         self._clients = {}
         self._label_sub = None
         self._label_buf = None
+        # The nav2 goal this drive sent and still holds, and one still being
+        # sent, so a drive that is killed cancels its own goal (cancel_own_goal).
+        self._goal = None
+        self._goal_send = None
 
     def spin(self, sec):
         rclpy.spin_once(self.node, timeout_sec=sec)
@@ -668,17 +678,46 @@ class Driver:
         th = 0.0 if yaw is None else float(yaw)
         goal.pose.pose.orientation.z = math.sin(th / 2.0)
         goal.pose.pose.orientation.w = math.cos(th / 2.0)
-        send_fut = ac.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self.node, send_fut, timeout_sec=10.0)
-        gh = send_fut.result()
+        gh = self._send_goal(ac, goal)
         if gh is None or not gh.accepted:
             return False, "nav_to_pose goal rejected"
         res_fut = gh.get_result_async()
         rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=timeout)
         r = res_fut.result()
         if r is None:
-            return False, "nav_to_pose timeout"
+            return False, "nav_to_pose timeout"   # still held: cancelled on the way out
+        self._goal = None
         return (r.status == 4), f"nav_to_pose_status_{r.status}"
+
+    def _send_goal(self, ac, goal):
+        """Send a nav2 goal and remember it as this drive's own until its result
+        arrives. The goal handle, or None when nav2 did not answer in time."""
+        send_fut = ac.send_goal_async(goal)
+        self._goal_send = send_fut   # until nav2 answers, so a kill in between still finds it
+        rclpy.spin_until_future_complete(self.node, send_fut, timeout_sec=10.0)
+        gh = send_fut.result()
+        if gh is None:
+            return None
+        self._goal_send = None
+        if gh.accepted:
+            self._goal = gh
+        return gh
+
+    def cancel_own_goal(self, timeout=0.5):
+        """Cancel the nav2 goal this drive sent and still holds, by its own goal
+        id, so never anybody else's (the go_to_charge that may follow a stop).
+        Runs on the drive's way out, also after a SIGTERM. True when it cancelled one."""
+        gh, pending = self._goal, self._goal_send
+        self._goal = self._goal_send = None
+        if gh is None and pending is not None:
+            rclpy.spin_until_future_complete(self.node, pending, timeout_sec=timeout)
+            gh = pending.result() if pending.done() else None
+        if gh is None or not getattr(gh, "accepted", False):
+            return False
+        fut = gh.cancel_goal_async()
+        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=timeout)
+        log("cancelled our own nav2 goal on the way out")
+        return True
 
     def follow_path(self, pts):
         path = Path()
@@ -705,16 +744,15 @@ class Driver:
         goal.path = path
         goal.controller_id = "FollowPathPurePursuit"
         goal.goal_checker_id = "general_goal_checker"
-        send_fut = ac.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self.node, send_fut, timeout_sec=10.0)
-        gh = send_fut.result()
+        gh = self._send_goal(ac, goal)
         if gh is None or not gh.accepted:
             return False, "goal rejected"
         res_fut = gh.get_result_async()
         rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=600.0)
         res = res_fut.result()
         if res is None:
-            return False, "no result (timeout)"
+            return False, "no result (timeout)"   # still held: cancelled on the way out
+        self._goal = None
         # GoalStatus.STATUS_SUCCEEDED == 4; anything else (ABORTED 6, CANCELED 5)
         # means the controller did not finish the path (e.g. "Failed to make
         # progress"), so do NOT fall through to coverage as if it drove.
@@ -780,26 +818,61 @@ class Driver:
                 return self._recharge in RECHARGE_DRIVING
         return False
 
-    def quit_mapping_mode(self):
-        """Clear a parked task: robot_decision goes back to COVERAGE/WAIT."""
+    def quit_mapping_mode(self, timeout=None):
+        """Clear a parked task: robot_decision goes back to COVERAGE/WAIT.
+        `timeout` bounds both the service wait and the reply (the release
+        after a SIGTERM); without it the normal handover's 5 s and 10 s apply."""
+        wait, reply = (5.0, 10.0) if timeout is None else (timeout, timeout)
         cli = self.node.create_client(Empty, f"{DECISION}/quit_mapping_mode")
-        if not cli.wait_for_service(timeout_sec=5.0):
+        if not cli.wait_for_service(timeout_sec=wait):
             return False
         fut = cli.call_async(Empty.Request())
-        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=10.0)
+        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=reply)
         return fut.done()
 
-    def stop_task(self):
-        """Stop a running coverage task (SetBool data:true; false means CONTINUE)."""
+    def stop_task(self, timeout=None):
+        """Stop a running coverage task (SetBool data:true; false means CONTINUE).
+        `timeout` as for quit_mapping_mode."""
+        wait, reply = (5.0, 10.0) if timeout is None else (timeout, timeout)
         cli = self.node.create_client(SetBool, f"{DECISION}/stop_task")
-        if not cli.wait_for_service(timeout_sec=5.0):
+        if not cli.wait_for_service(timeout_sec=wait):
             return False
         req = SetBool.Request()
         req.data = True
         fut = cli.call_async(req)
-        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=10.0)
+        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=reply)
         r = fut.result()
         return bool(r and r.success)
+
+    def _release_departure(self, stop_sent, budget=None):
+        """The drive owns the coverage task its firmware departure started. When
+        the drive ends before the handover (SIGTERM from a newer drive start or
+        stop_mow_zone, or an exception), stop and clear that task here, as the
+        handover does: otherwise robot_decision runs it to its end, which mows
+        the dock zone (at night, for a patrol), or it stays parked and a later
+        Resume mows. A recharge that go_pile / go_to_charge already started is
+        left alone: that is where the mower should go now.
+
+        The stop is queued behind the init states, so there is no waiting for it
+        to land here. Every call is bounded so the whole release fits well
+        inside the 3 s after which stop_mow_zone and the patrol handler SIGKILL
+        a drive (kill_stale_mow_drives waits 5 s)."""
+        end = time.monotonic() + (DEPARTURE_RELEASE_S if budget is None else budget)
+
+        def left(cap):
+            return max(0.05, min(cap, end - time.monotonic()))
+
+        if self.recharge_active(timeout=left(0.3)):
+            log("departure not handed over, but robot_decision is already in a recharge: left alone")
+            return
+        if not stop_sent:
+            self.stop_task(timeout=left(0.35))
+        st = self.wait_status(
+            lambda tm, ws: ws == WORK_STATUS_USER_STOP or not task_executing(tm, ws),
+            timeout=left(0.3))
+        if st is not None and task_executing(*st) and not self.recharge_active(timeout=left(0.2)):
+            self.quit_mapping_mode(timeout=left(0.35))
+        log(f"departure not handed over: stopped and cleared its task (status={st})")
 
     def localize_via_firmware(self, map_ids, cutterhigh, direction, timeout=90.0):
         """Let the STOCK firmware initialise the map frame, then take back over.
@@ -816,39 +889,53 @@ class Driver:
         Driving ourselves does not work: a short open-loop reverse gives no
         heading, so TF never arrives and the mow stalled on the dock (live .244,
         2026-09-12, three attempts in a row).
+
+        The task this starts belongs to the drive until the handover below
+        stops and clears it. A drive that ends before that (killed, or an
+        exception) stops and clears it on its way out (_release_departure).
         """
         log("not localized: asking the firmware to initialise the frame")
         phase("localizing")
-        if not self.start_cov(map_ids, cutterhigh, direction):
-            log("firmware refused the init task")
-            return None
-        deadline = time.time() + timeout
-        pos = None
-        while time.time() < deadline:
-            pos = self.robot_xy(timeout=2.0)
-            if pos is not None:
-                break
-        # A mower that was already localized has a frame before it moves. Stop
-        # only once the firmware has finished its own departure (INIT_SUCCESS
-        # or later), so the transit never starts from the dock itself.
-        self.wait_status(
-            lambda tm, ws: ws >= WORK_STATUS_INIT_SUCCESS or not task_executing(tm, ws),
-            timeout=max(5.0, deadline - time.time()))
-        self.stop_task()
-        # The stop is queued behind the init states and only lands once the
-        # task reaches MOVING, as USER_STOP. A parked task still counts as
-        # executing, so a start_cov right after the stop was refused with
-        # "Cannot start a new task when last task is executing" (live .244,
-        # 2026-09-14). Wait for the stop to land, then clear the parked task
-        # the way the delete flow does, and only then hand over the wheels.
-        st = self.wait_status(
-            lambda tm, ws: ws == WORK_STATUS_USER_STOP or not task_executing(tm, ws),
-            timeout=30.0)
-        log(f"after stop: status={st}")
-        if st is not None and task_executing(*st):
-            self.quit_mapping_mode()
-            st = self.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)
-            log(f"after quit_mapping_mode: status={st}")
+        requested = handed_over = stop_sent = False
+        try:
+            requested = True   # a kill during the request itself may still start the task
+            if not self.start_cov(map_ids, cutterhigh, direction):
+                requested = False   # refused: robot_decision runs nothing of ours
+                log("firmware refused the init task")
+                return None
+            deadline = time.time() + timeout
+            pos = None
+            while time.time() < deadline:
+                pos = self.robot_xy(timeout=2.0)
+                if pos is not None:
+                    break
+            # A mower that was already localized has a frame before it moves. Stop
+            # only once the firmware has finished its own departure (INIT_SUCCESS
+            # or later), so the transit never starts from the dock itself.
+            self.wait_status(
+                lambda tm, ws: ws >= WORK_STATUS_INIT_SUCCESS or not task_executing(tm, ws),
+                timeout=max(5.0, deadline - time.time()))
+            self.stop_task()
+            stop_sent = True
+            # The stop is queued behind the init states and only lands once the
+            # task reaches MOVING, as USER_STOP. A parked task still counts as
+            # executing, so a start_cov right after the stop was refused with
+            # "Cannot start a new task when last task is executing" (live .244,
+            # 2026-09-14). Wait for the stop to land, then clear the parked task
+            # the way the delete flow does, and only then hand over the wheels.
+            st = self.wait_status(
+                lambda tm, ws: ws == WORK_STATUS_USER_STOP or not task_executing(tm, ws),
+                timeout=30.0)
+            log(f"after stop: status={st}")
+            if st is not None and task_executing(*st):
+                self.quit_mapping_mode()
+                st = self.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)
+                log(f"after quit_mapping_mode: status={st}")
+            handed_over = True
+        finally:
+            if requested and not handed_over:
+                with _signals_held():
+                    self._release_departure(stop_sent)
         # Give the chassis a moment to settle before the transit takes the wheels.
         time.sleep(2.0)
         if pos is None:
@@ -903,16 +990,23 @@ class Driver:
         rclpy.spin_until_future_complete(self.node, fut, timeout_sec=timeout)
         return fut.result() is not None
 
+    def prepare_headlight(self):
+        """Create the /led_set publisher now. A patrol does this at its start, so
+        the publisher is matched by the time the patrol switches the light off
+        at its end, also on a quick way out after a SIGTERM."""
+        if self._pub_led is None:
+            self._pub_led = self.node.create_publisher(
+                UInt8, LED_TOPIC, QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+
     def set_headlight(self, level, match_timeout=3.0):
-        """Headlight 0..100 on /led_set. Only the Phase-0 probe uses this;
-        during a patrol the server switches the light (patrolService.ts).
+        """Headlight 0..100 on /led_set. The Phase-0 probe switches it on and off;
+        a patrol only switches it off at its end (the server switches it on,
+        patrolService.ts), so it is off even when the server never hears the end.
 
         A volatile publisher drops a sample that goes out before the chassis
         subscriber is matched, so wait for the match first. Without a
         subscriber nothing is sent and this returns False."""
-        if self._pub_led is None:
-            self._pub_led = self.node.create_publisher(
-                UInt8, LED_TOPIC, QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        self.prepare_headlight()
         deadline = time.time() + match_timeout
         count = self._pub_led.get_subscription_count()
         while count == 0 and time.time() < deadline:
@@ -1674,9 +1768,38 @@ def _probe_photos(run_dir, second):
 
 
 def _stop_on_signal(signum, frame):
-    """SIGTERM or SIGHUP during a probe: unwind through do_probe's finally, so
-    the lamp goes off even when the SSH session is gone."""
+    """SIGTERM or SIGHUP: unwind through the finally blocks instead of dying on
+    the spot. A probe switches its lamp off on the way out, also when the SSH
+    session is gone; a drive releases its departure task, its own nav2 goal
+    and, on a patrol, the headlight (run)."""
     raise SystemExit(143)
+
+
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+
+def _install_stop_handlers():
+    """SIGTERM/SIGHUP raise SystemExit from here on. Returns the handlers they
+    replaced, to put back afterwards."""
+    return {sig: signal.signal(sig, _stop_on_signal) for sig in STOP_SIGNALS}
+
+
+@contextlib.contextmanager
+def _signals_held():
+    """SIGTERM/SIGHUP ignored while a drive cleans up after the first one: the
+    stop paths send another SIGTERM later (pkill) and that must not cut the
+    cleanup short. The handlers in place before come back afterwards."""
+    held = {}
+    for sig in STOP_SIGNALS:
+        try:
+            held[sig] = signal.signal(sig, signal.SIG_IGN)
+        except ValueError:   # not the main thread: nothing to hold
+            pass
+    try:
+        yield
+    finally:
+        for sig, handler in held.items():
+            signal.signal(sig, handler)
 
 
 def do_probe(drv, seconds, led):
@@ -1688,8 +1811,7 @@ def do_probe(drv, seconds, led):
     run_dir = os.path.join(PROBE_DIR, f"{time.strftime('%Y%m%d-%H%M%S')}_led{led}")
     os.makedirs(run_dir, exist_ok=True)
     phase("probing")
-    previous = {sig: signal.signal(sig, _stop_on_signal)
-                for sig in (signal.SIGTERM, signal.SIGHUP)}
+    previous = _install_stop_handlers()
     photos = []
     try:
         if not drv.ensure_perception():
@@ -1731,6 +1853,33 @@ PATROL_MAX_NAV_FAILS = 3        # drie controlepunten op rij onbereikbaar: stopp
 # De vertrek-taak van de firmware krijgt het maaidek op zijn hoogst (90 mm);
 # de messen draaien nooit (extended_commands.py zet ze uit bij `patrolling`).
 PATROL_DEPART_CUTTERHIGH = 7
+# How long the headlight-off at the end of a patrol waits for its /led_set
+# subscriber. The publisher exists from the patrol's start, so it is matched.
+PATROL_LIGHT_MATCH_S = 0.5
+
+
+def _headlight_off(drv):
+    """Headlight 0 from the mower itself at the end of a patrol, before that end
+    is reported: the light is off for the go_to_charge that follows even when
+    the server never hears the end (dock LED = stock). Once per drive; it
+    never raises, a failure only costs the log line."""
+    if getattr(drv, "_headlight_off_sent", False):
+        return
+    drv._headlight_off_sent = True
+    try:
+        if not drv.set_headlight(0, match_timeout=PATROL_LIGHT_MATCH_S):
+            log("patrol: headlight off not confirmed (no /led_set subscriber)")
+    except Exception as e:
+        try:
+            log(f"patrol: headlight off failed: {e}")
+        except Exception:
+            pass
+
+
+def _patrol_end(drv, *phase_args):
+    """Every end of a patrol: the headlight off first, then the phase."""
+    _headlight_off(drv)
+    phase(*phase_args)
 
 
 def upload_checkpoint(url, seq, xy, scores, frames, jpeg, timeout=20.0):
@@ -1765,10 +1914,12 @@ def do_patrol(drv, params):
     """Night patrol with the blades off: depart like stock, drive the
     server's checkpoints zone by zone, look and photograph at each, come back
     into the dock's zone. The docking is the firmware's: the server sends
-    go_to_charge after PHASE done/error (patrolService.ts)."""
+    go_to_charge after PHASE done/error (patrolService.ts). Every end switches
+    the headlight off on the mower first (_patrol_end)."""
+    drv.prepare_headlight()
     st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
     if st is not None and task_executing(*st) and not task_parked(*st):
-        phase("error", "busy_mowing")
+        _patrol_end(drv, "error", "busy_mowing")
         return 1
     ok, detail = drv.reload_map()
     log(f"map_server reload: {'ok' if ok else 'MISLUKT'} ({detail})")
@@ -1778,16 +1929,16 @@ def do_patrol(drv, params):
     robot = drv.robot_xy()
     if robot is None or current_zone_slot(robot) == "dock":
         if home is None:
-            phase("error", "no_dock_zone")
+            _patrol_end(drv, "error", "no_dock_zone")
             return 1
         # Het vertrek is dat van de firmware (QUIT_PILE), nooit ons eigen
         # achteruitrijden (Walter, 2026-10-07).
         if drv.localize_via_firmware(10 ** int(home[3:]), PATROL_DEPART_CUTTERHIGH, None) is None:
-            phase("error", "not_localized")
+            _patrol_end(drv, "error", "not_localized")
             return 1
         robot = drv.robot_xy()
         if robot is None:
-            phase("error", "not_localized")
+            _patrol_end(drv, "error", "not_localized")
             return 1
     phase("patrolling")
     base = _csv_base()
@@ -1845,9 +1996,9 @@ def do_patrol(drv, params):
         elif not error:
             error = "no_route_home"
     if error:
-        phase("error", error)
+        _patrol_end(drv, "error", error)
         return 1
-    phase("done")
+    _patrol_end(drv, "done")
     return 0
 
 
@@ -1961,68 +2112,98 @@ def check_mow(drv, to_slot):
     return 0 if ok else 1
 
 
-def main():
-    args = sys.argv[1:]
+# Modes whose drive can own a departure task or a nav2 goal. They get the stop
+# handlers, so a SIGTERM (a newer drive start, stop_mow_zone) unwinds through
+# the departure release, the goal cancel and, on a patrol, the headlight.
+DRIVE_MODES = ("mow", "edge", "patrol")
+
+
+def run(drv, args):
+    """One run of this script against a Driver: the mode dispatch and, for the
+    DRIVE_MODES, the stop handlers and the way out. main() wraps it in rclpy."""
     mode = args[0] if args else ""
+    rc = 2
+    previous = _install_stop_handlers() if mode in DRIVE_MODES else {}
+    try:
+        try:
+            if mode == "check":
+                if len(args) < 2 or not re.fullmatch(r"map\d+", args[1]):
+                    phase("error", "usage: mow_zone_drive.py check <mapN>")
+                else:
+                    rc = check_mow(drv, args[1])
+            elif mode == "return":
+                rc = do_return(drv)
+            elif mode == "goto":
+                try:
+                    gx, gy = float(args[1]), float(args[2])
+                    gyaw = None if len(args) < 4 or args[3] == "-" else float(args[3])
+                except (IndexError, ValueError):
+                    phase("error", "usage: mow_zone_drive.py goto <x> <y> [yaw|-]")
+                else:
+                    if not all(math.isfinite(v) for v in (gx, gy)) or max(abs(gx), abs(gy)) > 500:
+                        phase("error", "invalid_target")
+                    else:
+                        rc = do_goto(drv, gx, gy, gyaw)
+            elif mode == "edge":
+                if len(args) < 4:
+                    phase("error", "usage: mow_zone_drive.py edge <to_slot> <map_ids> <cutterhigh>")
+                elif not re.fullmatch(r"map\d+", args[1]):
+                    phase("error", "invalid_map")
+                else:
+                    rc = do_mow(drv, args[1], int(args[2]), int(args[3]), None, edge=True)
+            elif mode == "mow":
+                if len(args) < 5:
+                    phase("error", "usage: mow_zone_drive.py mow <to_slot> <map_ids> <cutterhigh> <direction|->")
+                elif not re.fullmatch(r"map\d+", args[1]):
+                    phase("error", "invalid_map")
+                else:
+                    rc = do_mow(drv, args[1], int(args[2]), int(args[3]),
+                                None if args[4] == "-" else int(args[4]))
+            elif mode == "probe":
+                try:
+                    secs = int(args[1]) if len(args) > 1 else 60
+                    led = int(args[2]) if len(args) > 2 else 100
+                except ValueError:
+                    phase("error", "usage: mow_zone_drive.py probe [seconds] [led 0-100]")
+                else:
+                    rc = do_probe(drv, max(1, min(600, secs)), max(0, min(100, led)))
+            elif mode == "patrol":
+                try:
+                    with open(args[1]) as fh:
+                        params = json.load(fh)
+                except (IndexError, OSError, ValueError) as e:
+                    _patrol_end(drv, "error", f"usage: mow_zone_drive.py patrol <params.json> ({e})")
+                else:
+                    rc = do_patrol(drv, params)
+            else:
+                phase("error", f"unknown_mode:{mode}")
+        except Exception as e:
+            if mode == "patrol":
+                _headlight_off(drv)   # before the end is reported, as on every patrol end
+            phase("error", str(e))
+            rc = 1
+    finally:
+        if mode in DRIVE_MODES:
+            # Also after a SIGTERM: our own nav2 goal must not drive on without
+            # us, and a killed patrol leaves the light off (once per drive: a
+            # patrol that ended by itself already switched it off).
+            with _signals_held():
+                try:
+                    drv.cancel_own_goal()
+                except Exception as e:
+                    log(f"cancel own goal on the way out: {e}")
+                if mode == "patrol":
+                    _headlight_off(drv)
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    return rc
+
+
+def main():
     rclpy.init()
     node = rclpy.create_node("mow_zone_drive")
-    drv = Driver(node)
-    rc = 2
     try:
-        if mode == "check":
-            if len(args) < 2 or not re.fullmatch(r"map\d+", args[1]):
-                phase("error", "usage: mow_zone_drive.py check <mapN>")
-            else:
-                rc = check_mow(drv, args[1])
-        elif mode == "return":
-            rc = do_return(drv)
-        elif mode == "goto":
-            try:
-                gx, gy = float(args[1]), float(args[2])
-                gyaw = None if len(args) < 4 or args[3] == "-" else float(args[3])
-            except (IndexError, ValueError):
-                phase("error", "usage: mow_zone_drive.py goto <x> <y> [yaw|-]")
-            else:
-                if not all(math.isfinite(v) for v in (gx, gy)) or max(abs(gx), abs(gy)) > 500:
-                    phase("error", "invalid_target")
-                else:
-                    rc = do_goto(drv, gx, gy, gyaw)
-        elif mode == "edge":
-            if len(args) < 4:
-                phase("error", "usage: mow_zone_drive.py edge <to_slot> <map_ids> <cutterhigh>")
-            elif not re.fullmatch(r"map\d+", args[1]):
-                phase("error", "invalid_map")
-            else:
-                rc = do_mow(drv, args[1], int(args[2]), int(args[3]), None, edge=True)
-        elif mode == "mow":
-            if len(args) < 5:
-                phase("error", "usage: mow_zone_drive.py mow <to_slot> <map_ids> <cutterhigh> <direction|->")
-            elif not re.fullmatch(r"map\d+", args[1]):
-                phase("error", "invalid_map")
-            else:
-                rc = do_mow(drv, args[1], int(args[2]), int(args[3]),
-                            None if args[4] == "-" else int(args[4]))
-        elif mode == "probe":
-            try:
-                secs = int(args[1]) if len(args) > 1 else 60
-                led = int(args[2]) if len(args) > 2 else 100
-            except ValueError:
-                phase("error", "usage: mow_zone_drive.py probe [seconds] [led 0-100]")
-            else:
-                rc = do_probe(drv, max(1, min(600, secs)), max(0, min(100, led)))
-        elif mode == "patrol":
-            try:
-                with open(args[1]) as fh:
-                    params = json.load(fh)
-            except (IndexError, OSError, ValueError) as e:
-                phase("error", f"usage: mow_zone_drive.py patrol <params.json> ({e})")
-            else:
-                rc = do_patrol(drv, params)
-        else:
-            phase("error", f"unknown_mode:{mode}")
-    except Exception as e:
-        phase("error", str(e))
-        rc = 1
+        return run(Driver(node), sys.argv[1:])
     finally:
         try:
             node.destroy_node()
@@ -2032,7 +2213,6 @@ def main():
             rclpy.shutdown()
         except Exception:
             pass
-    return rc
 
 
 if __name__ == "__main__":

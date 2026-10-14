@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import signal
 import struct
 import sys
 import tempfile
@@ -308,6 +309,18 @@ class PatrolDriver(HopDriver):
         self._loc = None                 # on the dock after a boot: no frame yet
         self.unreachable = {tuple(p) for p in unreachable}
         self.status = status
+        self.events = []                 # headlight levels and phases, in order (run_patrol)
+
+    def prepare_headlight(self):
+        self.events.append(("light_ready",))
+
+    def set_headlight(self, level, match_timeout=3.0):
+        self.events.append(("light", level))
+        return True
+
+    def cancel_own_goal(self, timeout=0.5):
+        self.events.append(("cancel_own_goal",))
+        return False
 
     def wait_status(self, pred, timeout=30.0):
         return self.status
@@ -339,7 +352,7 @@ class PatrolDriver(HopDriver):
 def run_patrol(drv, zones):
     seen, uploads = [], []
     real = (mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint)
-    mzd.phase = lambda *a: seen.append(a)
+    mzd.phase = lambda *a: seen.append(a) or drv.events.append(("phase",) + a)
     mzd.fetch_snapshot = lambda topic, timeout=25.0: b"\xff\xd8x"
     mzd.upload_checkpoint = (lambda url, seq, xy, scores, frames, jpeg, timeout=20.0:
                              uploads.append((seq, scores, frames, jpeg is not None)) or True)
@@ -514,6 +527,298 @@ def test_upload_checkpoint_posts_the_scores_and_the_photo():
                                      b"x") is False
     finally:
         urllib.request.urlopen = real
+
+
+# ── The drive owns what it starts: the departure task, its nav2 goal, the light ──
+# A drive is killed with SIGTERM by a newer drive start (kill_stale_mow_drives)
+# or by stop_mow_zone, and SIGKILLed 3 to 5 s later. In that window it has to
+# stop the coverage task its firmware departure started, or robot_decision runs
+# that task to its end: the dock zone mowed at 90 mm, at night.
+
+@contextlib.contextmanager
+def stop_handlers():
+    """The SIGTERM/SIGHUP handlers a driving mode installs, restored afterwards."""
+    previous = mzd._install_stop_handlers()
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+class DepartureDriver(mzd.Driver):
+    """The real Driver.localize_via_firmware against a fake robot_decision.
+    `sigterm_in` names the call during which the drive receives SIGTERM;
+    `fail_in` the one that raises instead."""
+
+    def __init__(self, sigterm_in=None, fail_in=None, recharging=False):
+        self.calls = []
+        self.sigterm_in, self.fail_in, self.recharging = sigterm_in, fail_in, recharging
+        self._status = (mzd.TASK_MODE_COVERAGE, 30)   # the departure's init states
+        self._recharge = 0
+
+    def _step(self, name):
+        if self.sigterm_in == name:
+            self.sigterm_in = None
+            os.kill(os.getpid(), signal.SIGTERM)
+        if self.fail_in == name:
+            self.fail_in = None
+            raise RuntimeError(f"{name} broke")
+
+    def start_cov(self, map_ids, cutterhigh, direction):
+        self.calls.append(("start_cov",))
+        self._step("start_cov")
+        return True
+
+    def robot_xy(self, timeout=6.0):
+        self.calls.append(("robot_xy",))
+        self._step("robot_xy")
+        return (1.0, 1.0)
+
+    def wait_status(self, pred, timeout=30.0):
+        self.calls.append(("wait_status", timeout))
+        self._step("wait_status")
+        return self._status
+
+    def recharge_active(self, timeout=4.0):
+        self.calls.append(("recharge_active", timeout))
+        return self.recharging
+
+    def stop_task(self, timeout=None):
+        self.calls.append(("stop_task", timeout))
+        self._status = (mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP)   # parked
+        return True
+
+    def quit_mapping_mode(self, timeout=None):
+        self.calls.append(("quit_mapping_mode", timeout))
+        self._status = (mzd.TASK_MODE_COVERAGE, 0)
+        return True
+
+
+def depart(drv, sleep=None):
+    """localize_via_firmware with the stop handlers installed. (exit code or None, result)."""
+    real_time = mzd.time
+    if sleep is not None:
+        mzd.time = types.SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=sleep)
+    try:
+        with stop_handlers():
+            try:
+                return None, drv.localize_via_firmware(1, mzd.PATROL_DEPART_CUTTERHIGH, None)
+            except SystemExit as e:
+                return e.code, None
+    finally:
+        mzd.time = real_time
+
+
+def names(drv):
+    return [c[0] for c in drv.calls]
+
+
+def test_a_sigterm_during_the_departure_stops_and_clears_its_task():
+    for when in ("start_cov", "robot_xy", "wait_status"):
+        drv = DepartureDriver(sigterm_in=when)
+        code, _pos = depart(drv)
+        assert code == 143, (when, code)
+        n = names(drv)
+        assert "stop_task" in n and "quit_mapping_mode" in n, (when, drv.calls)
+        assert n.index("start_cov") < n.index("stop_task") < n.index("quit_mapping_mode"), (when, drv.calls)
+        # Short service timeouts: the whole release fits well inside the 3 s
+        # after which stop_mow_zone and the patrol handler SIGKILL the drive.
+        timed = [c for c in drv.calls if c[0] in ("stop_task", "quit_mapping_mode",
+                                                   "recharge_active", "wait_status")]
+        after_kill = timed[[c[0] for c in timed].index("stop_task") - 1:]
+        assert all(c[1] is not None and c[1] <= 1.0 for c in after_kill), (when, after_kill)
+
+
+def test_an_exception_during_the_departure_stops_and_clears_its_task():
+    drv = DepartureDriver(fail_in="robot_xy")
+    try:
+        with stop_handlers():
+            drv.localize_via_firmware(1, mzd.PATROL_DEPART_CUTTERHIGH, None)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("the exception must still reach the caller")
+    assert names(drv).count("stop_task") == 1 and "quit_mapping_mode" in names(drv), drv.calls
+
+
+def test_a_sigterm_after_the_handover_does_not_stop_the_task_again():
+    drv = DepartureDriver()
+    code, _pos = depart(drv, sleep=lambda s: os.kill(os.getpid(), signal.SIGTERM))
+    assert code == 143
+    assert names(drv).count("stop_task") == 1, drv.calls          # the handover's own stop
+    assert [c for c in drv.calls if c[0] == "stop_task"] == [("stop_task", None)], drv.calls
+
+
+def test_a_sigterm_while_the_robot_reports_a_recharge_does_not_stop_it():
+    drv = DepartureDriver(sigterm_in="robot_xy", recharging=True)
+    code, _pos = depart(drv)
+    assert code == 143
+    assert "stop_task" not in names(drv) and "quit_mapping_mode" not in names(drv), drv.calls
+
+
+def test_a_refused_departure_leaves_robot_decision_alone():
+    class Refused(DepartureDriver):
+        def start_cov(self, map_ids, cutterhigh, direction):
+            self.calls.append(("start_cov",))
+            return False
+    drv = Refused()
+    assert depart(drv) == (None, None)
+    assert names(drv) == ["start_cov"], drv.calls
+
+
+class Done:
+    """A future that completed with `value`."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def done(self):
+        return True
+
+    def result(self):
+        return self.value
+
+
+class FakeGoalHandle:
+    accepted = True
+
+    def __init__(self, result=None):
+        self.cancelled = 0
+        self._result = result
+
+    def get_result_async(self):
+        return Done(self._result)
+
+    def cancel_goal_async(self):
+        self.cancelled += 1
+        return Done(object())
+
+
+@contextlib.contextmanager
+def fake_actions(handle):
+    """nav2's NavigateToPose action, accepting every goal with `handle`."""
+    class Client:
+        def __init__(self, node, action, name):
+            pass
+
+        def wait_for_server(self, timeout_sec=0.0):
+            return True
+
+        def send_goal_async(self, goal):
+            return Done(handle)
+
+    def goal():
+        ns = types.SimpleNamespace
+        return ns(pose=ns(header=ns(frame_id=""), pose=ns(position=ns(x=0.0, y=0.0),
+                                                          orientation=ns(z=0.0, w=1.0))))
+
+    real = (mzd.ActionClient, mzd.NavigateToPose, getattr(mzd.rclpy, "spin_until_future_complete", None))
+    mzd.ActionClient = Client
+    mzd.NavigateToPose = types.SimpleNamespace(Goal=goal)
+    mzd.rclpy.spin_until_future_complete = lambda node, fut, timeout_sec=None: None
+    try:
+        yield
+    finally:
+        mzd.ActionClient, mzd.NavigateToPose = real[0], real[1]
+        if real[2] is None:
+            del mzd.rclpy.spin_until_future_complete
+        else:
+            mzd.rclpy.spin_until_future_complete = real[2]
+
+
+def test_a_drive_holds_the_goal_nav2_took_until_its_result_arrives():
+    finished = FakeGoalHandle(result=types.SimpleNamespace(status=4))
+    with fake_actions(finished):
+        drv = mzd.Driver(FakeNode(misses=0))
+        assert drv.nav_to(1.0, 2.0) == (True, "nav_to_pose_status_4")
+        assert drv.cancel_own_goal() is False and finished.cancelled == 0   # nothing left to cancel
+    hanging = FakeGoalHandle(result=None)                                 # no result within the timeout
+    with fake_actions(hanging):
+        drv = mzd.Driver(FakeNode(misses=0))
+        assert drv.nav_to(1.0, 2.0) == (False, "nav_to_pose timeout")
+        # On its way out the drive cancels that goal, by its own id, once.
+        assert drv.cancel_own_goal() is True and hanging.cancelled == 1
+        assert drv.cancel_own_goal() is False and hanging.cancelled == 1
+
+
+def test_a_goal_still_being_sent_is_cancelled_once_nav2_took_it():
+    handle = FakeGoalHandle()
+    with fake_actions(handle):
+        drv = mzd.Driver(FakeNode(misses=0))
+        drv._goal_send = Done(handle)   # killed between send_goal_async and its answer
+        assert drv.cancel_own_goal() is True and handle.cancelled == 1
+
+
+def patrol_params(zones):
+    path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+    with open(path, "w") as fh:
+        json.dump({"run": "1", "zones": zones, "dwell_s": 1, "photo_topic": "front",
+                   "upload": "http://srv/u?sn=X&run=1"}, fh)
+    return path
+
+
+class KilledPatrolDriver(PatrolDriver):
+    """Killed (SIGTERM) on its way to the first checkpoint."""
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        self.events.append(("nav_to", x, y))
+        os.kill(os.getpid(), signal.SIGTERM)
+        return True, ""
+
+
+def test_a_killed_patrol_cancels_its_goal_and_switches_the_light_off_on_its_way_out():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = KilledPatrolDriver()
+    real = (mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint)
+    mzd.phase = lambda *a: drv.events.append(("phase",) + a)
+    mzd.fetch_snapshot = lambda topic, timeout=25.0: None
+    mzd.upload_checkpoint = lambda *a, **k: True
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            mzd.run(drv, ["patrol", patrol_params([{"zone": "map0", "points": [[3, 3], [7, 7]]}])])
+    except SystemExit as e:
+        code = e.code
+    else:
+        code = None
+    finally:
+        mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint = real
+    assert code == 143, code
+    after = drv.events[drv.events.index(("nav_to", 3, 3)) + 1:]
+    assert after == [("cancel_own_goal",), ("light", 0)], drv.events
+    # run() puts the handlers back: this test process keeps its own SIGTERM.
+    assert signal.getsignal(signal.SIGTERM) is not mzd._stop_on_signal
+
+
+def test_the_light_goes_off_on_the_mower_before_the_end_is_reported():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    cases = [
+        (PatrolDriver(), [{"zone": "map0", "points": [[3, 3]]}], ("phase", "done")),
+        (PatrolDriver(unreachable=[(3, 3), (4, 4), (5, 5)]),
+         [{"zone": "map0", "points": [[3, 3], [4, 4], [5, 5]]}], ("phase", "error", "checkpoints_unreachable")),
+        (PatrolDriver(status=(mzd.TASK_MODE_COVERAGE, 60)),
+         [{"zone": "map0", "points": [[3, 3]]}], ("phase", "error", "busy_mowing")),
+    ]
+    for drv, zones, end in cases:
+        run_patrol(drv, zones)
+        assert end in drv.events, (end, drv.events)
+        assert drv.events.count(("light", 0)) == 1, drv.events
+        assert drv.events.index(("light", 0)) < drv.events.index(end), drv.events
+        # The publisher exists from the start, so it is matched by the end.
+        assert drv.events[0] == ("light_ready",), drv.events
+
+
+def test_a_patrol_that_cannot_read_its_params_switches_the_light_off_too():
+    drv = PatrolDriver()
+    real_phase = mzd.phase
+    mzd.phase = lambda *a: drv.events.append(("phase",) + a)
+    try:
+        rc = mzd.run(drv, ["patrol", "/nonexistent/patrol.json"])
+    finally:
+        mzd.phase = real_phase
+    assert rc == 2
+    ends = [e for e in drv.events if e[0] in ("light", "phase")]
+    assert [e[0] for e in ends] == ["light", "phase"] and ends[1][1] == "error", drv.events
 
 
 if __name__ == "__main__":
