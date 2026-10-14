@@ -7,6 +7,7 @@ Run: python3 research/__tests__/test_patrol_command.py
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import tempfile
 
@@ -44,6 +45,8 @@ for bad, why in [
 
 
 class FakeProc:
+    pid = 4242
+
     def __init__(self, lines, rc=0, stopped=False, ignores_terminate=False):
         self.stdout = iter([line + "\n" for line in lines])
         self.returncode = None
@@ -72,6 +75,24 @@ class FakeProc:
         self.returncode = -9
 
 
+class TakenOverProc(FakeProc):
+    """wait() as a newer drive's start leaves it: the newer drive has registered, this one exits."""
+
+    def wait(self, timeout=None):
+        ec._MOW_DRIVE_PROC[0] = object()
+        return super().wait(timeout)
+
+
+class MarkedProc(FakeProc):
+    """wait() after kill_stale_mow_drives marked this drive for a newer start, before any
+    newer drive has registered."""
+
+    def wait(self, timeout=None):
+        if hasattr(ec, "_MOW_DRIVE_SUPERSEDED"):
+            ec._MOW_DRIVE_SUPERSEDED[0] = self
+        return super().wait(timeout)
+
+
 class SyncThread:
     def __init__(self, target=None, daemon=None, name=None):
         self._target = target
@@ -80,8 +101,15 @@ class SyncThread:
         self._target()
 
 
+def reset_mow_state():
+    """Forget the drive registration and any takeover mark a check left behind."""
+    ec._MOW_DRIVE_PROC[0] = None
+    if hasattr(ec, "_MOW_DRIVE_SUPERSEDED"):
+        ec._MOW_DRIVE_SUPERSEDED[0] = None
+
+
 def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=None,
-        ignores_terminate=False):
+        ignores_terminate=False, proc_class=FakeProc):
     sent, calls, seen = [], [], {}
     cleanups, sleeps = [], []    # nav-goal cleanups (the drive's state then), the guard's pauses
     seen.update(cleanups=cleanups, sleeps=sleeps)
@@ -116,7 +144,7 @@ def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=
         with open(argv[-1]) as fh:
             seen["params"] = json.load(fh)
         seen["params_file"] = argv[-1]
-        seen["proc"] = FakeProc(lines, rc, stopped, ignores_terminate)
+        seen["proc"] = proc_class(lines, rc, stopped, ignores_terminate)
         return seen["proc"]
 
     for k, v in defaults.items():
@@ -151,6 +179,33 @@ def guard_speed(refusals):
         return "ros node not ready" if len(attempts) <= refusals else ""
 
     return publish, attempts
+
+
+def kill_stale_probe(registered_pid, stale_pids):
+    """The real kill_stale_mow_drives against a fake process list, with a drive registered
+    under `registered_pid`. Returns the signals it sent, whether the registered drive was
+    marked at the first one, and whether it is marked afterwards."""
+    proc = FakeProc([])
+    proc.pid = registered_pid
+    reset_mow_state()
+    ec._register_mow_drive(proc)
+    kills, marked_at_first = [], []
+    real_find, real_kill = ec.find_stale_mow_drives, os.kill
+
+    def fake_kill(pid, sig):
+        if not marked_at_first:
+            marked_at_first.append(getattr(ec, "_MOW_DRIVE_SUPERSEDED", [None])[0] is proc)
+        kills.append((pid, sig))
+
+    ec.find_stale_mow_drives = lambda *a, **k: list(stale_pids)
+    os.kill = fake_kill
+    try:
+        ec.kill_stale_mow_drives(timeout=0)
+    finally:
+        ec.find_stale_mow_drives, os.kill = real_find, real_kill
+    marked = getattr(ec, "_MOW_DRIVE_SUPERSEDED", [None])[0] is proc
+    reset_mow_state()
+    return kills, marked_at_first, marked
 
 
 sent, calls, seen = run([
@@ -269,6 +324,34 @@ sent, calls, seen = run(["PHASE patrolling"], patches={"_apply_edge_perception_l
                         ignores_terminate=True)
 check("a drive that survives SIGTERM is killed", seen.get("proc") is not None and seen["proc"].killed)
 check("and its nav goal is released after the kill", seen["cleanups"] == [(True, True)])
+
+# round 3: a drive taken over by a newer drive (registered while this one exits) reports stopped
+sent, calls, seen = run(["PHASE patrolling"], rc=-15, proc_class=TakenOverProc)
+reset_mow_state()
+check("a drive taken over by a newer drive reports stopped",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "stopped"])
+check("and sends no error for it",
+      not any(b.get("phase") == "error" for n, b in sent if n == "patrol_status"))
+check("and leaves the newer drive's nav goal alone", seen["cleanups"] == [])
+
+# round 3: a drive that exits on its own with -15, with no newer drive, is still an error
+sent, calls, seen = run(["PHASE patrolling"], rc=-15)
+check("a drive that exits on its own with -15 still reports drive_exit_-15",
+      ("patrol_status", {"phase": "error", "run": "1791", "error": "drive_exit_-15"}) in sent)
+
+# round 3: a drive marked by kill_stale_mow_drives reports stopped, before any newer drive registers
+sent, calls, seen = run(["PHASE patrolling"], rc=-15, proc_class=MarkedProc)
+reset_mow_state()
+check("a drive marked by kill_stale_mow_drives reports stopped",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "stopped"]
+      and seen["cleanups"] == [])
+
+# round 3: kill_stale_mow_drives marks the registered drive before its first signal, and only that drive
+kills, marked_at_first, marked = kill_stale_probe(registered_pid=4242, stale_pids=[4242])
+check("kill_stale_mow_drives marks the registered drive before the first signal",
+      marked_at_first == [True] and marked and bool(kills) and kills[0][1] == signal.SIGTERM)
+kills, marked_at_first, marked = kill_stale_probe(registered_pid=4242, stale_pids=[4343])
+check("and leaves a registered drive it does not kill unmarked", marked_at_first == [False] and not marked)
 
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)

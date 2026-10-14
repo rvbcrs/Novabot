@@ -1796,6 +1796,8 @@ def _start_cov_task(map_ids, cutterhigh, direction):
 _MOW_DRIVE_LOCK = threading.Lock()
 _MOW_DRIVE_PROC = [None]
 _MOW_DRIVE_STOPPED = [False]
+# The registered drive that kill_stale_mow_drives is about to kill for a newer start.
+_MOW_DRIVE_SUPERSEDED = [None]
 
 
 def find_stale_mow_drives(proc_root="/proc", self_pid=None):
@@ -1837,6 +1839,12 @@ def kill_stale_mow_drives(timeout=5.0):
     and every later attempt failed a metre off the dock until it was cleared.
     """
     pids = find_stale_mow_drives()
+    with _MOW_DRIVE_LOCK:
+        # The newer drive registers only after this call returns, so the drive being
+        # killed may check its registration first: mark the takeover before the kill.
+        registered = _MOW_DRIVE_PROC[0]
+        if registered is not None and registered.pid in pids:
+            _MOW_DRIVE_SUPERSEDED[0] = registered
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -1882,6 +1890,15 @@ def _unregister_mow_drive(proc):
         if _MOW_DRIVE_PROC[0] is proc:
             _MOW_DRIVE_PROC[0] = None
     return stopped
+
+
+def _drive_superseded(proc):
+    """True when a newer start has taken this drive over: kill_stale_mow_drives
+    marked it before killing it, or another drive has registered since this one.
+    A newer start killed it and owns the wheels now."""
+    with _MOW_DRIVE_LOCK:
+        return ((_MOW_DRIVE_PROC[0] is not None and _MOW_DRIVE_PROC[0] is not proc)
+                or _MOW_DRIVE_SUPERSEDED[0] is proc)
 
 
 def handle_mow_zone(params, respond):
@@ -2301,9 +2318,12 @@ def handle_patrol(params, respond):
                 elif line:
                     log(f"patrol: {line}")
             proc.wait()
+            superseded = _drive_superseded(proc)
             stopped = _unregister_mow_drive(proc)
             if proc.returncode != 0 and not terminal_seen:
-                _say("patrol_status", {"phase": "stopped", "run": run} if stopped else
+                if superseded:
+                    log("patrol: drive superseded by a newer drive, reported as stopped")
+                _say("patrol_status", {"phase": "stopped", "run": run} if (stopped or superseded) else
                      {"phase": "error", "run": run, "error": f"drive_exit_{proc.returncode}"})
         except Exception as e:
             log(f"patrol error: {e}")
