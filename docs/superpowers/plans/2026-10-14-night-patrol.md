@@ -934,10 +934,12 @@ git commit -m "feat(firmware): patrol mode in mow_zone_drive (checkpoints, blade
 
 - [ ] **Step 6: First drive, daytime (only with Ramon's explicit OK and Ramon next to the mower)**
 
+Preferably run this after Task 4 is on the mower (a custom build), through the dashboard, so the blade-off guard and the detection switch are active. If you run the script by hand as below, the blade guard of Task 4 is NOT in the chain: watch the deck during the departure. Copy the script to `/tmp/scripts/mow_zone_drive.py` (not another name), so the dashboard stop (`stop_mow_zone`, which matches `scripts/mow_zone_drive.py`) reaches it.
+
 Ask Ramon first. Pick two points about 3 m in front of the dock inside the dock's zone (read `map_position_x/y` from the dashboard while the mower stands there, or click on the map). On the mower:
 
 ```bash
-scp research/mow_zone_drive.py root@<mower-ip>:/tmp/mzd_patrol.py
+ssh root@<mower-ip> mkdir -p /tmp/scripts && scp research/mow_zone_drive.py root@<mower-ip>:/tmp/scripts/mow_zone_drive.py
 ssh root@<mower-ip>
 cat > /tmp/p.json <<'EOF'
 {"run": "1", "zones": [{"zone": "map0", "points": [[<x1>, <y1>], [<x2>, <y2>]]}],
@@ -945,7 +947,7 @@ cat > /tmp/p.json <<'EOF'
  "upload": "http://127.0.0.1:9/none?sn=X&run=1"}
 EOF
 source /opt/ros/galactic/setup.bash && source /root/novabot/install/setup.bash
-python3 /tmp/mzd_patrol.py patrol /tmp/p.json
+python3 /tmp/scripts/mow_zone_drive.py patrol /tmp/p.json
 ```
 
 The upload URL points nowhere on purpose (uploads fail, logged). Watch: the departure is the firmware's own, the blades must NOT spin at any moment (listen and watch the deck), the mower stops at both points, `CHECKPOINT` lines show `frames` above 0. Afterwards send the mower home from the dashboard. Note the result in the spec under "Phase 0 result" as "Phase 1 drive". If the blades spun during the departure, STOP and report: the blade guard of Task 4 must then run before the departure instead of after it.
