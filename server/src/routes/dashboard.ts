@@ -4193,7 +4193,7 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     alternate_step: body.alternateStep as number | undefined,
     edge_offset: body.edgeOffset as number | undefined,
     // No rain pause for a patrol, also not through an edit (spec 2026-10-14):
-    // rainMonitor.findActiveRainSchedule must never pick a patrol row.
+    // scheduleRepo.findActiveRainSchedule (used by rainMonitor) must never pick a patrol row.
     rain_pause: body.rainPause !== undefined && existing.kind !== 'patrol' ? ((body.rainPause as boolean) ? 1 : 0) : undefined,
     rain_threshold_mm: body.rainThresholdMm as number | undefined,
     rain_threshold_probability: body.rainThresholdProbability as number | undefined,

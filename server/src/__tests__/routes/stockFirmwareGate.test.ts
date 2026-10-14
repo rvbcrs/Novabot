@@ -318,9 +318,9 @@ describe('patrol routes', () => {
     expect(scheduleRepo.findById(mow.body.schedule.scheduleId)!.enabled).toBe(1);
   });
 
-  // No rain pause for a patrol, also not through an edit: rainMonitor's
-  // findActiveRainSchedule picks an enabled rain_pause schedule as the mower's
-  // rain schedule, and must never pick a patrol row.
+  // No rain pause for a patrol, also not through an edit: scheduleRepo's
+  // findActiveRainSchedule (used by rainMonitor) picks an enabled rain_pause
+  // schedule as the mower's rain schedule, and must never pick a patrol row.
   it('PATCH keeps rain_pause off on a patrol schedule and still sets it on a mow schedule', async () => {
     for (const s of scheduleRepo.findByMowerSn(PSN)) scheduleRepo.deleteByIdAndMower(s.schedule_id, PSN);
     const patrolId = (await request(server).post(`${B}/schedules/${PSN}`)

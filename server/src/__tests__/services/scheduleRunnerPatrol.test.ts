@@ -36,6 +36,14 @@ const NOW = new Date('2026-08-05T23:00:30');
 const SN = 'LFIN1231000211';
 const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 
+/** A forecast for NOW, which is night (sunset 4 hours ago), with one hour at `temperatureC` around the start. */
+function nightForecast(temperatureC: number) {
+  return {
+    hourly: [{ time: '2026-08-05T23:00', epochMs: NOW.getTime(), precipitation: 0, precipitationProbability: 0, temperatureC }],
+    sunriseMs: NOW.getTime() - 16 * 3_600_000, sunsetMs: NOW.getTime() - 4 * 3_600_000, cachedAt: 0,
+  };
+}
+
 function due(id: string, kind: 'mow' | 'patrol') {
   scheduleRepo.create({
     schedule_id: id, mower_sn: SN, start_time: '23:00', kind,
@@ -85,15 +93,31 @@ describe('patrol schedules', () => {
   // The night guard is the one guard a patrol ignores; the frost guard stays.
   it('the frost guard still holds a patrol back', async () => {
     rainSettingsRepo.set(SN, { nightGuard: true, frostGuard: true, frostThresholdC: 3 });
-    vi.mocked(getWeatherForecast).mockResolvedValue({
-      hourly: [{ time: '2026-08-05T23:00', epochMs: NOW.getTime(), precipitation: 0, precipitationProbability: 0, temperatureC: -1 }],
-      sunriseMs: NOW.getTime() - 16 * 3_600_000, sunsetMs: NOW.getTime() - 4 * 3_600_000, cachedAt: 0,
-    });
+    vi.mocked(getWeatherForecast).mockResolvedValue(nightForecast(-1));
     due('p-frost', 'patrol');
     startScheduleRunner();
     await flush();
     expect(startPatrol).not.toHaveBeenCalled();
     expect(scheduleRepo.findById('p-frost')!.last_result).toBe('skipped');
+    // Skipped for frost, not for the night that a patrol ignores: a night skip
+    // would leave the two lines above just as true.
+    expect(emitScheduleEvent).toHaveBeenCalledWith('weather:paused', expect.objectContaining({ scheduleId: 'p-frost', reason: 'frost' }));
+  });
+
+  // A patrol reaches the night check only with the frost guard on, so this is
+  // the one test that pins the night-guard exemption there. Without it, a mower
+  // with both guards on would lose every nightly patrol, and the frost test
+  // above could not tell (it is skipped either way).
+  it('with both guards on, a patrol still starts on a night without frost', async () => {
+    rainSettingsRepo.set(SN, { nightGuard: true, frostGuard: true, frostThresholdC: 3 });
+    vi.mocked(getWeatherForecast).mockResolvedValue(nightForecast(12));
+    due('p-warm', 'patrol');
+    startScheduleRunner();
+    await flush();
+    expect(getWeatherForecast).toHaveBeenCalledTimes(1);   // the frost guard did look
+    expect(startPatrol).toHaveBeenCalledWith(SN);
+    expect(scheduleRepo.findById('p-warm')!.last_result).toBe('started');
+    expect(emitScheduleEvent).not.toHaveBeenCalledWith('weather:paused', expect.anything());
   });
 
   // Rain pause is always off for a patrol and the night guard does not apply to
