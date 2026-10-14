@@ -1793,40 +1793,48 @@ def do_patrol(drv, params):
     base = _csv_base()
     current = _start_zone(robot, current_zone_slot(robot))
     seq, fails, error = 0, 0, None
-    for entry in params.get("zones", []):
-        zone = entry.get("zone")
-        if zone != current:
-            hops = edge_route(current, zone)
-            if not hops:
-                log(f"patrol: no route {current} -> {zone}, zone skipped")
-                print("SKIPPED", json.dumps({"zone": zone, "reason": "no_route"}), flush=True)
-                seq += len(entry.get("points", []))
-                continue
-            ok, msg, robot = _drive_hops(drv, base, robot, hops)
-            if not ok:
-                error = msg
-                break
-            current = zone
-        for x, y in entry.get("points", []):
-            seq += 1
-            if not _goto_target_allowed(x, y):
-                log(f"patrol: checkpoint {seq} ({x:.2f},{y:.2f}) outside every zone, skipped")
-                continue
-            ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
-            robot = drv.robot_xy() or robot
-            if not ok:
-                fails += 1
-                log(f"patrol: checkpoint {seq} unreachable ({msg}), {fails} in a row")
-                if fails >= PATROL_MAX_NAV_FAILS:
-                    error = "checkpoints_unreachable"
+    try:
+        for entry in params.get("zones", []):
+            zone = entry.get("zone")
+            if zone != current:
+                hops = edge_route(current, zone)
+                if not hops:
+                    log(f"patrol: no route {current} -> {zone}, zone skipped")
+                    print("SKIPPED", json.dumps({"zone": zone, "reason": "no_route"}), flush=True)
+                    seq += len(entry.get("points", []))
+                    continue
+                ok, msg, robot = _drive_hops(drv, base, robot, hops)
+                if not ok:
+                    error = msg
                     break
-                continue
-            fails = 0
-            _patrol_look(drv, params, seq, robot)
-        if error:
-            break
+                current = zone
+            for x, y in entry.get("points", []):
+                seq += 1
+                if not _goto_target_allowed(x, y):
+                    log(f"patrol: checkpoint {seq} ({x:.2f},{y:.2f}) outside every zone, skipped")
+                    continue
+                ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
+                robot = drv.robot_xy() or robot
+                if not ok:
+                    fails += 1
+                    log(f"patrol: checkpoint {seq} unreachable ({msg}), {fails} in a row")
+                    if fails >= PATROL_MAX_NAV_FAILS:
+                        error = "checkpoints_unreachable"
+                        break
+                    continue
+                fails = 0
+                _patrol_look(drv, params, seq, robot)
+            if error:
+                break
+    except Exception as e:
+        # Een uitzondering (bv. perceptie weg) mag de terugweg niet overslaan.
+        log(f"patrol: {e}")
+        error = error or f"exception: {e}"
     # Terug in de zone van het dock, zodat go_to_charge nooit dwars door een
-    # heg plant.
+    # heg plant. Eerst waar de maaier werkelijk staat: na een mislukte transit
+    # is `current` nog de zone van voor de transit.
+    robot = drv.robot_xy() or robot
+    current = _start_zone(robot, current_zone_slot(robot)) or current
     if home and current != home:
         hops = edge_route(current, home)
         if hops:

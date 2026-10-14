@@ -7,6 +7,8 @@ ROS modules are stubbed; the patrol logic runs against fake Drivers.
 """
 import contextlib
 import importlib.util
+import io
+import json
 import os
 import struct
 import sys
@@ -341,29 +343,36 @@ def run_patrol(drv, zones):
     mzd.fetch_snapshot = lambda topic, timeout=25.0: b"\xff\xd8x"
     mzd.upload_checkpoint = (lambda url, seq, xy, scores, frames, jpeg, timeout=20.0:
                              uploads.append((seq, scores, frames, jpeg is not None)) or True)
+    buf = io.StringIO()
     try:
-        rc = mzd.do_patrol(drv, {"run": "1", "zones": zones, "dwell_s": 1,
-                                 "photo_topic": "front", "upload": "http://srv/u?sn=X&run=1"})
+        with contextlib.redirect_stdout(buf):
+            rc = mzd.do_patrol(drv, {"run": "1", "zones": zones, "dwell_s": 1,
+                                     "photo_topic": "front", "upload": "http://srv/u?sn=X&run=1"})
     finally:
         mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint = real
-    return rc, seen, uploads
+    return rc, seen, uploads, buf.getvalue().splitlines()
 
 
 def test_patrol_departs_like_stock_and_looks_at_every_checkpoint():
     with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
     drv = PatrolDriver()
-    rc, seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [7, 7]]}])
+    rc, seen, uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [7, 7]]}])
     assert rc == 0 and seen[0] == ("patrolling",) and seen[-1] == ("done",), seen
     assert drv.calls[0] == ("localize", 1, mzd.PATROL_DEPART_CUTTERHIGH)
     assert [u[0] for u in uploads] == [1, 2]
     assert uploads[0][1] == {"person": 60, "animal": 0} and uploads[0][2] == 3
     assert ("follow_path",) not in drv.calls          # no transit inside the dock's zone
+    looks = [json.loads(line.split(" ", 1)[1]) for line in out if line.startswith("CHECKPOINT ")]
+    keys = {"seq", "x", "y", "frames", "photo", "sent", "person", "animal"}
+    assert len(looks) == 2 and all(set(c) == keys for c in looks), looks
+    assert [c["seq"] for c in looks] == [1, 2]
+    assert looks[0]["person"] == 60 and looks[0]["photo"] is True and looks[0]["sent"] is True
 
 
 def test_points_outside_every_zone_are_skipped_not_driven():
     with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
     drv = PatrolDriver()
-    rc, _seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [50, 50]]}])
+    rc, _seen, uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [50, 50]]}])
     assert rc == 0 and [u[0] for u in uploads] == [1]
     assert ("nav_to", 50, 50) not in drv.calls
 
@@ -371,16 +380,18 @@ def test_points_outside_every_zone_are_skipped_not_driven():
 def test_a_zone_without_a_route_is_skipped_and_the_rest_goes_on():
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map0tocharge_unicom.csv": DOCK})
     drv = PatrolDriver()
-    rc, seen, uploads = run_patrol(drv, [{"zone": "map6", "points": [[35, 5]]},
-                                         {"zone": "map0", "points": [[3, 3]]}])
+    rc, seen, uploads, out = run_patrol(drv, [{"zone": "map6", "points": [[35, 5]]},
+                                              {"zone": "map0", "points": [[3, 3]]}])
     assert rc == 0 and seen[-1] == ("done",), seen
     assert [u[0] for u in uploads] == [2]             # map6's point was seq 1, never driven
+    skipped = [json.loads(line.split(" ", 1)[1]) for line in out if line.startswith("SKIPPED ")]
+    assert skipped == [{"zone": "map6", "reason": "no_route"}], out
 
 
 def test_three_unreachable_checkpoints_in_a_row_end_the_patrol():
     with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
     drv = PatrolDriver(unreachable=[(3, 3), (4, 4), (5, 5)])
-    rc, seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [4, 4], [5, 5], [6, 6]]}])
+    rc, seen, uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [4, 4], [5, 5], [6, 6]]}])
     assert rc == 1 and seen[-1] == ("error", "checkpoints_unreachable"), seen
     assert uploads == []
 
@@ -389,8 +400,8 @@ def test_another_zone_is_reached_over_its_channel_and_left_again():
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map0tocharge_unicom.csv": DOCK,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
     drv = PatrolDriver()
-    rc, seen, uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]},
-                                         {"zone": "map6", "points": [[35, 5]]}])
+    rc, seen, uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]},
+                                               {"zone": "map6", "points": [[35, 5]]}])
     assert rc == 0 and ("returning",) in seen and seen[-1] == ("done",), seen
     assert [u[0] for u in uploads] == [1, 2]
     assert drv.calls.count(("follow_path",)) == 2      # out over the channel and back
@@ -399,7 +410,7 @@ def test_another_zone_is_reached_over_its_channel_and_left_again():
 def test_a_running_mow_is_never_touched():
     with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
     drv = PatrolDriver(status=(mzd.TASK_MODE_COVERAGE, 60))
-    rc, seen, _uploads = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]}])
+    rc, seen, _uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]}])
     assert rc == 1 and seen == [("error", "busy_mowing")]
     assert not any(c[0] == "localize" for c in drv.calls)
 
@@ -410,6 +421,99 @@ def test_a_patrol_run_counts_as_a_stale_drive():
     with open(os.path.join(root, "111", "cmdline"), "wb") as fh:
         fh.write(b"python3\0/root/novabot/scripts/mow_zone_drive.py\0patrol\0/tmp/patrol_1.json")
     assert mzd.find_stale_mow_drives(root, self_pid=999) == [111]
+
+
+SQ7 = [(50, 0), (60, 0), (60, 10), (50, 10)]   # past map6, beyond the failing hop
+
+
+class FailingTransitDriver(PatrolDriver):
+    """follow_path aborts once a path runs past x = 45: the map6 -> map7 hop,
+    so the mower stops inside map6 with map7 still ahead of it."""
+
+    def follow_path(self, pts):
+        if pts[-1][0] > 45:
+            self.calls.append(("follow_path_fail",))
+            return False, "followpath_aborted_status_6"
+        return super().follow_path(pts)
+
+
+class DyingPerceptionDriver(PatrolDriver):
+    """Perception dies on the second look, the one at the map6 checkpoint."""
+
+    def __init__(self):
+        super().__init__()
+        self.looks = 0
+
+    def watch_labels(self, seconds):
+        self.looks += 1
+        if self.looks == 2:
+            raise RuntimeError("perception died")
+        return super().watch_labels(seconds)
+
+
+class Ack:
+    """What urlopen hands back for a 200: a status and a context manager."""
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_a_failed_transit_still_returns_into_the_dock_zone():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map7_work.csv": SQ7,
+               "map0tocharge_unicom.csv": DOCK,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)],
+               "map6tomap7_0_unicom.csv": [(39, 5), (51, 5)]})
+    drv = FailingTransitDriver()
+    rc, seen, _uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]},
+                                                {"zone": "map7", "points": [[55, 5]]}])
+    assert rc == 1 and ("returning",) in seen, seen
+    assert seen[-1] == ("error", "followpath_aborted_status_6"), seen
+    assert drv._loc[0] < 10, drv._loc          # the last follow_path drove back towards map0
+
+
+def test_an_exception_in_the_loop_still_returns():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map0tocharge_unicom.csv": DOCK,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = DyingPerceptionDriver()
+    rc, seen, _uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]},
+                                                {"zone": "map6", "points": [[35, 5]]}])
+    assert rc == 1 and ("returning",) in seen, seen
+    assert seen[-1][0] == "error" and "perception died" in seen[-1][1], seen
+
+
+def test_upload_checkpoint_posts_the_scores_and_the_photo():
+    sent = []
+    real = urllib.request.urlopen
+
+    def accept(req, timeout=0):
+        sent.append(req)
+        return Ack()
+
+    url = "http://srv/u?sn=X&run=1"
+    expected = f"&seq=3&x={1.2345:.3f}&y={-2.0:.3f}&frames=5&person=40&animal=0"
+    try:
+        urllib.request.urlopen = accept
+        assert mzd.upload_checkpoint(url, 3, (1.2345, -2.0), {"person": 40, "animal": 0}, 5,
+                                     b"\xff\xd8jpeg") is True
+        req = sent[-1]
+        assert req.full_url == url + expected, req.full_url
+        assert req.get_method() == "POST" and req.data == b"\xff\xd8jpeg"
+        assert req.get_header("Content-type") == "application/octet-stream"
+        assert mzd.upload_checkpoint(url, 3, (1.0, 2.0), {"person": 0, "animal": 0}, 0,
+                                     None) is True
+        assert sent[-1].data == b""
+
+        def refuse(req, timeout=0):
+            raise OSError("connection refused")
+        urllib.request.urlopen = refuse
+        assert mzd.upload_checkpoint(url, 3, (1.0, 2.0), {"person": 0, "animal": 0}, 0,
+                                     b"x") is False
+    finally:
+        urllib.request.urlopen = real
 
 
 if __name__ == "__main__":
