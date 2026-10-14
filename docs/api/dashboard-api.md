@@ -504,8 +504,8 @@ Start a patrol.
 
 A refusal answers 409 with the reason in `error`, in the language of the request:
 the mower is offline, runs stock firmware or a custom build older than 50, is
-busy with a task or a map operation, has a map frame that is not validated, has
-a battery below 50%, or there is no checkpoint to visit.
+busy with a task, an edge cut or a map operation, has a map frame that is not
+validated, has a battery below 50%, or there is no checkpoint to visit.
 
 ```json title="Response (refused)"
 { "ok": false, "error": "..." }

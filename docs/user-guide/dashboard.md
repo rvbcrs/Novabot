@@ -239,12 +239,15 @@ header opens (*Diagnostics & logs*):
   button becomes **Stop**, and it stays Stop until the mower is back.
   Stop ends the drive where the mower stands and does not send it home; use
   *Go to charger* for that. The normal stop and go-to-charger buttons, in the
-  apps too, end a patrol as well.
+  apps too, end a patrol as well. So do the STOP button on the mower and
+  lifting or tilting it: the patrol then ends where the mower stands.
 - **Zones.** One checkbox per work area. With none ticked, the patrol covers
   the area the dock stands in.
 - **Headlight.** A switch for the mower's headlight during the patrol, on by
   default. The light goes on once the mower drives and goes off again before
-  it docks, so the dock marker sees the same light as after mowing.
+  it docks, so the dock marker sees the same light as after mowing. The mower
+  switches it off itself at the end of a patrol too, also when the server
+  misses that end.
 - **Every night at HH:MM.** One patrol schedule per mower: a time and an on/off
   switch. The server starts it by itself, so it does not depend on an app
   being open. It does not appear in the Schedule tab or in the stock app's
@@ -267,9 +270,9 @@ minutes during a patrol), and a patrol that stops with an error gives
 *Patrol stopped*. See [Notifications & Push](../guide/notifications.md).
 
 The dashboard refuses to start a patrol, and says why, when the mower is
-offline or busy with a task or a map operation, when its map frame is not
-validated yet, when the battery is below 50%, or when there is no checkpoint
-to visit.
+offline or busy with a task, an edge cut or a map operation, when its map frame
+is not validated yet, when the battery is below 50%, or when there is no
+checkpoint to visit. An edge cut, in turn, does not start while a patrol drives.
 
 !!! warning "It drives at night"
     Keep the garden clear of anything the mower should not meet. During a

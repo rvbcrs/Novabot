@@ -61,10 +61,19 @@ So there is nothing to finish. We build it from parts that do work:
    phase starts, as a guard behind the firmware departure. A guard that still fails
    after three attempts ends the patrol. A stopped or failed drive also releases its
    nav2 goal and the relaxed transit params; a drive taken over by a newer drive
-   reports `stopped`.
+   reports `stopped`. The drive owns the coverage task of its firmware departure:
+   killed (SIGTERM) or failed before its handover, it stops and clears that task
+   itself (`stop_task` + `quit_mapping_mode`), unless robot_decision is already in
+   a recharge, and on its way out it cancels its own nav2 goal. The stop cleanup
+   cancels only the goals accepted up to the stop (CancelGoal stamp), so the docking
+   goal that follows survives it.
 6. **Headlight is set by the server** (`novabot/cmd/<SN>` `{led_set}`) on
    `patrolling`, and switched off (0) on every terminal phase before go_to_charge,
    so the dock marker always sees the stock light (CLAUDE.md, dock LED = stock).
+   The mower switches it off as well: the drive before it reports `done` or `error`
+   and on a killed drive's way out, the handler when its drive did not end by
+   itself. A stop, go-home or start during a patrol sends `led_set 0` before
+   `stop_mow_zone` and the command.
 7. **Looking.** At each checkpoint: perception re-asserted (idempotent), dwell
    `dwell_s` seconds (default 6) collecting points_labeled messages, per class the
    count reached in at least two messages ("steady count"), then one photo
@@ -81,6 +90,18 @@ So there is nothing to finish. We build it from parts that do work:
    run it started, with the right token, within 6 hours (otherwise 403, nothing
    stored, no alert). The upload path is not behind the login gate, so without this
    anyone who knows a serial number could raise false alerts or push genuine runs out.
+   The run, token and start time are on disk (`patrol_runs`), so a server restart
+   in the middle of a patrol keeps taking that run's uploads.
+   The end of a patrol survives a lost message: the mower re-sends its last
+   `patrol_status` after every MQTT (re)connect while it is younger than 6 hours,
+   and keeps it in `/userdata`; a patrol that was still running when the mower
+   restarted is reported once as `error` `mower_restarted`. The server ignores a
+   report of a run older than its current one and a phase on the way that arrives
+   after its run's end, handles each run's end once, and takes a checkpoint of the
+   current run as proof that it is `patrolling`. A
+   `patrol_respond` with `result: 1` (refused before anything moved) is an `error`
+   with `patrol_failed`, never a docking, and a schedule that started it shows it
+   as failed.
 9. **Starting.** Dashboard and app button, and patrol schedules
    (`dashboard_schedules.kind = 'patrol'`). Patrol schedules are run by the server
    only: never sent to the mower as `timer_task` (the firmware would mow), never
@@ -126,6 +147,13 @@ feature would be a blind drive.
   `localizing`, `patrolling`, `returning`), every stop, go-home or start command
   from the stock app, the dashboard, the OpenNova app or the server also sends
   `stop_mow_zone` first, as for a zone drive.
+- The STOP button, lifting or tilting the mower end a patrol as `stopped` with that
+  flag as its error (the edge cut's `/chassis_incident` watcher); the mower stays
+  where it is.
+- A patrol and an edge cut never run together: a patrol is refused while an edge
+  cut runs, an edge cut while a patrol drives, and the mower's `start_edge_cut`
+  ends a running drive first. The rain monitor, the mowing-started push and the
+  always-edge watcher ignore a patrol's departure task.
 
 ## Out of scope for this plan
 
