@@ -90,6 +90,12 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 
 vi.mock('../../mqtt/extendedCommands.js', () => ({ publishExtendedCommand: vi.fn() }));
 
+vi.mock('../../services/patrolService.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/patrolService.js')>()),
+  startPatrol: vi.fn(() => ({ ok: true, run: '123' })),
+  stopPatrol: vi.fn(),
+}));
+
 const fw = vi.hoisted(() => ({ supported: false }));
 vi.mock('../../services/mowerFileCapability.js', () => ({
   getMowerFileCapability: () => ({ mowerFileApplySupported: fw.supported, isOpenNova: fw.supported, mowerVersion: null, reason: null }),
@@ -102,6 +108,9 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { publishToDevice, publishToExtended } from '../../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
+import { startPatrol } from '../../services/patrolService.js';
+import { savePatrolFrame } from '../../services/patrolFrames.js';
+import { M } from '../../services/serverText.js';
 import { mapRepo, scheduleRepo, seamFixRepo, deviceSettingsRepo, equipmentRepo } from '../../db/repositories/index.js';
 
 const app = express();
@@ -134,6 +143,8 @@ const stockCases: Array<[string, () => request.Test]> = [
   ['POST /maps/recalibrate-charging-pose', () => request(server).post(`${B}/maps/${SN}/recalibrate-charging-pose`).send({})],
   ['POST /navigate-to (stock stub never drives)', () => request(server).post(`${B}/navigate-to/${SN}`).send({ x: 1.5, y: -2 })],
   ['POST /schedules with edgeDays', () => request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] })],
+  ['POST /patrol', () => request(server).post(`${B}/patrol/${SN}`).send({})],
+  ['POST /stop-patrol', () => request(server).post(`${B}/stop-patrol/${SN}`).send({})],
 ];
 
 describe('central firmware gate on stock firmware', () => {
@@ -197,5 +208,55 @@ describe('central firmware gate on stock firmware', () => {
     const res = await request(server).post(`${B}/extended/${SN}`).send({ start_edge_cut: { mapName: 'map0' } });
     expect(res.status).toBe(200);
     expect(publishExtendedCommand).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('patrol routes', () => {
+  const PSN = 'LFIN2230700999';
+  beforeEach(() => { vi.clearAllMocks(); fw.supported = true; });
+
+  it('starts and stops a patrol on OpenNova', async () => {
+    const ok = await request(server).post(`${B}/patrol/${PSN}`).send({});
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual({ ok: true, run: '123' });
+    const stop = await request(server).post(`${B}/stop-patrol/${PSN}`).send({});
+    expect(stop.status).toBe(200);
+  });
+
+  it('passes a refusal on with its reason', async () => {
+    vi.mocked(startPatrol).mockReturnValueOnce({ ok: false, error: 'battery too low for a patrol (30%, at least 50%)' });
+    const res = await request(server).post(`${B}/patrol/${PSN}`).send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('battery');
+  });
+
+  it('renders a refusal in the language of the request', async () => {
+    vi.mocked(startPatrol).mockReturnValueOnce({ ok: false, error: 'mower offline', errorMsg: M`maaier offline` });
+    const res = await request(server).post(`${B}/patrol/${PSN}?lang=de`).send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Mäher offline');
+  });
+
+  it('lists runs with what was seen, and "no data" as null', async () => {
+    const meta = { x: 1, y: 2, animal: 0, image: true, ts: 1 };
+    savePatrolFrame(PSN, '5', { ...meta, seq: 1, person: 60, frames: 3 }, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    savePatrolFrame(PSN, '5', { ...meta, seq: 2, person: 500, frames: 1 }, null);
+    savePatrolFrame(PSN, '5', { ...meta, seq: 3, person: 0, frames: 4 }, null);
+    const res = await request(server).get(`${B}/patrol/${PSN}/runs`);
+    expect(res.status).toBe(200);
+    // By run id: the test storage outlives a test run, so run 6 of the next test may already be there.
+    const run5 = (res.body.runs as Array<{ run: string; frames: unknown[] }>).find(r => r.run === '5')!;
+    const frames = run5.frames as Array<{ seq: number; seen: string[] | null }>;
+    expect(frames.map(f => f.seen)).toEqual([['person'], null, []]);
+  });
+
+  it('serves a checkpoint photo and 404s the rest', async () => {
+    savePatrolFrame(PSN, '6', { seq: 1, x: 0, y: 0, person: 0, animal: 0, frames: 3, image: true, ts: 1 },
+      Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    const img = await request(server).get(`${B}/patrol/${PSN}/runs/6/1.jpg`);
+    expect(img.status).toBe(200);
+    expect(img.headers['content-type']).toContain('image/jpeg');
+    expect((await request(server).get(`${B}/patrol/${PSN}/runs/6/2.jpg`)).status).toBe(404);
+    expect((await request(server).get(`${B}/patrol/${PSN}/runs/x6/1.jpg`)).status).toBe(404);
   });
 });

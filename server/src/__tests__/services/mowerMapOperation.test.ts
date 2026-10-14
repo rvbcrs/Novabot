@@ -98,6 +98,7 @@ it('owns measurement motion and arm commands, while stop/manual control interrup
     }
     expect(isMapOperationCommandBlocked('A', { dock_measurement_control: { action: 'stop' } })).toBe(false);
     expect(isMapOperationCommandBlocked('A', { go_to_charge: {} })).toBe(true);
+    expect(isMapOperationCommandBlocked('A', { patrol: {} })).toBe(true);
   });
 });
 

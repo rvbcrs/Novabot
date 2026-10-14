@@ -157,7 +157,10 @@ export function noteDockState(_sn: string, _docked: boolean): void { /* Explicit
 // dus net zo frame-afhankelijk als start_navigation. Het loopt uitsluitend
 // over het extended-kanaal (publishExtendedCommand), waar dezelfde guard nu
 // ook op zit.
-const FRAME_BLOCKED_KEYS = ['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone', 'nav_to_point', 'follow_unicom', 'return_to_dock', 'calibration_drive', 'dock_measurement_move'];
+//
+// patrol (extended-kanaal) rijdt de controlepunten van de nachtpatrouille in
+// het map-frame af, zonder dat er iemand meekijkt: net zo frame-afhankelijk.
+const FRAME_BLOCKED_KEYS = ['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone', 'nav_to_point', 'follow_unicom', 'return_to_dock', 'calibration_drive', 'dock_measurement_move', 'patrol'];
 
 /**
  * True when an outbound command must be blocked because the frame is

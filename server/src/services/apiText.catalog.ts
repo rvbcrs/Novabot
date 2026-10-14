@@ -480,6 +480,11 @@ export const CATALOG: Catalog = {
     fr: "Rouler jusqu'à un point",
     de: "Zu einem Punkt fahren",
   },
+  "Patrouille": {
+    en: "Patrol",
+    fr: "Patrouille",
+    de: "Patrouille",
+  },
   "Het extended commando {0}": {
     en: "The extended command {0}",
     fr: "La commande étendue {0}",

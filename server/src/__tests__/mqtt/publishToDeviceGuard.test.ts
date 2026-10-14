@@ -32,6 +32,11 @@ describe('isFrameNavBlocked (publishToDevice guard predicate)', () => {
     expect(isFrameNavBlocked(SN, { mow_zone: { map: 'map1' } })).toBe(true);
   });
 
+  it('blocks a patrol while the frame is unvalidated', () => {
+    markFrameUnvalidated(SN);
+    expect(isFrameNavBlocked(SN, { patrol: { run: '1', zones: [] } })).toBe(true);
+  });
+
   it('allows start_edge_cut once the frame is validated', () => {
     expect(isFrameNavBlocked(SN, { start_edge_cut: { mapName: 'map0', bladeHeight: 40 } })).toBe(false);
   });

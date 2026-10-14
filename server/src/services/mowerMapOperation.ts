@@ -15,7 +15,7 @@ export interface MowerMapOperation {
 
 const active = new Map<string, MowerMapOperation>();
 const ownedCommands = new Map<string, Set<string>>();
-const NAVIGATION_COMMANDS = new Set(['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone', 'auto_recharge', 'go_pile', 'nav_to_point', 'follow_unicom', 'return_to_dock', 'calibration_drive']);
+const NAVIGATION_COMMANDS = new Set(['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone', 'auto_recharge', 'go_pile', 'nav_to_point', 'follow_unicom', 'return_to_dock', 'calibration_drive', 'patrol']);
 const MANAGED_COMMANDS = new Set(['write_map_files', 'sync_map', 'regenerate_per_map_files', 'reanchor_pos', 'set_pos_origin', 'dock_measurement_move']);
 export function isOwnedReanchorMotion(sn: string, params: unknown): boolean {
   const id = params && typeof params === 'object' ? (params as Record<string, unknown>).operation_id : undefined;

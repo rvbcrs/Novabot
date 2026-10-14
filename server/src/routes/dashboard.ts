@@ -85,6 +85,8 @@ import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } fro
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { deriveMowerActivity } from '../mqtt/mowerActivity.js';
 import { MOW_PARA_SETTLE_MS, edgeObstacleLevel, startEdgeCuts } from '../services/mowingService.js';
+import { startPatrol, stopPatrol, readPatrolSettings, alertKinds } from '../services/patrolService.js';
+import { listPatrolRuns, patrolImagePath } from '../services/patrolFrames.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
 import {
   startAutoMap, stopAutoMap, getStatus as getAutoMapStatus,
@@ -4501,16 +4503,41 @@ dashboardRouter.get('/equipment/active', (req: Request, res: Response) => {
   res.json({ ok: true, activeMowerSn: sn });
 });
 
-// POST /api/dashboard/patrol/:sn — start randmaaien (patrol mode)
+// Night patrol (OpenNova extended `patrol`; the stock start_patrol is a stub
+// in mqtt_node). Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
 dashboardRouter.post('/patrol/:sn', (req: Request, res: Response) => {
-  publishToDevice(req.params.sn, { start_patrol: null });
-  res.json({ ok: true, command: 'start_patrol' });
+  const { sn } = req.params;
+  if (rejectUnlessOpenNova(sn, req, res, M`Patrouille`)) return;
+  disarmEdgeWatch(sn, 'patrouille via dashboard');
+  const r = startPatrol(sn);
+  if (!r.ok) {
+    res.status(409).json({ ok: false, error: r.errorMsg ? renderMsg(langOf(req), r.errorMsg) : r.error });
+    return;
+  }
+  res.json({ ok: true, run: r.run });
 });
 
-// POST /api/dashboard/stop-patrol/:sn — stop randmaaien
 dashboardRouter.post('/stop-patrol/:sn', (req: Request, res: Response) => {
-  publishToDevice(req.params.sn, { stop_patrol: null });
-  res.json({ ok: true, command: 'stop_patrol' });
+  const { sn } = req.params;
+  if (rejectUnlessOpenNova(sn, req, res, M`Patrouille`)) return;
+  stopPatrol(sn);
+  res.json({ ok: true });
+});
+
+dashboardRouter.get('/patrol/:sn/runs', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const min = readPatrolSettings(sn).minPoints;
+  const runs = listPatrolRuns(sn).map(r => ({
+    ...r,
+    frames: r.frames.map(f => ({ ...f, seen: alertKinds(f, min) })),
+  }));
+  res.json({ ok: true, runs });
+});
+
+dashboardRouter.get('/patrol/:sn/runs/:run/:seq.jpg', (req: Request, res: Response) => {
+  const file = patrolImagePath(req.params.sn, req.params.run, req.params.seq);
+  if (!file) { res.status(404).end(); return; }
+  res.type('image/jpeg').sendFile(file);
 });
 
 // POST /api/dashboard/charge-threshold/:sn — stel auto-charge drempel in
@@ -4605,7 +4632,7 @@ function syncVirtualWalls(sn: string): void {
 // mow_zone is het PRIMAIRE handmatige maaipad van de app; de andere vier
 // starten of sturen eveneens een rit. Elk hiervan via de extended-route is een
 // handmatige interventie die een gearmde rand-dag randmaai ongeldig maakt.
-const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive', 'nav_to_point'];
+const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive', 'nav_to_point', 'patrol'];
 
 // POST /api/dashboard/extended/:sn — stuur commando naar extended_commands.py
 // POST /api/dashboard/edge-cut/:sn {zones: ['map0', ...], bladeHeight: mm}

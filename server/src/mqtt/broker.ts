@@ -1309,6 +1309,24 @@ export async function startMqttBroker(): Promise<void> {
           }
         }
 
+        // Night patrol: mirror the phase for the dashboard and the app, and
+        // let the service switch the headlight and dock the mower at the end.
+        if (extSn && cmdName === 'patrol_status') {
+          const body = parsed[cmdName] as { phase?: string; error?: string };
+          if (body?.phase) {
+            if (!deviceCache.has(extSn)) deviceCache.set(extSn, new Map());
+            const cache = deviceCache.get(extSn)!;
+            const changes = new Map<string, string>([
+              ['patrol_phase', body.phase],
+              ['patrol_error', body.phase === 'error' ? (body.error || 'unknown') : ''],
+            ]);
+            for (const [k, v] of changes) cache.set(k, v);
+            forwardToDashboard(extSn, changes);
+            const sn = extSn, phase = body.phase, error = body.error;
+            void import('../services/patrolService.js').then(m => m.onPatrolStatus(sn, phase, error));
+          }
+        }
+
         if (extSn && cmdName === 'mow_zone_status') {
           const body = parsed[cmdName] as {
             phase?: string;
