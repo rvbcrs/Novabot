@@ -294,4 +294,49 @@ describe('patrol routes', () => {
     expect(mow.status).toBe(200);
     expect(publishToDevice).toHaveBeenCalledWith(PSN, expect.objectContaining({ timer_task: expect.anything() }));
   });
+
+  // The patrol card saves its time while the nightly toggle is off; that must
+  // give a disabled schedule, not an enabled one.
+  it('a patrol schedule honors enabled:false and is enabled without it', async () => {
+    for (const s of scheduleRepo.findByMowerSn(PSN)) scheduleRepo.deleteByIdAndMower(s.schedule_id, PSN);
+    const off = await request(server).post(`${B}/schedules/${PSN}`)
+      .send({ kind: 'patrol', startTime: '23:30', weekdays: [0, 1, 2, 3, 4, 5, 6], enabled: false });
+    expect(off.status).toBe(200);
+    expect(off.body.schedule.enabled).toBe(false);
+    expect(scheduleRepo.findById(off.body.schedule.scheduleId)!.enabled).toBe(0);
+    const on = await request(server).post(`${B}/schedules/${PSN}`).send({ kind: 'patrol', startTime: '23:30', weekdays: [1] });
+    expect(on.status).toBe(200);
+    expect(on.body.schedule.enabled).toBe(true);
+    expect(scheduleRepo.findById(on.body.schedule.scheduleId)!.enabled).toBe(1);
+  });
+
+  it('a mow schedule posted with enabled:false is still created enabled (unchanged)', async () => {
+    for (const s of scheduleRepo.findByMowerSn(PSN)) scheduleRepo.deleteByIdAndMower(s.schedule_id, PSN);
+    const mow = await request(server).post(`${B}/schedules/${PSN}`).send({ startTime: '10:00', weekdays: [1], enabled: false });
+    expect(mow.status).toBe(200);
+    expect(mow.body.schedule.enabled).toBe(true);
+    expect(scheduleRepo.findById(mow.body.schedule.scheduleId)!.enabled).toBe(1);
+  });
+
+  // No rain pause for a patrol, also not through an edit: rainMonitor's
+  // findActiveRainSchedule picks an enabled rain_pause schedule as the mower's
+  // rain schedule, and must never pick a patrol row.
+  it('PATCH keeps rain_pause off on a patrol schedule and still sets it on a mow schedule', async () => {
+    for (const s of scheduleRepo.findByMowerSn(PSN)) scheduleRepo.deleteByIdAndMower(s.schedule_id, PSN);
+    const patrolId = (await request(server).post(`${B}/schedules/${PSN}`)
+      .send({ kind: 'patrol', startTime: '23:30', weekdays: [1] })).body.schedule.scheduleId as string;
+    const mowId = (await request(server).post(`${B}/schedules/${PSN}`)
+      .send({ startTime: '10:00', weekdays: [1] })).body.schedule.scheduleId as string;
+
+    const patrol = await request(server).patch(`${B}/schedules/${PSN}/${patrolId}`).send({ rainPause: true, startTime: '22:15' });
+    expect(patrol.status).toBe(200);
+    expect(patrol.body.schedule.rainPause).toBe(false);
+    expect(scheduleRepo.findById(patrolId)!.rain_pause).toBe(0);
+    expect(patrol.body.schedule.startTime).toBe('22:15');   // only the rain pause is ignored
+
+    const mow = await request(server).patch(`${B}/schedules/${PSN}/${mowId}`).send({ rainPause: true });
+    expect(mow.status).toBe(200);
+    expect(mow.body.schedule.rainPause).toBe(true);
+    expect(scheduleRepo.findById(mowId)!.rain_pause).toBe(1);
+  });
 });

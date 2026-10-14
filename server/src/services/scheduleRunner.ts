@@ -517,7 +517,13 @@ function checkSchedules() {
     // versie. Maar niet stil: de reden komt op het schema, in de MQTT-log en
     // als event, anders lijkt de nachtbewaking gewoon kapot.
     const guards = rainSettingsRepo.getEffective(row.mower_sn);
-    if (row.rain_pause || guards.nightGuard || guards.frostGuard) {
+    // A patrol has no rain pause and ignores the night guard, so only the frost
+    // guard needs the weather; otherwise a patrol would start with a warning
+    // that a check could not run, when there was nothing to check.
+    const needsWeather = row.kind === 'patrol'
+      ? guards.frostGuard
+      : (row.rain_pause || guards.nightGuard || guards.frostGuard);
+    if (needsWeather) {
       const gps = getChargerGps(row.mower_sn);
       if (!gps) {
         triggerWithoutWeatherCheck(row, 'no_gps', M`zonder nacht-, vorst- of regencheck: geen GPS-positie van het laadstation`);

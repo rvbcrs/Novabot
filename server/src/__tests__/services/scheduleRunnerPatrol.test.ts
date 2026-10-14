@@ -23,8 +23,9 @@ vi.mock('../../services/weatherService.js', async (importOriginal) => ({
 }));
 
 import {
-  startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch,
+  startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch, isScheduleWarning,
 } from '../../services/scheduleRunner.js';
+import { emitScheduleEvent } from '../../dashboard/socketHandler.js';
 import { scheduleRepo, rainSettingsRepo, mapRepo } from '../../db/repositories/index.js';
 import { db } from '../../db/database.js';
 import { startMowing } from '../../services/mowingService.js';
@@ -93,6 +94,32 @@ describe('patrol schedules', () => {
     await flush();
     expect(startPatrol).not.toHaveBeenCalled();
     expect(scheduleRepo.findById('p-frost')!.last_result).toBe('skipped');
+  });
+
+  // Rain pause is always off for a patrol and the night guard does not apply to
+  // it, so only the frost guard needs the weather. With it off there is nothing
+  // to check, and nothing to warn about when the check could not run.
+  it('a patrol with only the night guard on starts without the "check could not run" warning', async () => {
+    vi.spyOn(mapRepo, 'getChargerGps').mockReturnValue(null);   // no charger position: no weather check possible
+    due('p-23', 'patrol');
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).toHaveBeenCalledWith(SN);
+    const row = scheduleRepo.findById('p-23')!;
+    expect(row.last_result).toBe('started');
+    expect(isScheduleWarning(row.last_result, row.last_result_reason)).toBe(false);
+    expect(row.last_result_reason).not.toContain('regencheck');
+    expect(emitScheduleEvent).not.toHaveBeenCalledWith('weather:unchecked', expect.anything());
+  });
+
+  // With no charger position the forecast cannot be fetched either way, so the
+  // case above cannot show it: here the position is known.
+  it('a patrol with only the night guard on fetches no forecast', async () => {
+    due('p-23', 'patrol');
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).toHaveBeenCalledWith(SN);
+    expect(getWeatherForecast).not.toHaveBeenCalled();
   });
 
   // An edge cut armed by an earlier mow waits on the dock until the mower has

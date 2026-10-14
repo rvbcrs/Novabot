@@ -4085,6 +4085,9 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     edgeDays?: number[] | null;
     // 'patrol' = nachtpatrouille, alleen door de server gedraaid. Default 'mow'.
     kind?: 'mow' | 'patrol';
+    // Alleen voor een patrouille: false maakt het schema uitgeschakeld (de
+    // patrouillekaart bewaart de tijd ook met de nachtschakelaar uit).
+    enabled?: boolean;
   };
 
   if (Array.isArray(body.edgeDays) && body.edgeDays.length > 0
@@ -4104,7 +4107,7 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     start_time: body.startTime,
     end_time: body.endTime ?? null,
     weekdays: JSON.stringify(body.weekdays ?? [1, 2, 3, 4, 5]),
-    enabled: 1,
+    enabled: isPatrol && body.enabled === false ? 0 : 1,
     map_id: body.mapId ?? null,
     map_name: body.mapName ?? null,
     cutting_height: body.cuttingHeight ?? 40,
@@ -4189,7 +4192,9 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     alternate_direction: body.alternateDirection !== undefined ? ((body.alternateDirection as boolean) ? 1 : 0) : undefined,
     alternate_step: body.alternateStep as number | undefined,
     edge_offset: body.edgeOffset as number | undefined,
-    rain_pause: body.rainPause !== undefined ? ((body.rainPause as boolean) ? 1 : 0) : undefined,
+    // No rain pause for a patrol, also not through an edit (spec 2026-10-14):
+    // rainMonitor.findActiveRainSchedule must never pick a patrol row.
+    rain_pause: body.rainPause !== undefined && existing.kind !== 'patrol' ? ((body.rainPause as boolean) ? 1 : 0) : undefined,
     rain_threshold_mm: body.rainThresholdMm as number | undefined,
     rain_threshold_probability: body.rainThresholdProbability as number | undefined,
     rain_check_hours: body.rainCheckHours as number | undefined,
