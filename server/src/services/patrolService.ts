@@ -77,6 +77,9 @@ function refuse(msg: Msg): PatrolResult {
   return { ok: false, error: renderMsg('en', msg), errorMsg: msg };
 }
 
+// Mowers that left the dock for the current patrol (PHASE patrolling seen).
+const outOnPatrol = new Set<string>();
+
 /**
  * After an `error` the firmware cleans up asynchronously and cancels every
  * nav2 goal. A go_to_charge sent in the same breath could be one of the goals
@@ -119,8 +122,11 @@ export function startPatrol(sn: string, now = Date.now()): PatrolResult {
   if (!zones.length) return refuse(M`geen controlepunten: kies zones in de patrouille-instellingen`);
   const run = String(now);
   // The patrol that is about to start owns the mower: a docking still waiting
-  // for the last one's error must not drive it home in the middle of this one.
+  // for the last one's error must not drive it home in the middle of this one,
+  // and a last patrol whose end was lost (reboot, MQTT drop) must not make an
+  // early error of this one count as "left the dock".
   cancelPendingHome(sn);
+  outOnPatrol.delete(sn);
   publishExtendedCommand(sn, { patrol: { run, zones, dwell_s: s.dwellS, photo_topic: s.photoTopic } });
   console.log(`[Patrol] start ${sn} run=${run} ${zones.map(z => `${z.zone}:${z.points.length}`).join(',')}`);
   return { ok: true, run };
@@ -132,9 +138,6 @@ export function stopPatrol(sn: string): void {
   publishExtendedCommand(sn, { stop_mow_zone: {} });
 }
 
-// Mowers that left the dock for the current patrol (PHASE patrolling seen).
-const outOnPatrol = new Set<string>();
-
 /**
  * The mower's patrol_status stream (broker.ts). On `patrolling` the headlight
  * goes on. On every end it goes off FIRST, so the dock marker always sees the
@@ -143,7 +146,8 @@ const outOnPatrol = new Set<string>();
  * the dock for this patrol (`patrolling` was seen) or when fresh telemetry says
  * it is off the dock: a departure that fails can leave it in front of the dock
  * without `patrolling` ever being reported. After `done` that happens at once,
- * after `error` it waits PATROL_HOME_DELAY_MS.
+ * after `error` it waits PATROL_HOME_DELAY_MS. A patrol that was refused before
+ * anything moved never docks the mower: it is wherever its own task put it.
  */
 export function onPatrolStatus(sn: string, phase: string, error?: string): void {
   const led = (level: number) => publishToTopic(`novabot/cmd/${sn}`, { led_set: level });
@@ -159,7 +163,9 @@ export function onPatrolStatus(sn: string, phase: string, error?: string): void 
   const wasOut = outOnPatrol.delete(sn);
   const dock = freshPositionState(sn);
   const offDock = dock.dockKnown && !dock.docked;
-  const goesHome = phase !== 'stopped' && (wasOut || offDock);
+  // Refused before anything moved: the mower is wherever its own task put it.
+  const refusedBeforeMotion = phase === 'error' && (error === 'busy_mowing' || error === 'no_dock_zone');
+  const goesHome = phase !== 'stopped' && !refusedBeforeMotion && (wasOut || offDock);
   console.log(`[Patrol] ${sn} ${phase}${error ? ` (${error})` : ''}, ${goesHome ? 'sending it home' : 'leaving it'}`);
   if (goesHome) {
     if (phase === 'error') goHomeAfterDelay(sn);

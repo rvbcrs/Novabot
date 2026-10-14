@@ -109,6 +109,21 @@ describe('patrol service', () => {
       .toBeLessThan(vi.mocked(goHome).mock.invocationCallOrder[0]);
   });
 
+  it('localizing and returning are not ends: no light off, no docking, no failed event, and the mower still counts as out', () => {
+    vi.useFakeTimers();
+    onPatrolStatus(SN, 'localizing');
+    onPatrolStatus(SN, 'patrolling');
+    onPatrolStatus(SN, 'returning');
+    onPatrolStatus(SN, 'localizing');
+    expect(publishToTopic).toHaveBeenCalledTimes(1);   // the light on at patrolling, nothing since
+    expect(publishToTopic).not.toHaveBeenCalledWith(`novabot/cmd/${SN}`, { led_set: 0 });
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).not.toHaveBeenCalled();
+    onPatrolStatus(SN, 'done');   // telemetry says docked, so only "was out" can send it home
+    expect(goHome).toHaveBeenCalledTimes(1);
+  });
+
   it('a stop leaves the mower where it is, light off', () => {
     onPatrolStatus(SN, 'patrolling');
     onPatrolStatus(SN, 'stopped');
@@ -160,6 +175,25 @@ describe('patrol service', () => {
     expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'not_localized', false);
   });
 
+  it.each(['busy_mowing', 'no_dock_zone'])('a refusal (%s) before anything moved never sends the mower home, also when it reads off its dock', reason => {
+    vi.useFakeTimers();
+    dockTelemetry({ dockKnown: true, docked: false });   // a live task owns the mower, it is out in the garden
+    onPatrolStatus(SN, 'error', reason);
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, reason, false);
+  });
+
+  it('a refusal sends nobody home either when the server still counts the mower as out', () => {
+    vi.useFakeTimers();
+    dockTelemetry({ dockKnown: true, docked: false });
+    onPatrolStatus(SN, 'patrolling');   // an older run whose end never arrived
+    onPatrolStatus(SN, 'error', 'busy_mowing');
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'busy_mowing', false);
+  });
+
   it('a finished patrol the server never saw leave still docks a mower that is off its dock, at once', () => {
     dockTelemetry({ dockKnown: true, docked: false });
     onPatrolStatus(SN, 'done');
@@ -184,6 +218,26 @@ describe('patrol service', () => {
     onPatrolStatus(SN, 'error', 'checkpoints_unreachable');
     expect(startPatrol(SN, 1000).ok).toBe(false);
     vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).toHaveBeenCalledTimes(1);
+    expect(goHome).toHaveBeenCalledWith(SN);
+  });
+
+  it('a patrol that starts after one whose end was lost does not inherit its "left the dock"', () => {
+    vi.useFakeTimers();
+    mower({});
+    onPatrolStatus(SN, 'patrolling');   // the first patrol: reboot or MQTT drop, its end never arrives
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    onPatrolStatus(SN, 'error', 'not_localized');   // the second fails before it left the docked mower
+    vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
+    expect(goHome).not.toHaveBeenCalled();
+    expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'not_localized', false);
+  });
+
+  it('a start that is refused keeps the running patrol counted as out', () => {
+    mower({ battery_power: '30' });
+    onPatrolStatus(SN, 'patrolling');
+    expect(startPatrol(SN, 1000).ok).toBe(false);
+    onPatrolStatus(SN, 'done');   // telemetry says docked, so only "was out" can send it home
     expect(goHome).toHaveBeenCalledTimes(1);
     expect(goHome).toHaveBeenCalledWith(SN);
   });
