@@ -2144,6 +2144,9 @@ def handle_nav_to_point(params, respond):
 PATROL_DRIVE_SCRIPT = "/root/novabot/scripts/mow_zone_drive.py"
 PATROL_PHOTO_TOPICS = ("front", "front_hd", "tof_gray")
 PATROL_MAX_POINTS = 60
+# cutterhigh enum: mm = (level + 2) * 10, so 7 = 90 mm, the deck at its
+# highest, the same level the drive departs with (PATROL_DEPART_CUTTERHIGH).
+PATROL_DECK_LEVEL = 7
 
 
 def validate_patrol_params(params):
@@ -2185,6 +2188,18 @@ def validate_patrol_params(params):
     return {"run": run, "zones": zones, "dwell_s": dwell, "photo_topic": topic}, None
 
 
+def _secure_patrol_blades(attempts=3, pause=1.0):
+    """Blade speed 0 and the deck at its highest. True when both
+    publishes were accepted; logs every failed attempt."""
+    for i in range(attempts):
+        errors = [e for e in (_publish_blade_speed(0), _publish_blade_height(PATROL_DECK_LEVEL)) if e]
+        if not errors:
+            return True
+        log(f"patrol: blade guard attempt {i + 1}/{attempts} failed: {'; '.join(errors)}")
+        time.sleep(pause)
+    return False
+
+
 def handle_patrol(params, respond):
     """Night patrol: mow_zone_drive.py patrol drives the server's checkpoints
     with the blades off, looks and photographs at each and comes back into the
@@ -2218,11 +2233,16 @@ def handle_patrol(params, respond):
     )
     argv = ["bash", "-c", wrapper, "patrol", PATROL_DRIVE_SCRIPT, params_file]
 
+    def _say(name, body):
+        try:
+            respond(name, body)
+        except Exception as e:  # a dropped MQTT link must not end the supervision of a driving mower
+            log(f"patrol: could not send {name}: {e}")
+
     def _run():
         terminal_seen = blades_secured = perception_changed = False
         proc = None
         try:
-            perception_changed = _apply_edge_perception_low()
             proc = subprocess.Popen(argv, env=_ros_env(), stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1)
             _register_mow_drive(proc)
@@ -2235,33 +2255,51 @@ def handle_patrol(params, respond):
                         # The firmware departure runs a coverage task's init
                         # states; nothing of a patrol may cut.
                         blades_secured = True
-                        _publish_blade_speed(0)
-                        _publish_blade_height(0)
+                        _say("patrol_status", {"phase": "patrolling", "run": run})
+                        if not _secure_patrol_blades():
+                            log("patrol: blade guard failed, terminating the drive")
+                            proc.terminate()
+                            _say("patrol_status", {"phase": "error", "run": run,
+                                                   "error": "blade_guard_failed"})
+                            terminal_seen = True
+                            break
+                        perception_changed = _apply_edge_perception_low()
+                        continue
                     if ph in ("done", "error"):
                         terminal_seen = True
                     msg = {"phase": ph, "run": run}
                     if ph == "error" and len(parts) > 2:
                         msg["error"] = parts[2]
-                    respond("patrol_status", msg)
+                    _say("patrol_status", msg)
                 elif line.startswith("CHECKPOINT ") or line.startswith("SKIPPED "):
                     kind, _, body = line.partition(" ")
                     try:
                         data = json.loads(body)
-                    except ValueError:
+                    except (ValueError, TypeError):
                         log(f"patrol: bad {kind} line: {body[:120]}")
                         continue
-                    respond("patrol_checkpoint" if kind == "CHECKPOINT" else "patrol_skipped",
-                            dict(data, run=run))
+                    if not isinstance(data, dict):
+                        log(f"patrol: {kind} line is not an object: {body[:120]}")
+                        continue
+                    _say("patrol_checkpoint" if kind == "CHECKPOINT" else "patrol_skipped",
+                         dict(data, run=run))
                 elif line:
                     log(f"patrol: {line}")
             proc.wait()
             stopped = _unregister_mow_drive(proc)
             if proc.returncode != 0 and not terminal_seen:
-                respond("patrol_status", {"phase": "stopped", "run": run} if stopped else
-                        {"phase": "error", "run": run, "error": f"drive_exit_{proc.returncode}"})
+                _say("patrol_status", {"phase": "stopped", "run": run} if stopped else
+                     {"phase": "error", "run": run, "error": f"drive_exit_{proc.returncode}"})
         except Exception as e:
             log(f"patrol error: {e}")
-            respond("patrol_status", {"phase": "error", "run": run, "error": str(e)})
+            if proc is not None and proc.poll() is None:
+                # Nobody reads its output any more: take the drive down, do not leave it driving.
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            _say("patrol_status", {"phase": "error", "run": run, "error": str(e)})
         finally:
             if proc is not None:
                 _unregister_mow_drive(proc)

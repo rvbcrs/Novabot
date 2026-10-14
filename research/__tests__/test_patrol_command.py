@@ -7,6 +7,7 @@ Run: python3 research/__tests__/test_patrol_command.py
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 
 spec = importlib.util.spec_from_file_location(
@@ -24,6 +25,8 @@ def check(name, ok):
 
 GOOD = {"run": "1791", "zones": [{"zone": "map0", "points": [[1.5, 2.0], [3, 4]]}],
         "dwell_s": 6, "photo_topic": "front"}
+VALID_CHECKPOINT = ('CHECKPOINT {"seq": 1, "x": 1.5, "y": 2.0, "frames": 3, "photo": true, '
+                    '"sent": true, "person": 60, "animal": 0}')
 
 clean, err = ec.validate_patrol_params(GOOD)
 check("good params pass", err is None and clean["zones"][0]["points"] == [[1.5, 2.0], [3.0, 4.0]])
@@ -41,19 +44,32 @@ for bad, why in [
 
 
 class FakeProc:
-    def __init__(self, lines, rc=0, stopped=False):
+    def __init__(self, lines, rc=0, stopped=False, ignores_terminate=False):
         self.stdout = iter([line + "\n" for line in lines])
         self.returncode = None
         self._rc, self._stopped = rc, stopped
+        self._ignores_terminate = ignores_terminate
+        self.terminated = self.killed = False
 
     def wait(self, timeout=None):
+        if self._ignores_terminate and self.terminated and not self.killed and timeout is not None:
+            raise subprocess.TimeoutExpired("patrol", timeout)
         if self._stopped:
             ec._MOW_DRIVE_STOPPED[0] = True     # as handle_stop_mow_zone does
-        self.returncode = self._rc
-        return self._rc
+        if self.returncode is None:
+            self.returncode = self._rc
+        return self.returncode
 
     def poll(self):
         return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
 
 
 class SyncThread:
@@ -64,10 +80,11 @@ class SyncThread:
         self._target()
 
 
-def run(lines, rc=0, stopped=False, params=None):
+def run(lines, rc=0, stopped=False, params=None, patches=None, respond_fails_on=None,
+        ignores_terminate=False):
     sent, calls, seen = [], [], {}
     script = tempfile.NamedTemporaryFile(suffix=".py", delete=False).name
-    patches = {
+    defaults = {
         "PATROL_DRIVE_SCRIPT": script,
         "_server_from_config": lambda: "srv:8080",
         "_sn_from_config": lambda: "LFIN2230700238",
@@ -78,8 +95,16 @@ def run(lines, rc=0, stopped=False, params=None):
         "_publish_blade_height": lambda h: calls.append(("blade_height", h)) or "",
         "_ros_env": lambda: {},
     }
-    real = {k: getattr(ec, k) for k in patches}
-    real_popen, real_thread = ec.subprocess.Popen, ec.threading.Thread
+    defaults.update(patches or {})
+    real = {k: getattr(ec, k) for k in defaults}
+    real_popen, real_thread, real_sleep = ec.subprocess.Popen, ec.threading.Thread, ec.time.sleep
+    failed = []
+
+    def respond(name, body):
+        if name == respond_fails_on and not failed:
+            failed.append(name)
+            raise OSError("broker link down")
+        sent.append((name, body))
 
     seen["script"] = script
 
@@ -88,18 +113,29 @@ def run(lines, rc=0, stopped=False, params=None):
         with open(argv[-1]) as fh:
             seen["params"] = json.load(fh)
         seen["params_file"] = argv[-1]
-        return FakeProc(lines, rc, stopped)
+        seen["proc"] = FakeProc(lines, rc, stopped, ignores_terminate)
+        return seen["proc"]
 
-    for k, v in patches.items():
+    for k, v in defaults.items():
         setattr(ec, k, v)
     ec.subprocess.Popen, ec.threading.Thread = fake_popen, SyncThread
+    ec.time.sleep = lambda seconds=0: None      # the blade guard's retry pause
     try:
-        ec.handle_patrol(params or GOOD, lambda name, body: sent.append((name, body)))
+        ec.handle_patrol(params or GOOD, respond)
     finally:
+        ec.time.sleep = real_sleep
         for k, v in real.items():
             setattr(ec, k, v)
         ec.subprocess.Popen, ec.threading.Thread = real_popen, real_thread
     return sent, calls, seen
+
+
+def before(calls, a, b):
+    return a in calls and b in calls and calls.index(a) < calls.index(b)
+
+
+def perception_gone():
+    raise RuntimeError("perception service gone")
 
 
 sent, calls, seen = run([
@@ -116,8 +152,12 @@ check("forwards the checkpoint with its run",
       ("patrol_checkpoint", {"seq": 1, "x": 1.5, "y": 2.0, "frames": 3, "photo": True, "sent": True,
                              "person": 60, "animal": 0, "run": "1791"}) in sent)
 check("forwards a skipped zone", ("patrol_skipped", {"zone": "map6", "reason": "no_route", "run": "1791"}) in sent)
-check("blades off once the patrol starts", calls.count(("blade_speed", 0)) == 1 and ("blade_height", 0) in calls)
-check("detection on before, restored after", calls[0] == "perception_on" and calls[-1] == "perception_off")
+check("blades off and the deck up once the patrol starts",
+      calls.count(("blade_speed", 0)) == 1 and ("blade_height", 7) in calls)
+check("the blade guard runs before detection goes on, detection restored after",
+      before(calls, ("blade_speed", 0), "perception_on")
+      and before(calls, ("blade_height", 7), "perception_on")
+      and calls[-1:] == ["perception_off"])
 check("the drive gets the upload address", seen["params"]["upload"]
       == "http://srv:8080/api/nova-file-server/patrol/uploadFrame?sn=LFIN2230700238&run=1791")
 check("runs the patrol mode", seen["argv"][3:5] == ["patrol", seen["script"]]
@@ -134,6 +174,56 @@ check("a drive that died says so", ("patrol_status", {"phase": "error", "run": "
 
 sent, _calls, _seen = run([], params={**GOOD, "run": "x"})
 check("bad params never start a drive", sent == [("patrol_respond", {"result": 1, "error": "invalid_run"})])
+
+# a. the blade guard cannot be met: the drive is terminated, nothing more is forwarded
+sent, calls, seen = run(
+    ["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+    patches={"_publish_blade_speed": lambda s: "ros node not ready"})
+check("a failing blade guard stops the drive",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "error"]
+      and ("patrol_status", {"phase": "error", "run": "1791", "error": "blade_guard_failed"}) in sent
+      and seen["proc"].terminated)
+check("and forwards no checkpoint from it", not any(n == "patrol_checkpoint" for n, _ in sent))
+check("and never switches the detection on", "perception_on" not in calls)
+
+# b. a publish that fails does not end the supervision
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+                        respond_fails_on="patrol_checkpoint")
+check("a dropped publish does not end the supervision",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "done"]
+      and not seen["proc"].terminated and calls[-1:] == ["perception_off"])
+
+# c. a checkpoint line whose JSON is not an object is skipped, the lines after it still count
+sent, calls, seen = run([
+    "PHASE patrolling",
+    "CHECKPOINT [1, 2]",
+    "CHECKPOINT {not json",
+    'SKIPPED {"zone": "map6", "reason": "no_route"}',
+    "PHASE done",
+])
+check("a malformed checkpoint line is skipped and the rest still counts",
+      [b["phase"] for n, b in sent if n == "patrol_status"] == ["patrolling", "done"]
+      and ("patrol_skipped", {"zone": "map6", "reason": "no_route", "run": "1791"}) in sent
+      and not any(n == "patrol_checkpoint" for n, _ in sent))
+
+# d. an exception in the loop terminates the drive and is reported
+sent, calls, seen = run(["PHASE patrolling", VALID_CHECKPOINT, "PHASE done"],
+                        patches={"_apply_edge_perception_low": perception_gone})
+check("an exception in the loop terminates the drive",
+      seen.get("proc") is not None and seen["proc"].terminated)
+check("and the error is reported",
+      ("patrol_status", {"phase": "error", "run": "1791", "error": "perception service gone"}) in sent)
+
+# e. the drive's own error phase passes through
+sent, calls, seen = run(["PHASE patrolling", "PHASE error checkpoints_unreachable"], rc=1)
+check("a drive error phase passes through",
+      [b for n, b in sent if n == "patrol_status" and b["phase"] == "error"]
+      == [{"phase": "error", "run": "1791", "error": "checkpoints_unreachable"}])
+
+# f. a drive that survives SIGTERM is killed
+sent, calls, seen = run(["PHASE patrolling"], patches={"_apply_edge_perception_low": perception_gone},
+                        ignores_terminate=True)
+check("a drive that survives SIGTERM is killed", seen.get("proc") is not None and seen["proc"].killed)
 
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)
