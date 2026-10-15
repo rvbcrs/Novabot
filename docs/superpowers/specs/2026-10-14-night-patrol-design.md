@@ -107,11 +107,13 @@ So there is nothing to finish. We build it from parts that do work:
    The text of `patrol_failed` says the mower *is being* sent to its dock: the
    go home has only started then. The server watches that drive home for 15
    minutes (until the mower charges, at most): a recharge that fails
-   (`Recharge: FAILED` in the status, or error 126 / 113 coming up) while the
+   (`Recharge: FAILED` in the status, or error 126 coming up) while the
    mower is not charging raises one `dock_failed` with the patrol's context
    ("Docking after the patrol failed; the mower is standing still in the
    garden."), whichever signal comes first, and the run records the time
-   (`patrol_runs.dock_failed_at`).
+   (`patrol_runs.dock_failed_at`). Error 113 ("no aruco code find") raises
+   nothing by itself: it comes up while the firmware retries the alignment at
+   the dock and goes away again.
 9. **Starting.** Dashboard and app button, and patrol schedules
    (`dashboard_schedules.kind = 'patrol'`). Patrol schedules are run by the server
    only: never sent to the mower as `timer_task` (the firmware would mow), never
