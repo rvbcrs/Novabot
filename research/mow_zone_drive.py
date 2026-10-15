@@ -2004,7 +2004,19 @@ def do_probe(drv, seconds, led):
 
 # ── Nachtpatrouille: rijden ─────────────────────────────────────────────────
 PATROL_NAV_TIMEOUT_S = 180.0
-PATROL_MAX_NAV_FAILS = 3        # drie controlepunten op rij onbereikbaar: stoppen
+# Checkpoints in a row that still failed after their inward retry before the
+# run ends with checkpoints_unreachable; a reached checkpoint starts the count
+# again.
+PATROL_MAX_NAV_FAILS = 5
+# A goal nav2 gives up on within this many seconds was never driven: the
+# planner found it in an occupied cell. Live on LFIN2230700238, 2026-10-15
+# 14:46: "goal is occupied with no tolerance", aborted within ~1 s; the
+# checkpoints lay 0.6 m inside the border (hedge overhang, pool edge) in a frame
+# 1.57 m off its map. Such a goal gets one retry PATROL_INWARD_M further
+# towards the middle of its zone. A goal driven towards and then given up on
+# (~30 s of driving, TEB "trajectory not feasible") gets none.
+PATROL_FAST_ABORT_S = 8.0
+PATROL_INWARD_M = 0.6
 # De vertrek-taak van de firmware krijgt het maaidek op zijn hoogst (90 mm);
 # de messen draaien nooit (extended_commands.py zet ze uit bij `patrolling`).
 PATROL_DEPART_CUTTERHIGH = 7
@@ -2065,12 +2077,78 @@ def _patrol_look(drv, params, seq, xy):
                                      **scores}), flush=True)
 
 
+def _poly_centroid(poly):
+    """The area centroid of a polygon, the mean of its points when it has no
+    area; None for fewer than three points."""
+    if len(poly) < 3:
+        return None
+    area = cx = cy = 0.0
+    for (x0, y0), (x1, y1) in zip(poly, list(poly[1:]) + [poly[0]]):
+        w = x0 * y1 - x1 * y0
+        area += w
+        cx += (x0 + x1) * w
+        cy += (y0 + y1) * w
+    if abs(area) < 1e-9:
+        return (sum(x for x, _ in poly) / len(poly), sum(y for _, y in poly) / len(poly))
+    return (cx / (3.0 * area), cy / (3.0 * area))
+
+
+def _inward_point(x, y, poly, step=PATROL_INWARD_M):
+    """`step` metres from (x, y) towards the centroid of `poly`, or None when
+    that point lies outside the polygon (a concave zone) or there is no
+    centroid to go towards."""
+    c = _poly_centroid(poly)
+    if c is None:
+        return None
+    d = math.hypot(c[0] - x, c[1] - y)
+    if d < 1e-6:
+        return None
+    p = (x + (c[0] - x) / d * step, y + (c[1] - y) / d * step)
+    return p if point_in_poly(p[0], p[1], poly) else None
+
+
+def _patrol_drive_to(drv, poly, seq, x, y):
+    """Drive to checkpoint `seq` at (x, y) in a zone with work polygon `poly`.
+    Returns (ok, why, goal), goal being where nav2 was sent last. A goal nav2
+    gives up on within PATROL_FAST_ABORT_S of wall time was never driven (an
+    occupied cell) and gets one retry PATROL_INWARD_M towards the middle of
+    the zone, when that point still lies in it."""
+    t0 = time.monotonic()
+    ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
+    if ok:
+        return True, "", (x, y)
+    took = time.monotonic() - t0
+    if took > PATROL_FAST_ABORT_S:
+        return False, f"{msg} after {took:.0f} s", (x, y)
+    inward = _inward_point(x, y, poly)
+    if inward is None:
+        return False, f"{msg} at once; {PATROL_INWARD_M} m further in is outside the zone", (x, y)
+    log(f"patrol: checkpoint {seq} ({x:.2f},{y:.2f}) refused at once ({msg}), "
+        f"trying {PATROL_INWARD_M} m further in at ({inward[0]:.2f},{inward[1]:.2f})")
+    ok, retry = drv.nav_to(inward[0], inward[1], timeout=PATROL_NAV_TIMEOUT_S)
+    if ok:
+        return True, "", inward
+    return False, f"{msg} at once; {PATROL_INWARD_M} m further in: {retry}", inward
+
+
 def do_patrol(drv, params):
     """Night patrol with the blades off: depart like stock, drive the
     server's checkpoints zone by zone, look and photograph at each, come back
     into the dock's zone. The docking is the firmware's: the server sends
     go_to_charge after PHASE done/error (patrolService.ts). Every end switches
-    the headlight off on the mower first (_patrol_end)."""
+    the headlight off on the mower first (_patrol_end).
+
+    Checkpoints: a point outside every zone is never driven. A goal nav2 gives
+    up on within PATROL_FAST_ABORT_S was never driven (an occupied cell: a
+    hedge overhang, a pool edge, a frame that is off) and gets one retry
+    PATROL_INWARD_M towards the centroid of its zone's work polygon, when that
+    point still lies in the polygon; the mower looks where it got to. A goal
+    given up on after driving gets no retry. A checkpoint that still fails is
+    skipped: a log line, a SKIPPED line (zone, seq, reason
+    checkpoint_unreachable) the handler forwards as patrol_skipped, and on to
+    the next one. PATROL_MAX_NAV_FAILS skipped in a row (a reached one starts
+    the count again), or a run that reached none of the checkpoints it drove
+    to, end with error checkpoints_unreachable."""
     drv.prepare_headlight()
     st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
     if st is not None and task_executing(*st) and not task_parked(*st):
@@ -2101,6 +2179,8 @@ def do_patrol(drv, params):
     base = _csv_base()
     current = _start_zone(robot, current_zone_slot(robot))
     seq, fails, error = 0, 0, None
+    driven = reached = 0     # checkpoints nav2 was sent to; reached
+    polys = {}               # zone -> its work polygon, read once
     try:
         for entry in params.get("zones", []):
             zone = entry.get("zone")
@@ -2116,21 +2196,27 @@ def do_patrol(drv, params):
                     error = msg
                     break
                 current = zone
+            if zone not in polys:
+                polys[zone] = read_xy_csv(os.path.join(base, f"{zone}_work.csv"))
             for x, y in entry.get("points", []):
                 seq += 1
                 if not _goto_target_allowed(x, y):
                     log(f"patrol: checkpoint {seq} ({x:.2f},{y:.2f}) outside every zone, skipped")
                     continue
-                ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
-                robot = drv.robot_xy() or ((x, y) if ok else robot)   # no fresh pose: where nav2 went
+                driven += 1
+                ok, why, goal = _patrol_drive_to(drv, polys[zone], seq, x, y)
+                robot = drv.robot_xy() or (goal if ok else robot)   # no fresh pose: where nav2 went
                 if not ok:
                     fails += 1
-                    log(f"patrol: checkpoint {seq} unreachable ({msg}), {fails} in a row")
+                    log(f"patrol: checkpoint {seq} skipped ({why}), {fails} in a row")
+                    print("SKIPPED", json.dumps({"zone": zone, "seq": seq,
+                                                 "reason": "checkpoint_unreachable"}), flush=True)
                     if fails >= PATROL_MAX_NAV_FAILS:
                         error = "checkpoints_unreachable"
                         break
                     continue
                 fails = 0
+                reached += 1
                 _patrol_look(drv, params, seq, robot)
             if error:
                 break
@@ -2138,6 +2224,9 @@ def do_patrol(drv, params):
         # Een uitzondering (bv. perceptie weg) mag de terugweg niet overslaan.
         log(f"patrol: {e}")
         error = error or f"exception: {e}"
+    if not error and driven and not reached:
+        # Fewer than PATROL_MAX_NAV_FAILS checkpoints and none of them reached.
+        error = "checkpoints_unreachable"
     # Terug in de zone van het dock, zodat go_to_charge nooit dwars door een
     # heg plant. Eerst waar de maaier werkelijk staat: na een mislukte transit
     # is `current` nog de zone van voor de transit.

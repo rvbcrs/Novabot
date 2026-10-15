@@ -497,12 +497,162 @@ def test_a_zone_without_a_route_is_skipped_and_the_rest_goes_on():
     assert skipped == [{"zone": "map6", "reason": "no_route"}], out
 
 
-def test_three_unreachable_checkpoints_in_a_row_end_the_patrol():
+# ── Checkpoints nav2 refuses (live LFIN2230700238, 2026-10-15 14:46) ────────
+# Checkpoint 1 at (6.27, 2.16): "goal is occupied with no tolerance", aborted
+# within ~1 s. Checkpoints 2 and 3: driven ~35 s and ~30 s, then aborted
+# (TEB "trajectory not feasible", "goal is occupied by obstacle"). Three in a
+# row ended the run at the pool corner.
+
+L0 = [(0, 0), (10, 0), (10, 2), (2, 2), (2, 10), (0, 10)]   # its middle (3.2, 3.2) lies outside it
+
+
+class CheckpointDriver(PatrolDriver):
+    """nav2 per goal: an `occupied` goal aborts at once (a goal in an occupied
+    cell), a `blocked` goal aborts after `drive_s` seconds of driving, every
+    other goal is reached in `drive_s`. The clock only moves inside nav_to."""
+
+    def __init__(self, occupied=(), blocked=(), drive_s=35.0):
+        super().__init__()
+        self.occupied = {tuple(p) for p in occupied}
+        self.blocked = {tuple(p) for p in blocked}
+        self.drive_s = drive_s
+        self.now = 1000.0
+        self.goals = []          # every goal nav2 got, rounded to the cm
+
+    def monotonic(self):
+        return self.now
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        goal = (round(x, 2), round(y, 2))
+        self.goals.append(goal)
+        if goal in self.occupied:
+            self.now += 0.9
+            return False, "nav_to_pose_status_6"
+        self.now += self.drive_s
+        if goal in self.blocked:
+            return False, "nav_to_pose_status_6"
+        self._loc = (x, y)
+        return True, ""
+
+
+class NothingReachable(PatrolDriver):
+    """nav2 refuses every goal at once, the inward retries too."""
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        return False, "nav_to_pose_status_6"
+
+
+class NavClock:
+    """mzd's `time` while a CheckpointDriver drives: the real module, except
+    that monotonic() reads the driver's clock."""
+
+    def __init__(self, drv):
+        self.monotonic = drv.monotonic
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+def run_checkpoints(drv, zones):
+    real, mzd.time = mzd.time, NavClock(drv)
+    try:
+        return run_patrol(drv, zones)
+    finally:
+        mzd.time = real
+
+
+def skipped_lines(out):
+    return [json.loads(line.split(" ", 1)[1]) for line in out if line.startswith("SKIPPED ")]
+
+
+def looked_at(out):
+    return [json.loads(line.split(" ", 1)[1]) for line in out if line.startswith("CHECKPOINT ")]
+
+
+def test_a_checkpoint_refused_at_once_is_tried_again_further_in_and_looked_at_there():
     with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
-    drv = PatrolDriver(unreachable=[(3, 3), (4, 4), (5, 5)])
-    rc, seen, uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [4, 4], [5, 5], [6, 6]]}])
+    drv = CheckpointDriver(occupied=[(1, 5)])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[1, 5]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    # 0.6 m from (1, 5) towards the middle of the square, (5, 5)
+    assert drv.goals == [(1, 5), (1.6, 5)], drv.goals
+    assert [(c["seq"], c["x"], c["y"]) for c in looked_at(out)] == [(1, 1.6, 5)], out
+    assert [u[0] for u in uploads] == [1] and skipped_lines(out) == [], out
+
+
+def test_a_fallback_outside_the_zone_is_not_tried_and_the_checkpoint_is_skipped():
+    with_maps({"map0_work.csv": L0, "map0tocharge_unicom.csv": DOCK})
+    drv = CheckpointDriver(occupied=[(1.8, 1.8)])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[1.8, 1.8], [5, 1]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    # 0.6 m towards the middle of the L is (2.22, 2.22): outside it, never sent
+    assert drv.goals == [(1.8, 1.8), (5, 1)], drv.goals
+    assert skipped_lines(out) == [{"zone": "map0", "seq": 1, "reason": "checkpoint_unreachable"}], out
+    assert [u[0] for u in uploads] == [2]
+    assert any("checkpoint 1 skipped" in line for line in out), out
+
+
+def test_an_inward_retry_that_fails_too_is_tried_once_and_the_checkpoint_skipped():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = CheckpointDriver(occupied=[(1, 5), (1.6, 5)])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[1, 5], [7, 7]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert drv.goals == [(1, 5), (1.6, 5), (7, 7)], drv.goals
+    assert skipped_lines(out) == [{"zone": "map0", "seq": 1, "reason": "checkpoint_unreachable"}], out
+    assert [u[0] for u in uploads] == [2]
+
+
+def test_a_checkpoint_that_fails_after_driving_is_skipped_without_a_retry():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = CheckpointDriver(blocked=[(1, 5)])          # driven 35 s, then aborted
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[1, 5], [7, 7]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert drv.goals == [(1, 5), (7, 7)], drv.goals  # no (1.6, 5)
+    assert skipped_lines(out) == [{"zone": "map0", "seq": 1, "reason": "checkpoint_unreachable"}], out
+    assert [u[0] for u in uploads] == [2]
+
+
+def test_a_reached_checkpoint_starts_the_count_of_failures_again():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    points = [[2, 2], [3, 3], [4, 4], [6, 6], [7, 7], [8, 8], [9, 9]]
+    drv = CheckpointDriver(blocked=[(2, 2), (3, 3), (6, 6), (7, 7), (8, 8), (9, 9)])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": points}])
+    # two skipped, one reached, four skipped: never five in a row
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert [u[0] for u in uploads] == [3]
+    assert [s["seq"] for s in skipped_lines(out)] == [1, 2, 4, 5, 6, 7], out
+    assert len(drv.goals) == 7, drv.goals
+
+
+def test_five_checkpoints_that_fail_in_a_row_end_the_patrol():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    points = [[2, 2], [3, 3], [4, 4], [6, 6], [7, 7], [8, 8]]
+    drv = CheckpointDriver(blocked=[tuple(p) for p in points])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": points}])
     assert rc == 1 and seen[-1] == ("error", "checkpoints_unreachable"), seen
     assert uploads == []
+    assert drv.goals == [(2, 2), (3, 3), (4, 4), (6, 6), (7, 7)], drv.goals   # the sixth is never driven
+    assert [s["seq"] for s in skipped_lines(out)] == [1, 2, 3, 4, 5], out
+
+
+def test_a_patrol_that_reaches_no_checkpoint_at_all_ends_unreachable():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    points = [[2, 2], [3, 3], [4, 4]]                 # fewer than five
+    drv = CheckpointDriver(blocked=[tuple(p) for p in points])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": points}])
+    assert rc == 1 and seen[-1] == ("error", "checkpoints_unreachable"), seen
+    assert uploads == [] and [s["seq"] for s in skipped_lines(out)] == [1, 2, 3], out
+
+
+def test_skipped_checkpoints_carry_their_zone_and_overall_seq():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map0tocharge_unicom.csv": DOCK,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = CheckpointDriver(blocked=[(35, 5)])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[3, 3]]},
+                                                   {"zone": "map6", "points": [[35, 5], [37, 7]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert skipped_lines(out) == [{"zone": "map6", "seq": 2, "reason": "checkpoint_unreachable"}], out
+    assert [u[0] for u in uploads] == [1, 3]
 
 
 def test_another_zone_is_reached_over_its_channel_and_left_again():
@@ -1282,7 +1432,7 @@ def test_the_light_goes_off_on_the_mower_before_the_end_is_reported():
     with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
     cases = [
         (PatrolDriver(), [{"zone": "map0", "points": [[3, 3]]}], ("phase", "done")),
-        (PatrolDriver(unreachable=[(3, 3), (4, 4), (5, 5)]),
+        (NothingReachable(),
          [{"zone": "map0", "points": [[3, 3], [4, 4], [5, 5]]}], ("phase", "error", "checkpoints_unreachable")),
         (PatrolDriver(status=(mzd.TASK_MODE_COVERAGE, 60)),
          [{"zone": "map0", "points": [[3, 3]]}], ("phase", "error", "busy_mowing")),
