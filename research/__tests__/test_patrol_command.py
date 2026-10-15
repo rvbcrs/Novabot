@@ -916,5 +916,12 @@ finally:
     ec._ROS_BLADE_NODE[0] = real_node
     restore(real)
 
+# Novabot-9ukw: a checkpoint the drive skipped goes out like a skipped zone, with its seq
+sent, calls, seen = run(["PHASE patrolling",
+                         'SKIPPED {"zone": "map0", "seq": 3, "reason": "checkpoint_unreachable"}',
+                         "PHASE done"])
+check("forwards a skipped checkpoint with its zone, seq and run",
+      ("patrol_skipped", {"zone": "map0", "seq": 3, "reason": "checkpoint_unreachable", "run": "1791"}) in sent)
+
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)
