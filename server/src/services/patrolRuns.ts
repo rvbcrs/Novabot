@@ -1,7 +1,8 @@
 /**
  * Which night patrol run a report of the mower belongs to, and what the broker
  * mirrors of it. The run the server started last is on disk (patrol_runs), so
- * all of this holds across a server restart in the middle of a patrol.
+ * all of this holds across a server restart in the middle of a patrol. Also
+ * the command list a mower announces (ext_hello), which the patrol start reads.
  * Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
  */
 import { patrolRunsRepo } from '../db/repositories/patrolRuns.js';
@@ -142,4 +143,24 @@ export function patrolReport(
     };
   }
   return null;
+}
+
+/** Device cache key of the command names a mower announced (ext_hello). */
+export const EXT_COMMANDS_KEY = 'ext_commands';
+
+/**
+ * What the broker mirrors of an `ext_hello` on novabot/extended_response/<SN>.
+ * After every connect extended_commands.py announces the keys of its command
+ * table, `{"ext_hello": {"commands": ["...", ...]}}`. They are cached as a JSON
+ * array under EXT_COMMANDS_KEY, so a mower whose extended_commands.py was
+ * updated by hand is known by what it can do and not by its build number
+ * (patrolService.mowerSupportsExtended). The cache goes with the mower's
+ * disconnect, and its next connect announces again.
+ * Null for a body that is not a list of strings: nothing is cached.
+ */
+export function extHelloReport(body: unknown): Map<string, string> | null {
+  if (!body || typeof body !== 'object') return null;
+  const commands = (body as { commands?: unknown }).commands;
+  if (!Array.isArray(commands) || !commands.every(c => typeof c === 'string')) return null;
+  return new Map([[EXT_COMMANDS_KEY, JSON.stringify(commands)]]);
 }

@@ -90,6 +90,50 @@ describe('patrol service', () => {
     expect(publishExtendedCommand).not.toHaveBeenCalled();
   });
 
+  // A mower whose extended_commands.py was updated by hand has `patrol` under an
+  // older build. It announces its command table on every connect (ext_hello,
+  // cached by the broker as ext_commands), and that outranks the build number.
+  describe('the patrol command is announced by the mower', () => {
+    const announced = (...names: string[]) => JSON.stringify(names);
+
+    it('an older build starts when the mower announces patrol', () => {
+      mower({ sw_version: 'v6.0.2-custom-49', ext_commands: announced('mow_zone', 'patrol', 'start_edge_cut') });
+      expect(startPatrol(SN, 1000)).toEqual({ ok: true, run: '1000' });
+      expect(publishExtendedCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('a build that is not known starts when the mower announces patrol', () => {
+      mower({ sw_version: '', ext_commands: announced('patrol') });
+      expect(startPatrol(SN, 1000).ok).toBe(true);
+    });
+
+    it('an older build is refused when the mower announces commands but not patrol', () => {
+      mower({ sw_version: 'v6.0.2-custom-49', ext_commands: announced('mow_zone', 'start_edge_cut') });
+      const r = startPatrol(SN, 1000);
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain('50');
+      expect(publishExtendedCommand).not.toHaveBeenCalled();
+    });
+
+    it('an announcement that cannot be read counts as none: the build decides', () => {
+      mower({ sw_version: 'v6.0.2-custom-49', ext_commands: 'patrol' });
+      expect(startPatrol(SN, 1000).ok).toBe(false);
+      mower({ sw_version: 'v6.0.2-custom-50', ext_commands: '{"patrol":true}' });
+      expect(startPatrol(SN, 1000).ok).toBe(true);
+    });
+
+    it('without an announcement the build decides: custom-50 starts', () => {
+      mower({ sw_version: 'v6.0.2-custom-50' });
+      expect(startPatrol(SN, 1000).ok).toBe(true);
+    });
+
+    it('a mower that announces patrol is still held to the other gates', () => {
+      mower({ sw_version: 'v6.0.2-custom-49', ext_commands: announced('patrol'), battery_power: '30' });
+      expect(startPatrol(SN, 1000).ok).toBe(false);
+      expect(publishExtendedCommand).not.toHaveBeenCalled();
+    });
+  });
+
   it('clamps settings and ignores nonsense', () => {
     deviceSettingsRepo.upsert(SN, 'patrol_spacing_m', '100');
     deviceSettingsRepo.upsert(SN, 'patrol_photo_topic', '/etc/passwd');

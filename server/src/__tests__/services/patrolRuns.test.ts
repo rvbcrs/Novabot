@@ -6,8 +6,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { patrolRunsRepo } from '../../db/repositories/index.js';
 import {
-  isOlderPatrolRun, isLivePatrolRun, patrolReport, isPatrolDriving, markPatrolDocking, patrolDockingUnderWay,
-  PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, _resetPatrolDocking,
+  isOlderPatrolRun, isLivePatrolRun, patrolReport, extHelloReport, isPatrolDriving, markPatrolDocking, patrolDockingUnderWay,
+  PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, EXT_COMMANDS_KEY, _resetPatrolDocking,
 } from '../../services/patrolRuns.js';
 
 const SN = 'LFIN_PATROL_RUNS';
@@ -124,6 +124,31 @@ describe('what the broker mirrors of a patrol report', () => {
     expect(patrolReport(SN, 'mow_zone_status', { phase: 'done' }, undefined)).toBeNull();
     expect(patrolReport(SN, 'patrol_status', null, undefined)).toBeNull();
     expect(patrolReport(SN, 'patrol_status', { phase: '' }, undefined)).toBeNull();
+  });
+});
+
+// extended_commands.py announces the keys of its command table after every
+// connect: {"ext_hello": {"commands": [...]}}. The broker caches them as
+// ext_commands, and startPatrol asks whether `patrol` is among them.
+describe('what the broker mirrors of an ext_hello', () => {
+  it('a list of command names is cached as a JSON array under ext_commands', () => {
+    expect(extHelloReport({ commands: ['mow_zone', 'patrol', 'start_edge_cut'] }))
+      .toEqual(new Map([[EXT_COMMANDS_KEY, '["mow_zone","patrol","start_edge_cut"]']]));
+    expect(EXT_COMMANDS_KEY).toBe('ext_commands');
+    expect(extHelloReport({ commands: [] })).toEqual(new Map([[EXT_COMMANDS_KEY, '[]']]));
+  });
+
+  it('anything else throws nothing and sets nothing', () => {
+    const malformed: unknown[] = [
+      undefined, null, 'patrol', 7, true, [], ['patrol'], {},
+      { commands: undefined }, { commands: null }, { commands: 'patrol' }, { commands: 7 },
+      { commands: { patrol: true } }, { commands: ['patrol', 7] }, { commands: ['patrol', null] },
+      { commands: [['patrol']] }, { commands: [{ name: 'patrol' }] },
+    ];
+    for (const body of malformed) {
+      expect(() => extHelloReport(body), JSON.stringify(body)).not.toThrow();
+      expect(extHelloReport(body), JSON.stringify(body)).toBeNull();
+    }
   });
 });
 

@@ -24,7 +24,8 @@ import { mowerSwVersion } from './mowingArea.js';
 import { freshPositionState } from './positionTelemetry.js';
 import { buildPatrolZones } from './patrolRoute.js';
 import {
-  isOlderPatrolRun, isAfterPatrolEnd, markPatrolDocking, PATROL_END_PHASES, PATROL_RUN_TTL_MS, _resetPatrolDocking,
+  isOlderPatrolRun, isAfterPatrolEnd, markPatrolDocking, PATROL_END_PHASES, PATROL_RUN_TTL_MS, EXT_COMMANDS_KEY,
+  _resetPatrolDocking,
 } from './patrolRuns.js';
 import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent } from '../notifications/eventDetector.js';
 import { M, renderMsg, type Msg } from './serverText.js';
@@ -78,6 +79,24 @@ export function readPatrolSettings(sn: string): PatrolSettings {
 export const PATROL_MIN_BUILD = 50;
 export const PATROL_MIN_BATTERY = 50;
 
+/**
+ * True when the mower announced `name` among the commands of its
+ * extended_commands.py (ext_hello, which the broker caches as ext_commands).
+ * False for a mower that announced nothing: an older extended_commands.py, or
+ * one that has not connected since the cache was cleared. The caller then
+ * falls back to the build number.
+ */
+export function mowerSupportsExtended(sn: string, name: string): boolean {
+  const raw = deviceCache.get(sn)?.get(EXT_COMMANDS_KEY);
+  if (!raw) return false;
+  try {
+    const commands: unknown = JSON.parse(raw);
+    return Array.isArray(commands) && commands.includes(name);
+  } catch {
+    return false;   // unreadable: no announcement
+  }
+}
+
 export interface PatrolResult { ok: boolean; run?: string; error?: string; errorMsg?: Msg }
 
 function refuse(msg: Msg): PatrolResult {
@@ -128,9 +147,14 @@ export { PATROL_RUN_TTL_MS };
 export function startPatrol(sn: string, now = Date.now(), scheduleId: string | null = null): PatrolResult {
   if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
   if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
-  const build = customBuildNumber(mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')));
-  if (build == null || build < PATROL_MIN_BUILD) {
-    return refuse(M`patrouille vereist custom firmware ${PATROL_MIN_BUILD} of nieuwer`);
+  // A mower that announces `patrol` has it, whatever its build says: its
+  // extended_commands.py may have been updated by hand. The build number is the
+  // fallback for a mower that announces nothing.
+  if (!mowerSupportsExtended(sn, 'patrol')) {
+    const build = customBuildNumber(mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')));
+    if (build == null || build < PATROL_MIN_BUILD) {
+      return refuse(M`patrouille vereist custom firmware ${PATROL_MIN_BUILD} of nieuwer`);
+    }
   }
   if (isMowerBusy(sn)) return refuse(M`de maaier is bezig; stop de taak eerst`);
   // An edge cut is an NTCP goal outside robot_decision, which isMowerBusy does

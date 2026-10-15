@@ -11,7 +11,7 @@ import { tryDecrypt } from './decrypt.js';
 import { isMapMqttPacketBlocked } from './mapCommandGuard.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 import { edgeCutGate, stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
-import { patrolReport } from '../services/patrolRuns.js';
+import { patrolReport, extHelloReport } from '../services/patrolRuns.js';
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond, emitMapsChanged } from '../dashboard/socketHandler.js';
@@ -1308,6 +1308,24 @@ export async function startMqttBroker(): Promise<void> {
             ]);
             for (const [k, v] of changes) cache.set(k, v);
             forwardToDashboard(extSn, changes);
+          }
+        }
+
+        // The mower announces the command names of its extended_commands.py
+        // after every connect (ext_hello), so what it can do is known by what
+        // it says and not by its build number (patrolService.mowerSupportsExtended).
+        // Cached as ext_commands; the disconnect clears it with the rest of the
+        // cache, and the next connect announces again. A payload that is no list
+        // of names is ignored.
+        if (extSn && cmdName === 'ext_hello') {
+          const hello = extHelloReport(parsed[cmdName]);
+          if (hello) {
+            if (!deviceCache.has(extSn)) deviceCache.set(extSn, new Map());
+            const cache = deviceCache.get(extSn)!;
+            for (const [k, v] of hello) cache.set(k, v);
+            console.log(`${C.cyan}[EXT] ${extSn} announces ${parsed[cmdName].commands.length} extended commands${C.reset}`);
+          } else {
+            console.log(`${C.cyan}[EXT] ${extSn}: ext_hello ignored (no list of command names)${C.reset}`);
           }
         }
 
