@@ -641,7 +641,7 @@ class FakeMQTT:
     published, connects, events, fail_publish_of = [], [0], [], None
 
     def __init__(self, host, port, client_id, on_message=None):
-        pass
+        FakeMQTT.handler = on_message
 
     def connect(self):
         FakeMQTT.connects[0] += 1
@@ -665,15 +665,20 @@ class FakeMQTT:
             raise KeyboardInterrupt
 
 
+WATCHERS_STARTED = []   # the ROS watchers main() started, in order (start_up)
+
+
 def start_up(status_file, fail_publish_of=None):
     """One start of extended_commands (main) against FakeMQTT, with the ROS
     relays off. The patrol_status messages it published, one list per connection."""
+    WATCHERS_STARTED.clear()
     patches = {
         "MiniMQTT": FakeMQTT, "PATROL_STATUS_FILE": status_file,
         "read_config": lambda: ("LFIN2230700238", "127.0.0.1", 1883),
         "start_blade_telemetry_relay": lambda *a: None, "start_rtk_telemetry_relay": lambda *a: None,
         "enable_rtk_telemetry": lambda: False, "start_charging_station_guard": lambda: None,
         "start_perception_model_client": lambda: None,
+        "start_recharge_light_watcher": lambda: WATCHERS_STARTED.append("recharge_light"),
     }
     real = {k: getattr(ec, k, MISSING) for k in patches}
     handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGCHLD)}
@@ -779,7 +784,7 @@ finally:
     restore(real)
 check("a hello that fails to send ends neither the connection nor the patrol re-announce",
       [timeline(c) for c in connections(FakeMQTT.events)]
-      == [["subscribe", "publish_failed", "patrol_status", "loop"]] * 2)
+      == [["subscribe", "subscribe", "publish_failed", "patrol_status", "loop"]] * 2)
 check("and the failure is logged", any("ext_hello" in line for line in logged))
 
 # The exit code is lost on the mower: main() ignores SIGCHLD (#60), so the kernel reaps every
@@ -922,6 +927,265 @@ sent, calls, seen = run(["PHASE patrolling",
                          "PHASE done"])
 check("forwards a skipped checkpoint with its zone, seq and run",
       ("patrol_skipped", {"zone": "map0", "seq": 3, "reason": "checkpoint_unreachable", "run": "1791"}) in sent)
+
+
+# ── Headlight during a recharge (Novabot-cwr4) ──────────────────────────────
+# Live on LFIN2230700238, 2026-10-15: at headlight 100 the dock's ArUco label
+# was overexposed (error 113 "no aruco"), at 30 it was readable. Ruling: while a
+# recharge runs (RobotStatus.recharge_status 50 and up, no charging contact) the
+# headlight is DOCKING_HEADLIGHT, set once on entering; leaving (below 50, or
+# merged_work_status 4) puts back the user's headlight once: the last led_set
+# the server sent on novabot/cmd/<SN>, 0 until one came.
+
+def robot_status(recharge, merged=0, error=0):
+    """A RobotStatus as the watcher reads it."""
+    return types.SimpleNamespace(recharge_status=recharge, merged_work_status=merged, error_status=error)
+
+
+def scenario(name, fn):
+    """check() for a scenario that may raise: an exception is a FAIL, with its text."""
+    try:
+        ok = bool(fn())
+    except Exception as e:
+        print(f"     ({type(e).__name__}: {e})")
+        ok = False
+    check(name, ok)
+
+
+def quietly(fn):
+    """Run fn with ec.log collected instead of printed; (result, lines)."""
+    lines, real_log = [], ec.log
+    ec.log = lines.append
+    try:
+        return fn(), lines
+    finally:
+        ec.log = real_log
+
+
+def drive(light, *events):
+    """Feed the watcher in order: an int is a user led_set from novabot/cmd, a
+    tuple a RobotStatus (recharge[, merged[, error]])."""
+    for ev in events:
+        if isinstance(ev, tuple):
+            light.on_status(robot_status(*ev))
+        else:
+            light.on_user_led(ev)
+
+
+def lights_for(*events):
+    """The levels a fresh watcher publishes for these events, and its log lines."""
+    levels = []
+
+    def go():
+        drive(ec.RechargeLight(levels.append), *events)
+        return levels
+    return quietly(go)
+
+
+scenario("the docking light is 1, the owner's choice", lambda: ec.DOCKING_HEADLIGHT == 1)
+scenario("no recharge, no light: idle, docked, cancelled, failed and stopped statuses publish nothing",
+         lambda: lights_for(30, (0,), (9, 4), (2,), (1,), (1, 0, 126), (10,), (49,))[0] == [])
+scenario("a recharge that starts (50) publishes the docking light once",
+         lambda: lights_for(30, (0,), (50,))[0] == [ec.DOCKING_HEADLIGHT])
+scenario("its start states and the drive home (90 and up) publish nothing more",
+         lambda: lights_for(30, (50,), (57,), (55,), (51,), (53,), (90,), (191,), (192,), (193,), (193,))[0]
+         == [ec.DOCKING_HEADLIGHT])
+scenario("a recharge first seen mid-dock (191) sets it too",
+         lambda: lights_for(30, (191,))[0] == [ec.DOCKING_HEADLIGHT])
+scenario("finished (9, docked) puts the user's headlight back once",
+         lambda: lights_for(30, (50,), (191,), (9, 4), (9, 4))[0] == [ec.DOCKING_HEADLIGHT, 30])
+scenario("failed (1, with an error) puts it back too, and the FAILED that stays adds nothing",
+         lambda: lights_for(55, (53,), (192,), (1, 0, 126), (1, 0, 126))[0] == [ec.DOCKING_HEADLIGHT, 55])
+scenario("cancelled (2) puts it back",
+         lambda: lights_for(20, (50,), (2,))[0] == [ec.DOCKING_HEADLIGHT, 20])
+scenario("charging contact ends it while recharge_status still reads 193, and the 9 after it adds nothing",
+         lambda: lights_for(20, (193,), (193, 4))[0] == [ec.DOCKING_HEADLIGHT, 20]
+         and lights_for(20, (193,), (193, 4), (9, 4))[0] == [ec.DOCKING_HEADLIGHT, 20])
+scenario("what comes back is the last user led_set, also one sent during the recharge",
+         lambda: lights_for(30, (50,), (9, 4), 100, (50,), 0, (191,), (9, 4))[0]
+         == [ec.DOCKING_HEADLIGHT, 30, ec.DOCKING_HEADLIGHT, 0])
+scenario("before any user led_set the light goes back to 0",
+         lambda: lights_for((53,), (1,))[0] == [ec.DOCKING_HEADLIGHT, 0])
+scenario("one log line per transition, none without one",
+         lambda: len(lights_for(30, (0,), (50,), (53,), (191,), (9, 4), (9, 4))[1]) == 2)
+
+
+def failing_publish():
+    def boom(level):
+        raise RuntimeError("blade relay not up")
+    light = ec.RechargeLight(boom)
+    drive(light, 30, (50,), (9, 4))
+    return light
+
+
+scenario("a publish that fails never raises, and says so in one line per transition",
+         lambda: len(quietly(failing_publish)[1]) == 2
+         and all("recharge-light" in line and "publish failed" in line for line in quietly(failing_publish)[1]))
+
+
+def malformed_status():
+    levels = []
+    light = ec.RechargeLight(levels.append)
+    light.on_status(types.SimpleNamespace())          # a status without its fields
+    drive(light, 30, (50,), (9, 4))
+    return levels == [ec.DOCKING_HEADLIGHT, 30]
+
+
+scenario("a malformed status is logged, never raised, and the watcher goes on",
+         lambda: len(quietly(malformed_status)[1]) == 3)
+
+
+def put_back_after(*payloads):
+    """What the module's watcher puts back after a recharge, once these
+    novabot/cmd payloads came in: (level, log lines)."""
+    levels = []
+    real = ec._RECHARGE_LIGHT
+    ec._RECHARGE_LIGHT = ec.RechargeLight(levels.append)
+
+    def go():
+        for payload in payloads:
+            ec.note_user_headlight(payload)
+        drive(ec._RECHARGE_LIGHT, (50,), (9, 4))
+    try:
+        _none, lines = quietly(go)
+    finally:
+        ec._RECHARGE_LIGHT = real
+    return levels[-1], lines
+
+
+scenario("a novabot/cmd led_set is the user's headlight; the last one counts",
+         lambda: put_back_after(b'{"led_set": 30}')[0] == 30
+         and put_back_after(b'{"led_set": 30}', b'{"led_set": 0}')[0] == 0)
+scenario("other novabot/cmd messages and broken ones change nothing and never raise",
+         lambda: put_back_after(b'{"led_set": 30}', b'{"blade": 1}', b"not json", b'{"led_set": "x"}',
+                                b"[1]", b'{"led_set": null}')[0] == 30)
+
+
+class WatcherNode:
+    """rclpy.node.Node for the watcher: records what it subscribes to."""
+    made = []
+
+    def __init__(self, name):
+        self.name, self.subs = name, []
+        WatcherNode.made.append(self)
+
+    def create_subscription(self, msg_type, topic, callback, qos):
+        self.subs.append((topic, msg_type, callback, qos))
+        return object()
+
+
+class WatcherExecutor:
+    """The shared executor the blade relay owns: records the nodes added to it."""
+
+    def __init__(self):
+        self.nodes = []
+
+    def add_node(self, node):
+        self.nodes.append(node)
+
+
+WATCHER_MODULES = ("rclpy", "rclpy.node", "decision_msgs", "decision_msgs.msg")
+
+
+def start_watcher(with_rclpy=True, starts=2, then=None):
+    """start_recharge_light_watcher `starts` times against fake ROS modules (or
+    none), the shared executor ready and a blade relay up; then `then(nodes)`,
+    while all that is still in place. Returns the nodes made, the executor, the
+    relay and the log lines."""
+    mods = {name: types.ModuleType(name) for name in WATCHER_MODULES}
+    mods["rclpy.node"].Node = WatcherNode
+    mods["decision_msgs.msg"].RobotStatus = type("RobotStatus", (), {})
+    if not with_rclpy:
+        mods = {name: None for name in WATCHER_MODULES}     # import fails as on a machine without ROS
+    saved_mods = {name: sys.modules.get(name, MISSING) for name in WATCHER_MODULES}
+    saved = {k: getattr(ec, k, MISSING) for k in ("_RECHARGE_LIGHT", "_RECHARGE_LIGHT_STARTED")}
+    executor, relay = WatcherExecutor(), Relay()
+    real_exec, real_node, was_ready = ec._ROS_EXECUTOR[0], ec._ROS_BLADE_NODE[0], ec._ROS_EXECUTOR_READY.is_set()
+    real_thread = ec.threading.Thread
+    WatcherNode.made = []
+    sys.modules.update(mods)
+    ec._RECHARGE_LIGHT, ec._RECHARGE_LIGHT_STARTED = ec.RechargeLight(ec._relay_headlight), [False]
+    ec._ROS_EXECUTOR[0], ec._ROS_BLADE_NODE[0] = executor, relay
+    ec._ROS_EXECUTOR_READY.set()
+    ec.threading.Thread = SyncThread
+    try:
+        _none, lines = quietly(lambda: [ec.start_recharge_light_watcher() for _ in range(starts)])
+        if then is not None:
+            quietly(lambda: then(WatcherNode.made))
+    finally:
+        ec.threading.Thread = real_thread
+        ec._ROS_EXECUTOR[0], ec._ROS_BLADE_NODE[0] = real_exec, real_node
+        if not was_ready:
+            ec._ROS_EXECUTOR_READY.clear()
+        restore(saved)
+        for name, module in saved_mods.items():
+            if module is MISSING:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+    return WatcherNode.made, executor, relay, lines
+
+
+def watcher_subscribes_to_robot_status_only():
+    nodes, executor, _relay, _lines = start_watcher()
+    subs = {topic: qos for topic, _type, _cb, qos in nodes[0].subs}
+    return len(nodes) == 1 and executor.nodes == nodes and subs == {"/robot_decision/robot_status": 1}
+
+
+def watcher_lights_through_the_relay():
+    def feed(nodes):
+        on_status = nodes[0].subs[0][2]
+        ec.note_user_headlight(b'{"led_set": 30}')
+        on_status(robot_status(50))
+        on_status(robot_status(9, 4))
+    _nodes, _executor, relay, _lines = start_watcher(starts=1, then=feed)
+    return relay.levels == [ec.DOCKING_HEADLIGHT, 30]
+
+
+def watcher_without_rclpy():
+    nodes, executor, _relay, lines = start_watcher(with_rclpy=False, starts=1)
+    return nodes == [] and executor.nodes == [] and any("recharge-light" in line for line in lines)
+
+
+scenario("the watcher is one node in the shared executor with robot_status at depth 1 and no /led_set "
+         "subscription (the firmware's own 2/5/0 there are not the user's); a second start adds nothing",
+         watcher_subscribes_to_robot_status_only)
+scenario("its callback sets the light through the blade relay's /led_set publisher",
+         watcher_lights_through_the_relay)
+scenario("without rclpy the watcher logs and stays off, it never raises", watcher_without_rclpy)
+
+CMD_TOPIC, EXTENDED_TOPIC = "novabot/cmd/LFIN2230700238", "novabot/extended/LFIN2230700238"
+start_up(patrolling_status_file())
+check("main() starts the recharge-light watcher once", WATCHERS_STARTED == ["recharge_light"])
+conns = connections(FakeMQTT.events)
+check("every connection subscribes novabot/extended/<SN>, then novabot/cmd/<SN>",
+      len(conns) == 2 and all([ev[1] for ev in c if ev[0] == "subscribe"] == [EXTENDED_TOPIC, CMD_TOPIC]
+                              for c in conns))
+
+
+def handled(topic, payload):
+    """One message through main()'s MQTT handler: the extended commands it
+    started, and what the watcher puts back after a recharge that follows."""
+    ran, levels = [], []
+    real = {"run_extended_command": ec.run_extended_command, "_RECHARGE_LIGHT": ec._RECHARGE_LIGHT}
+    real_thread = ec.threading.Thread
+    ec.run_extended_command = lambda name, handler, params, respond: ran.append(name)
+    ec._RECHARGE_LIGHT = ec.RechargeLight(levels.append)
+    ec.threading.Thread = SyncThread
+    try:
+        quietly(lambda: FakeMQTT.handler(topic, payload))
+        quietly(lambda: drive(ec._RECHARGE_LIGHT, (50,), (9, 4)))
+    finally:
+        ec.threading.Thread = real_thread
+        restore(real)
+    return ran, levels[-1]
+
+
+scenario("a led_set on novabot/cmd becomes the user's headlight and runs nothing",
+         lambda: handled(CMD_TOPIC, b'{"led_set": 30}') == ([], 30))
+scenario("a command on novabot/cmd is never run; the same on novabot/extended is",
+         lambda: handled(CMD_TOPIC, b'{"patrol": {}}') == ([], 0)
+         and handled(EXTENDED_TOPIC, b'{"patrol": {}}')[0] == ["patrol"])
 
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)

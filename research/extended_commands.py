@@ -7814,6 +7814,137 @@ def start_rtk_telemetry_relay(sn, mqtt_ref):
     t.start()
 
 
+# ── Headlight during a recharge (Novabot-cwr4) ───────────────────────────────
+# The dock's ArUco marker needs a low light at night. Live on LFIN2230700238,
+# 2026-10-15 22:47-23:10: with the headlight off the docking ended in error 113
+# "no aruco"; at 100 the label was overexposed; at 30 (on the 0..100 scale) it
+# was readable and Home docked. 1 is Ramon's choice, 30 the value proven that
+# night: the live test decides. Set once as a recharge starts; robot_decision's
+# own headlight during its alignment (2 "for aligning pile", 5 when dark, 0)
+# may overwrite it, which is stock and not fought.
+DOCKING_HEADLIGHT = 1
+# RobotStatus.recharge_status from this value up: a recharge runs (50 at its
+# start, 51..59 before the AutoCharging goal, 90 and up while it drives to the
+# pile, searches and aligns; 191-193 seen mid-dock). It ends below 50:
+# 9 finished, 2 cancelled, 1 failed, 0 wait (mow_zone_drive.py RECHARGE_RUNNING).
+RECHARGE_RUNNING = 50
+# RobotStatus.merged_work_status CHARGING: the charging contact is made.
+MERGED_CHARGING = 4
+_RECHARGE_LIGHT_STARTED = [False]   # start_recharge_light_watcher ran: one node per process
+
+
+class RechargeLight:
+    """The headlight during a recharge: a state machine on RobotStatus.
+
+    on_status: a recharge that starts running (recharge_status
+    RECHARGE_RUNNING and up, no charging contact) publishes DOCKING_HEADLIGHT
+    once; its end (below 50: finished, cancelled, failed, wait; or charging
+    contact) puts the user's headlight back once. Nothing goes out without such
+    a transition, so the status repeated at its rate costs nothing.
+    on_user_led: the user's headlight is the last led_set the server sent on
+    novabot/cmd/<SN> (the dashboard's headlight, a patrol's light), 0 until one
+    came. Not /led_set: robot_decision writes its own 2, 5 and 0 there, and
+    putting those back would be putting back the firmware's.
+    `publish(level)` sends /led_set. on_status runs in the shared executor,
+    on_user_led in the MQTT thread; a failure costs a log line, never an
+    exception."""
+
+    def __init__(self, publish):
+        self._publish = publish
+        self._lock = threading.Lock()
+        self._user_headlight = 0
+        self.running = False
+
+    def on_user_led(self, level):
+        with self._lock:
+            self._user_headlight = int(level)
+
+    def on_status(self, msg):
+        try:
+            recharge, merged = int(msg.recharge_status), int(msg.merged_work_status)
+            running = recharge >= RECHARGE_RUNNING and merged != MERGED_CHARGING
+            with self._lock:
+                if running == self.running:
+                    return
+                self.running = running
+                user = self._user_headlight
+            if running:
+                self._send(DOCKING_HEADLIGHT, f"recharge {recharge}: headlight {DOCKING_HEADLIGHT} "
+                                              f"for the docking (the user's is {user})")
+            else:
+                self._send(user, f"recharge over (recharge {recharge}, merged {merged}, error "
+                                 f"{getattr(msg, 'error_status', '?')}): headlight back to {user}")
+        except Exception as ex:
+            log(f"[recharge-light] status not handled: {ex}")
+
+    def _send(self, level, what):
+        try:
+            self._publish(level)
+        except Exception as ex:
+            log(f"[recharge-light] {what}; publish failed: {ex}")
+            return
+        log(f"[recharge-light] {what}")
+
+
+def _relay_headlight(level):
+    """/led_set through the blade relay's long-lived publisher, the one the
+    patrol handler switches the light off with."""
+    _ROS_BLADE_NODE[0].publish_headlight(level)
+
+
+_RECHARGE_LIGHT = RechargeLight(_relay_headlight)
+
+
+def note_user_headlight(payload):
+    """A message on novabot/cmd/<SN>, the server's topic for led_bridge.py: its
+    led_set becomes the user's headlight _RECHARGE_LIGHT puts back after a
+    recharge. Nothing else on that topic is ours. Never raises."""
+    try:
+        data = json.loads(payload)
+        if not isinstance(data, dict) or data.get("led_set") is None:
+            return
+        level = int(data["led_set"])
+    except Exception as ex:
+        log(f"[recharge-light] novabot/cmd message not read: {ex}")
+        return
+    _RECHARGE_LIGHT.on_user_led(level)
+    log(f"[recharge-light] the user's headlight is {level} (novabot/cmd)")
+
+
+def start_recharge_light_watcher():
+    """_RECHARGE_LIGHT on a node of its own in the shared executor, added the
+    way the RTK relay adds its node: robot_status at depth 1 and nothing else
+    (the user's headlight comes from novabot/cmd, note_user_headlight). Once
+    per process. Without rclpy it logs and stays off; it never raises."""
+    if _RECHARGE_LIGHT_STARTED[0]:
+        return
+    _RECHARGE_LIGHT_STARTED[0] = True
+    try:
+        from rclpy.node import Node  # type: ignore
+        from decision_msgs.msg import RobotStatus  # type: ignore
+    except ImportError as ex:
+        log(f"[recharge-light] import failed, docking light disabled: {ex}")
+        return
+    light = _RECHARGE_LIGHT
+
+    def _setup():
+        try:
+            # The blade relay owns rclpy.init() and the shared executor; wait
+            # for it, add our node, never spin here.
+            if not _ROS_EXECUTOR_READY.wait(timeout=120.0):
+                log("[recharge-light] shared ROS executor not ready, docking light disabled")
+                return
+            node = Node("recharge_light_watcher")
+            node.create_subscription(RobotStatus, "/robot_decision/robot_status", light.on_status, 1)
+            _ROS_EXECUTOR[0].add_node(node)
+            log(f"[recharge-light] watching robot_status: headlight {DOCKING_HEADLIGHT} "
+                "while a recharge runs")
+        except Exception as ex:
+            log(f"[recharge-light] setup failed: {ex}")
+
+    threading.Thread(target=_setup, daemon=True, name="recharge-light").start()
+
+
 def _ros_publish_blade_speed_native(speed: int) -> bool:
     node = _ROS_BLADE_NODE[0]
     if node is None:
@@ -7882,8 +8013,11 @@ def main():
     sn, mqtt_addr, mqtt_port = read_config()
     sub_topic = f"novabot/extended/{sn}"
     resp_topic = f"novabot/extended_response/{sn}"
+    # led_bridge.py's topic: only its led_set is read here, as the user's
+    # headlight the recharge light puts back (note_user_headlight).
+    cmd_topic = f"novabot/cmd/{sn}"
     log(f"SN={sn}, MQTT={mqtt_addr}:{mqtt_port}")
-    log(f"Subscribe: {sub_topic}")
+    log(f"Subscribe: {sub_topic}, {cmd_topic} (led_set only)")
     log(f"Response:  {resp_topic}")
 
     # Reference to current MQTT client (for publishing responses)
@@ -7897,6 +8031,11 @@ def main():
     # mqtt_ref so it auto-picks-up the most recent connected client across
     # reconnects without needing its own MQTT loop.
     start_blade_telemetry_relay(sn, mqtt_ref)
+
+    # Headlight DOCKING_HEADLIGHT while a recharge runs, the user's headlight
+    # (novabot/cmd led_set) again afterwards (Novabot-cwr4). A node in the
+    # blade relay's shared executor.
+    start_recharge_light_watcher()
 
     # Optional ROS -> MQTT RTK/heading relay. Keep it opt-in because it
     # subscribes to high-rate localization topics and can cost noticeable CPU
@@ -7930,6 +8069,10 @@ def main():
 
     # MQTT message handler
     def on_message(mqtt_topic, payload):
+        if mqtt_topic == cmd_topic:
+            # Never a command: that topic is led_bridge.py's.
+            note_user_headlight(payload)
+            return
         try:
             data = json.loads(payload.decode('utf-8'))
             log(f"Commando ontvangen: {list(data.keys())}")
@@ -7960,6 +8103,7 @@ def main():
             mqtt = MiniMQTT(mqtt_addr, mqtt_port, client_id, on_message=on_message)
             mqtt.connect()
             mqtt.subscribe(sub_topic)
+            mqtt.subscribe(cmd_topic)
             mqtt_ref[0] = mqtt
             # First what this script can do, then the news it may have missed.
             announce_commands(respond)
