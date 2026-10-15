@@ -2482,7 +2482,11 @@ def handle_patrol(params, respond):
                         msg["error"] = parts[2]
                     if ph in ("done", "error"):
                         # The drive switched the headlight off before it said so.
+                        # Off is also what the docking that follows puts back,
+                        # when the server's led_set 0 never arrived (else the
+                        # patrol's own light would come back on the dock).
                         terminal_seen = drive_finished = True
+                        _RECHARGE_LIGHT.on_user_led(0)
                         _end(msg)
                     else:
                         _status(msg)
@@ -2526,6 +2530,7 @@ def handle_patrol(params, respond):
                 if not drive_finished:
                     # Stopped, killed or crashed: it may not have got to its own.
                     _patrol_headlight_off()
+                    _RECHARGE_LIGHT.on_user_led(0)
             if perception_changed:
                 _restore_edge_perception()
             try:
@@ -7845,12 +7850,14 @@ class RechargeLight:
     novabot/cmd/<SN> (the dashboard's headlight, a patrol's light), 0 until one
     came. Not /led_set: robot_decision writes its own 2, 5 and 0 there, and
     putting those back would be putting back the firmware's.
-    `publish(level)` sends /led_set. on_status runs in the shared executor,
-    on_user_led in the MQTT thread; a failure costs a log line, never an
-    exception."""
+    `publish(level)` sends /led_set; a status for which `ignore(msg)` is true
+    is not robot_decision's and changes nothing. on_status runs in the shared
+    executor, on_user_led in the MQTT thread; a failure costs a log line,
+    never an exception."""
 
-    def __init__(self, publish):
+    def __init__(self, publish, ignore=None):
         self._publish = publish
+        self._ignore = ignore
         self._lock = threading.Lock()
         self._user_headlight = 0
         self.running = False
@@ -7861,6 +7868,8 @@ class RechargeLight:
 
     def on_status(self, msg):
         try:
+            if self._ignore is not None and self._ignore(msg):
+                return
             recharge, merged = int(msg.recharge_status), int(msg.merged_work_status)
             running = recharge >= RECHARGE_RUNNING and merged != MERGED_CHARGING
             with self._lock:
@@ -7892,7 +7901,18 @@ def _relay_headlight(level):
     _ROS_BLADE_NODE[0].publish_headlight(level)
 
 
-_RECHARGE_LIGHT = RechargeLight(_relay_headlight)
+def _relay_override_copy(msg):
+    """A RobotStatus the blade relay republished itself: while its override is
+    armed (manual blade control) it republishes robot_decision's status at
+    50 Hz with task_mode 1, work_status 10 and merged_work_status 1 forced, which
+    would hide the charging contact. The relay's own _on_status skips the same
+    messages."""
+    return (bool(getattr(_ROS_BLADE_NODE[0], "override_active", False))
+            and int(getattr(msg, "work_status", -1)) == 10
+            and int(getattr(msg, "merged_work_status", -1)) == 1)
+
+
+_RECHARGE_LIGHT = RechargeLight(_relay_headlight, ignore=_relay_override_copy)
 
 
 def note_user_headlight(payload):

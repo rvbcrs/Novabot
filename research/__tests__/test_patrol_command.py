@@ -4,6 +4,7 @@
 Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
 Run: python3 research/__tests__/test_patrol_command.py
 """
+import copy
 import importlib.util
 import json
 import os
@@ -1186,6 +1187,60 @@ scenario("a led_set on novabot/cmd becomes the user's headlight and runs nothing
 scenario("a command on novabot/cmd is never run; the same on novabot/extended is",
          lambda: handled(CMD_TOPIC, b'{"patrol": {}}') == ([], 0)
          and handled(EXTENDED_TOPIC, b'{"patrol": {}}')[0] == ["patrol"])
+
+
+def after_patrol(lines, **kw):
+    """What the recharge light puts back after the docking that follows a
+    patrol, when the last novabot/cmd led_set was the patrol's own light (100)
+    and the server's led_set 0 before go_to_charge never arrived."""
+    levels = []
+    light = ec.RechargeLight(levels.append)
+    light.on_user_led(100)
+    run(lines, patches={"_RECHARGE_LIGHT": light}, **kw)
+    reset_mow_state()
+    quietly(lambda: drive(light, (50,), (9, 4)))
+    return levels[-1]
+
+
+scenario("a patrol that ends by itself (done or error) leaves the user's headlight at 0",
+         lambda: after_patrol(["PHASE patrolling", "PHASE done"]) == 0
+         and after_patrol(["PHASE patrolling", "PHASE error checkpoints_unreachable"], rc=1) == 0)
+scenario("so does a patrol drive that was stopped, next to the handler's own headlight off",
+         lambda: after_patrol(["PHASE patrolling"], rc=-15, stopped=True) == 0)
+
+
+class ArmedRelay(Relay):
+    """The blade relay with its RobotStatus override armed (manual blade control)."""
+    override_active = True
+
+
+def relay_copy(recharge):
+    """A RobotStatus the armed relay republishes at 50 Hz: robot_decision's,
+    with task_mode 1, work_status 10 and merged_work_status 1 forced."""
+    return types.SimpleNamespace(recharge_status=recharge, merged_work_status=1, work_status=10, error_status=0)
+
+
+def override_copies():
+    real_node = ec._ROS_BLADE_NODE[0]
+    relay = ec._ROS_BLADE_NODE[0] = ArmedRelay()
+    light = copy.copy(ec._RECHARGE_LIGHT)          # the module's own watcher, wired as main() uses it
+
+    def go():
+        light.on_user_led(30)
+        for msg in (robot_status(191, 2), relay_copy(191), robot_status(191, 4), relay_copy(191), relay_copy(191)):
+            light.on_status(msg)
+    try:
+        quietly(go)
+        armed = list(relay.levels)
+        relay.override_active = False
+        quietly(lambda: light.on_status(relay_copy(191)))    # not armed: robot_decision's own
+    finally:
+        ec._ROS_BLADE_NODE[0] = real_node
+    return armed == [ec.DOCKING_HEADLIGHT, 30] and relay.levels == [ec.DOCKING_HEADLIGHT, 30, ec.DOCKING_HEADLIGHT]
+
+
+scenario("the blade relay's own RobotStatus copies (merged 1 forced while its override is armed) "
+         "do not toggle the light; unarmed, the same status counts", override_copies)
 
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)
