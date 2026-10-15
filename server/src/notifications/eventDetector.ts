@@ -214,7 +214,7 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
   // Novabot-bqzs: the drive home the server sends after a night patrol can fail
   // without the msg saying so (live 2026-10-15: error 126, nav2 refusing the goal
   // at the pile pose, and the mower stood 17 m out for six hours), so an error
-  // 126 / 113 that comes up counts there as well.
+  // 126 that comes up counts there as well. Not 113: it auto-recovers.
   const dockErrorCame = prev.errorStatus !== next.errorStatus
     && DOCK_FAILED_ERROR_CODES.has(parseInt(next.errorStatus, 10) || 0);
   const patrolDock = rechargeFailed || dockErrorCame ? patrolDockingFailed(sn, docked) : null;
@@ -298,7 +298,7 @@ export function dispatchPatrolFailedEvent(sn: string, reason: string, wentHome: 
 
 /**
  * The drive home the server sent after a night patrol did not end on the dock:
- * the recharge failed, or error 126 / 113 came up (patrolRuns.patrolDockingFailed;
+ * the recharge failed, or error 126 came up (patrolRuns.patrolDockingFailed;
  * Novabot-bqzs). It is the dock_failed event: the generic text says the mower
  * reached the charger and could not park, here it may stand anywhere, so it says
  * where it is. The data carries `patrol` and the run.

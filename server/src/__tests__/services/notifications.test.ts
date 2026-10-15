@@ -269,15 +269,42 @@ describe('dock_failed after the drive home of a night patrol', () => {
   });
 
   // Error 126 (MOVE_ROBOT_FAIL, "Return-to-charge failed") is what the first
-  // live patrol showed; 113 is the dock marker that was not found.
-  it.each(['126', '113'])('error %s after the go home is a failed docking too, when the msg does not say so', code => {
+  // live patrol showed.
+  it('error 126 after the go home is a failed docking too, when the msg does not say so', () => {
     markPatrolDocking(PSN);
-    detectAndDispatch(PSN, frame({ error_status: code, error_msg: 'recharge fail' }));
+    detectAndDispatch(PSN, frame({ error_status: '126', error_msg: 'recharge fail' }));
     const [ev, ...rest] = events('dock_failed');
     expect(rest).toEqual([]);
     expect(ev.message).toBe(PATROL_SENTENCE);
-    expect(ev.data).toMatchObject({ patrol: true, run: RUN, error_status: code });
+    expect(ev.data).toMatchObject({ patrol: true, run: RUN, error_status: '126' });
     expect(dockFailedAt()).not.toBeNull();
+  });
+
+  // Error 113 ("no aruco code find") comes up while the firmware retries the
+  // alignment at the dock, and goes away again: no failed docking by itself.
+  it('error 113 inside the window raises nothing, and records nothing on the run', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ error_status: '113', error_msg: 'no aruco code find' }));
+    expect(events('dock_failed')).toEqual([]);
+    expect(dockFailedAt()).toBeNull();
+  });
+
+  it('error 113 followed by Recharge: FAILED raises once', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ error_status: '113' }));
+    expect(events('dock_failed')).toEqual([]);
+    detectAndDispatch(PSN, frame({ error_status: '113', msg: FAILED }));
+    expect(events('dock_failed').map(e => e.message)).toEqual([PATROL_SENTENCE]);
+    expect(dockFailedAt()).not.toBeNull();
+  });
+
+  it('an error 113 that clears again leaves the go home watched: a later Recharge: FAILED still raises once', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ error_status: '113' }));
+    detectAndDispatch(PSN, frame());                        // the retry found the marker
+    expect(events('dock_failed')).toEqual([]);
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    expect(events('dock_failed').map(e => e.message)).toEqual([PATROL_SENTENCE]);
   });
 
   it('error 126 still raises the generic stuck event next to it', () => {
@@ -290,7 +317,7 @@ describe('dock_failed after the drive home of a night patrol', () => {
     ['Recharge: FAILED, then error 126', [{ msg: FAILED }, { msg: FAILED, error_status: '126' }]],
     ['error 126, then Recharge: FAILED', [{ error_status: '126' }, { error_status: '126', msg: FAILED }]],
     ['Recharge: FAILED twice', [{ msg: FAILED }, { msg: GOING }, { msg: FAILED }]],
-    ['error 126, then 113', [{ error_status: '126' }, { error_status: '113' }]],
+    ['error 113, then error 126', [{ error_status: '113' }, { error_status: '126' }]],
   ];
   it.each(oneEach)('%s is one dock_failed per go home', (_name, frames) => {
     markPatrolDocking(PSN);

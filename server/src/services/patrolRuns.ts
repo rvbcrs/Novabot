@@ -86,12 +86,14 @@ export function patrolDockingUnderWay(sn: string, docked: boolean, now = Date.no
 }
 
 /**
- * Error codes that say the recharge failed when the msg does not: 126 is
+ * The error code that says the recharge failed when the msg does not: 126 is
  * "Return-to-charge failed" (MOVE_ROBOT_FAIL, nav2 refusing the goal at the pile
- * pose, live 2026-10-15), 113 is "Charging station QR code cannot be found" (the
- * dock marker). The error_status sensor, as the dashboard shows it.
+ * pose, live 2026-10-15). The error_status sensor, as the dashboard shows it.
+ * Not 113 ("no aruco code find"): it comes up while the firmware retries the
+ * alignment at the dock and goes away again, so it is no failure by itself. A 113
+ * that is followed by `Recharge: FAILED` raises through that trigger.
  */
-export const DOCK_FAILED_ERROR_CODES: ReadonlySet<number> = new Set([126, 113]);
+export const DOCK_FAILED_ERROR_CODES: ReadonlySet<number> = new Set([126]);
 
 export interface PatrolDockingFailure {
   /** The run whose go home failed, null when the mower had no run row then. */
@@ -102,7 +104,7 @@ export interface PatrolDockingFailure {
 
 /**
  * The mower reports the recharge failed (the msg says `Recharge: FAILED`, or
- * error 126 / 113 came up; the caller edge-detects that) while it is not charging
+ * error 126 came up; the caller edge-detects that) while it is not charging
  * (`docked` false). Non-null when that is the drive home the server sent after a
  * patrol, within PATROL_DOCKING_MAX_MS: the first time per go home it records the
  * failure on the run (patrol_runs.dock_failed_at) and says `first`, so the caller

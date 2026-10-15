@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { patrolRunsRepo } from '../../db/repositories/index.js';
 import {
   isOlderPatrolRun, isLivePatrolRun, patrolReport, extHelloReport, isPatrolDriving, markPatrolDocking, patrolDockingUnderWay,
-  patrolDockingFailed, PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, EXT_COMMANDS_KEY, _resetPatrolDocking,
+  patrolDockingFailed, DOCK_FAILED_ERROR_CODES, PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, EXT_COMMANDS_KEY, _resetPatrolDocking,
 } from '../../services/patrolRuns.js';
 
 const SN = 'LFIN_PATROL_RUNS';
@@ -266,6 +266,14 @@ describe('patrolDockingFailed', () => {
     expect(patrolDockingUnderWay(SN, false, 2_000)).toBe(true);
     expect(patrolDockingUnderWay(SN, true, 3_000)).toBe(true);
     expect(patrolDockingFailed(SN, false, 4_000)).toBeNull();   // docked: the go home is over
+  });
+});
+
+// Error 113 ("no aruco code find") comes up while the firmware retries the
+// alignment at the dock and goes away again: it is no failed docking by itself.
+describe('DOCK_FAILED_ERROR_CODES', () => {
+  it('is error 126 only', () => {
+    expect([...DOCK_FAILED_ERROR_CODES]).toEqual([126]);
   });
 });
 
