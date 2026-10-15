@@ -871,6 +871,16 @@ export function initDb(): void {
     );
   `);
 
+  // The mower did not end on the dock after the server's go home for this run
+  // (services/patrolRuns.ts patrolDockingFailed): when, in epoch ms. NULL = no
+  // failed docking seen. Separate from ended_phase, which the run filters key on.
+  try {
+    db.exec(`ALTER TABLE patrol_runs ADD COLUMN dock_failed_at INTEGER`);
+    console.log('[DB] Migrated: added patrol_runs.dock_failed_at');
+  } catch {
+    // Column already exists
+  }
+
   // Feature: actieve regenpauze sessies (rain monitor → go_to_charge → herstart na regen)
   db.exec(`
     CREATE TABLE IF NOT EXISTS rain_sessions (

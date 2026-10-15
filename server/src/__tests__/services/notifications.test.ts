@@ -218,6 +218,159 @@ describe('mowing events during a night patrol', () => {
   });
 });
 
+// Novabot-bqzs, live 2026-10-15: patrol_failed said the mower was sent back to
+// its dock, the recharge then failed (error 126, nav2 "goal is occupied" at the
+// pile pose) and the mower stood 17 m out for six hours without another word.
+// From the server's go home after a patrol until the mower charges (at most 15
+// minutes) a recharge that fails is one dock_failed that says so.
+describe('dock_failed after the drive home of a night patrol', () => {
+  const PATROL_SENTENCE = 'Docking after the patrol failed; the mower is standing still in the garden.';
+  const GENERIC_SENTENCE = 'Mower returned to the charger but failed to dock';
+  const RUN = '1760000000000';
+  const GOING = 'Mode:COVERAGE Work:MOVING Prev work:FINISHED Recharge: GOING';
+  const FAILED = 'Mode:COVERAGE Work:MOVING Prev work:FINISHED Recharge: FAILED';
+  // Every case its own mower: the dispatcher's event list outlives a test.
+  let n = 0;
+  let PSN = '';
+  const frame = (extra: Record<string, string> = {}) => snap({
+    error_status: '0', msg: GOING, battery_power: '90', recharge_status: '0', battery_state: 'DISCHARGING', ...extra,
+  });
+  const charging = (extra: Record<string, string> = {}) => frame({
+    msg: 'Mode:COVERAGE Work:FINISHED Prev work:MOVING Recharge: FINISHED', recharge_status: '9', battery_state: 'CHARGING', ...extra,
+  });
+  const events = (type: string) => getRecentEvents(PSN, 50).filter(e => e.type === type);
+  const dockFailedAt = () => patrolRunsRepo.get(PSN)?.dock_failed_at;
+
+  beforeEach(() => {
+    n += 1;
+    PSN = `LFIN_NOTIFY_DOCK_${n}`;
+    resetEventState(PSN);
+    _resetPatrolDocking();
+    patrolRunsRepo.start({ mower_sn: PSN, run: RUN, token: '0'.repeat(32), started_at: Date.now(), schedule_id: null });
+    detectAndDispatch(PSN, frame());   // the first frame only sets the snapshot
+  });
+
+  it('a recharge that fails after the go home is one dock_failed that says the patrol docking failed', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    const [ev, ...rest] = events('dock_failed');
+    expect(rest).toEqual([]);
+    expect(ev.title).toBe('Mower could not dock');
+    expect(ev.message).toBe(PATROL_SENTENCE);
+    expect(ev.data).toMatchObject({ patrol: true, run: RUN });
+  });
+
+  it('the failure is recorded on the run', () => {
+    expect(dockFailedAt()).toBeNull();
+    markPatrolDocking(PSN);
+    const before = Date.now();
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    expect(dockFailedAt()).toBeGreaterThanOrEqual(before);
+  });
+
+  // Error 126 (MOVE_ROBOT_FAIL, "Return-to-charge failed") is what the first
+  // live patrol showed; 113 is the dock marker that was not found.
+  it.each(['126', '113'])('error %s after the go home is a failed docking too, when the msg does not say so', code => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ error_status: code, error_msg: 'recharge fail' }));
+    const [ev, ...rest] = events('dock_failed');
+    expect(rest).toEqual([]);
+    expect(ev.message).toBe(PATROL_SENTENCE);
+    expect(ev.data).toMatchObject({ patrol: true, run: RUN, error_status: code });
+    expect(dockFailedAt()).not.toBeNull();
+  });
+
+  it('error 126 still raises the generic stuck event next to it', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ error_status: '126', error_msg: 'recharge fail' }));
+    expect(events('stuck')).toHaveLength(1);
+  });
+
+  const oneEach: Array<[string, Array<Record<string, string>>]> = [
+    ['Recharge: FAILED, then error 126', [{ msg: FAILED }, { msg: FAILED, error_status: '126' }]],
+    ['error 126, then Recharge: FAILED', [{ error_status: '126' }, { error_status: '126', msg: FAILED }]],
+    ['Recharge: FAILED twice', [{ msg: FAILED }, { msg: GOING }, { msg: FAILED }]],
+    ['error 126, then 113', [{ error_status: '126' }, { error_status: '113' }]],
+  ];
+  it.each(oneEach)('%s is one dock_failed per go home', (_name, frames) => {
+    markPatrolDocking(PSN);
+    for (const f of frames) detectAndDispatch(PSN, frame(f));
+    expect(events('dock_failed')).toHaveLength(1);
+    expect(events('dock_failed')[0].message).toBe(PATROL_SENTENCE);
+  });
+
+  it('a mower that charges within the 15 minutes gets none', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ msg: 'Mode:COVERAGE Work:MOVING Prev work:FINISHED Recharge: RUNNING' }));   // on its way
+    detectAndDispatch(PSN, charging());                                                                         // on the dock
+    expect(events('dock_failed')).toEqual([]);
+    expect(dockFailedAt()).toBeNull();
+  });
+
+  it('an error 126 while the mower is already charging is no failed docking', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, charging({ error_status: '126' }));
+    expect(events('dock_failed')).toEqual([]);
+    expect(dockFailedAt()).toBeNull();
+  });
+
+  it('after the 15 minutes the generic dock_failed reports it, unchanged', () => {
+    markPatrolDocking(PSN, Date.now() - PATROL_DOCKING_MAX_MS - 1);
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    const [ev, ...rest] = events('dock_failed');
+    expect(rest).toEqual([]);
+    expect(ev.message).toContain(GENERIC_SENTENCE);
+    expect(ev.data).not.toHaveProperty('patrol');
+    expect(dockFailedAt()).toBeNull();
+  });
+
+  it('a failed recharge with no patrol go home is the generic dock_failed, unchanged', () => {
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    const [ev, ...rest] = events('dock_failed');
+    expect(rest).toEqual([]);
+    expect(ev.title).toBe('Mower could not dock');
+    expect(ev.message.startsWith(GENERIC_SENTENCE)).toBe(true);
+    expect(ev.message.endsWith('Manually move the mower onto the dock or retry.')).toBe(true);
+    expect(ev.data).toEqual({ msg: FAILED, battery_power: 90 });
+    expect(dockFailedAt()).toBeNull();
+  });
+
+  it('a failed recharge with the mower already charging stays the generic dock_failed', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, charging({ msg: FAILED }));
+    expect(events('dock_failed').map(e => e.message.startsWith(GENERIC_SENTENCE))).toEqual([true]);
+    expect(dockFailedAt()).toBeNull();
+  });
+
+  it('error 126 with no patrol go home raises no dock_failed, as before', () => {
+    detectAndDispatch(PSN, frame({ error_status: '126', error_msg: 'recharge fail' }));
+    expect(events('dock_failed')).toEqual([]);
+    expect(events('stuck')).toHaveLength(1);
+  });
+
+  it('a patrol that started since the go home owns the mower: the old go home claims no failure', () => {
+    markPatrolDocking(PSN);
+    patrolRunsRepo.start({ mower_sn: PSN, run: String(Number(RUN) + 1), token: '1'.repeat(32), started_at: Date.now(), schedule_id: null });
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    expect(events('dock_failed').map(e => e.message.startsWith(GENERIC_SENTENCE))).toEqual([true]);
+    expect(dockFailedAt()).toBeNull();
+  });
+
+  it('the next patrol is watched anew', () => {
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    detectAndDispatch(PSN, charging());          // it docked in the end
+    detectAndDispatch(PSN, frame());             // and left for the next patrol
+    patrolRunsRepo.start({ mower_sn: PSN, run: String(Number(RUN) + 1), token: '1'.repeat(32), started_at: Date.now(), schedule_id: null });
+    expect(dockFailedAt()).toBeNull();           // a new run starts without a failure
+    markPatrolDocking(PSN);
+    detectAndDispatch(PSN, frame({ msg: FAILED }));
+    expect(events('dock_failed')).toHaveLength(2);
+    expect(events('dock_failed')[0].data).toMatchObject({ run: String(Number(RUN) + 1) });
+    expect(dockFailedAt()).not.toBeNull();
+  });
+});
+
 describe('dispatcher', () => {
   it('publishes to the local MQTT events topic prefix', () => {
     dispatchEvent({

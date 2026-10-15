@@ -120,7 +120,12 @@ function cancelPendingHome(sn: string): void {
   pendingHome.delete(sn);
 }
 
-/** goHome after a patrol. Its drive home reports Work:MOVING, which is no mow (patrolDockingUnderWay). */
+/**
+ * goHome after a patrol. Its drive home reports Work:MOVING, which is no mow
+ * (patrolDockingUnderWay), and for the next 15 minutes a recharge that fails
+ * while the mower is not charging is one dock_failed that says so, recorded on
+ * the run (patrolDockingFailed, in the event detector).
+ */
 function sendHome(sn: string): void {
   markPatrolDocking(sn);
   goHome(sn);

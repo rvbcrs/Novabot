@@ -49,12 +49,22 @@ export function isPatrolDriving(sn: string, cachedPhase: string | undefined, now
 
 /** How long the drive home after a patrol counts as the patrol's at most. */
 export const PATROL_DOCKING_MAX_MS = 15 * 60_000;
-// The server's go home after a patrol, per mower: the time it was sent.
-const dockingSince = new Map<string, number>();
+
+interface PatrolDocking {
+  /** When the server sent the mower home. */
+  since: number;
+  /** The run that go home belongs to (the mower's last run then), null without a run row. */
+  run: string | null;
+  /** The failure of this go home was reported (patrolDockingFailed). */
+  failureReported: boolean;
+}
+// The server's go home after a patrol, per mower. In memory: a restart inside the
+// 15 minutes loses it, and the generic detectors take over.
+const docking = new Map<string, PatrolDocking>();
 
 /** The server sends the mower home after a patrol (patrolService). */
 export function markPatrolDocking(sn: string, now = Date.now()): void {
-  dockingSince.set(sn, now);
+  docking.set(sn, { since: now, run: patrolRunsRepo.get(sn)?.run ?? null, failureReported: false });
 }
 
 /**
@@ -65,19 +75,55 @@ export function markPatrolDocking(sn: string, now = Date.now()): void {
  * a later departure is a mow again.
  */
 export function patrolDockingUnderWay(sn: string, docked: boolean, now = Date.now()): boolean {
-  const since = dockingSince.get(sn);
-  if (since === undefined) return false;
-  if (now - since > PATROL_DOCKING_MAX_MS) {
-    dockingSince.delete(sn);
+  const d = docking.get(sn);
+  if (d === undefined) return false;
+  if (now - d.since > PATROL_DOCKING_MAX_MS) {
+    docking.delete(sn);
     return false;
   }
-  if (docked) dockingSince.delete(sn);
+  if (docked) docking.delete(sn);
   return true;
+}
+
+/**
+ * Error codes that say the recharge failed when the msg does not: 126 is
+ * "Return-to-charge failed" (MOVE_ROBOT_FAIL, nav2 refusing the goal at the pile
+ * pose, live 2026-10-15), 113 is "Charging station QR code cannot be found" (the
+ * dock marker). The error_status sensor, as the dashboard shows it.
+ */
+export const DOCK_FAILED_ERROR_CODES: ReadonlySet<number> = new Set([126, 113]);
+
+export interface PatrolDockingFailure {
+  /** The run whose go home failed, null when the mower had no run row then. */
+  run: string | null;
+  /** False when this go home's failure was reported before: nothing more to say. */
+  first: boolean;
+}
+
+/**
+ * The mower reports the recharge failed (the msg says `Recharge: FAILED`, or
+ * error 126 / 113 came up; the caller edge-detects that) while it is not charging
+ * (`docked` false). Non-null when that is the drive home the server sent after a
+ * patrol, within PATROL_DOCKING_MAX_MS: the first time per go home it records the
+ * failure on the run (patrol_runs.dock_failed_at) and says `first`, so the caller
+ * raises ONE dock_failed with the patrol's context; after that `first` is false.
+ * Null when it is not that: no go home, 15 minutes gone, the mower charging, or a
+ * patrol that started since (it owns the mower now). The caller then leaves the
+ * failure to the generic dock_failed detector, unchanged.
+ */
+export function patrolDockingFailed(sn: string, docked: boolean, now = Date.now()): PatrolDockingFailure | null {
+  const d = docking.get(sn);
+  if (d === undefined || docked || now - d.since > PATROL_DOCKING_MAX_MS) return null;
+  if (d.run !== (patrolRunsRepo.get(sn)?.run ?? null)) return null;
+  if (d.failureReported) return { run: d.run, first: false };
+  d.failureReported = true;
+  if (d.run) patrolRunsRepo.markDockFailed(sn, d.run, now);
+  return { run: d.run, first: true };
 }
 
 /** Tests only. */
 export function _resetPatrolDocking(): void {
-  dockingSince.clear();
+  docking.clear();
 }
 
 /**

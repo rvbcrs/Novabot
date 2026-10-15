@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../notifications/dispatcher.js', () => ({ dispatchEvent: vi.fn() }));
 
 import { dispatchEvent } from '../../notifications/dispatcher.js';
-import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent } from '../../notifications/eventDetector.js';
+import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent, dispatchPatrolDockFailedEvent } from '../../notifications/eventDetector.js';
 import { CATEGORY_BY_TYPE } from '../../notifications/types.js';
 
 describe('patrol events', () => {
@@ -24,8 +24,31 @@ describe('patrol events', () => {
     const [a, b] = vi.mocked(dispatchEvent).mock.calls.map(c => c[0]);
     expect(a.type).toBe('patrol_failed');
     expect(CATEGORY_BY_TYPE[a.type]).toBe('patrol');
-    expect(a.message).toContain('sent back to its dock');
+    expect(a.message).toContain('is being sent to its dock');
     expect(b.message).toContain('did not leave its dock');
+  });
+
+  // Novabot-bqzs: the push said "was sent back to its dock" at the moment the
+  // go home was only about to start, and the docking then failed (error 126).
+  // It states what the server does, not what has happened.
+  it('a failed patrol does not claim the mower is already back on its dock', () => {
+    dispatchPatrolFailedEvent('LFIN1', 'checkpoints_unreachable', true);
+    const ev = vi.mocked(dispatchEvent).mock.calls[0][0];
+    expect(ev.message).toBe('The night patrol stopped (checkpoints_unreachable). The mower is being sent to its dock.');
+    expect(ev.message).not.toContain('was sent');
+    expect(ev.data).toMatchObject({ reason: 'checkpoints_unreachable', went_home: true });
+  });
+
+  it('a docking that failed after a patrol is a dock_failed that says the mower stands in the garden', () => {
+    dispatchPatrolDockFailedEvent('LFIN1', {
+      run: '1700', msg: 'Mode:COVERAGE Work:MOVING Recharge: FAILED', errorStatus: '126', batteryPower: 41,
+    });
+    const ev = vi.mocked(dispatchEvent).mock.calls[0][0];
+    expect(ev.type).toBe('dock_failed');
+    expect(CATEGORY_BY_TYPE[ev.type]).toBe('errors');
+    expect(ev.title).toBe('Mower could not dock');
+    expect(ev.message).toBe('Docking after the patrol failed; the mower is standing still in the garden.');
+    expect(ev.data).toMatchObject({ patrol: true, run: '1700', error_status: '126', battery_power: 41 });
   });
 
   // R3: the STOP button, a lift or a tilt stopped it in the garden.

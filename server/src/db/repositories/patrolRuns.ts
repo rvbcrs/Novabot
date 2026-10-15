@@ -14,6 +14,8 @@ export interface PatrolRunRow {
   schedule_id: string | null;
   /** The terminal phase the server acted on (done | error | stopped), null while the run is out. */
   ended_phase: string | null;
+  /** Epoch ms: the mower did not end on the dock after the server sent it home for this run. Null: no failed docking seen. */
+  dock_failed_at: number | null;
 }
 
 class PatrolRunsRepository {
@@ -23,7 +25,7 @@ class PatrolRunsRepository {
     VALUES (@mower_sn, @run, @token, @started_at, @schedule_id, NULL)
     ON CONFLICT(mower_sn) DO UPDATE SET
       run = excluded.run, token = excluded.token, started_at = excluded.started_at,
-      schedule_id = excluded.schedule_id, ended_phase = NULL
+      schedule_id = excluded.schedule_id, ended_phase = NULL, dock_failed_at = NULL
   `);
   private _markEnded = db.prepare(
     'UPDATE patrol_runs SET ended_phase = ? WHERE mower_sn = ? AND run = ? AND ended_phase IS NULL',
@@ -33,9 +35,12 @@ class PatrolRunsRepository {
     VALUES (@mower_sn, @run, '', @started_at, NULL, @ended_phase)
     ON CONFLICT(mower_sn) DO UPDATE SET
       run = excluded.run, token = '', started_at = excluded.started_at,
-      schedule_id = NULL, ended_phase = excluded.ended_phase
+      schedule_id = NULL, ended_phase = excluded.ended_phase, dock_failed_at = NULL
     WHERE patrol_runs.ended_phase IS NOT NULL OR patrol_runs.started_at < @stale_before
   `);
+  private _markDockFailed = db.prepare(
+    'UPDATE patrol_runs SET dock_failed_at = ? WHERE mower_sn = ? AND run = ? AND dock_failed_at IS NULL',
+  );
   private _clearAll = db.prepare('DELETE FROM patrol_runs');
 
   get(sn: string): PatrolRunRow | undefined {
@@ -43,13 +48,22 @@ class PatrolRunsRepository {
   }
 
   /** A new run replaces the mower's last one. */
-  start(row: Omit<PatrolRunRow, 'ended_phase'>): void {
+  start(row: Omit<PatrolRunRow, 'ended_phase' | 'dock_failed_at'>): void {
     this._start.run(row);
   }
 
   /** Record the end of `run`. False when that run is not the mower's last, or its end was recorded before. */
   markEnded(sn: string, run: string, phase: string): boolean {
     return this._markEnded.run(phase, sn, run).changes > 0;
+  }
+
+  /**
+   * Record that the mower did not end on the dock after the go home for `run`.
+   * It comes after the run's end, so ended_phase does not matter. False when
+   * `run` is not the mower's last run, or the failure was recorded before.
+   */
+  markDockFailed(sn: string, run: string, at: number): boolean {
+    return this._markDockFailed.run(at, sn, run).changes > 0;
   }
 
   /** The end of a run this database has no row for (restored or reset): it becomes the

@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { patrolRunsRepo } from '../../db/repositories/index.js';
 import {
   isOlderPatrolRun, isLivePatrolRun, patrolReport, extHelloReport, isPatrolDriving, markPatrolDocking, patrolDockingUnderWay,
-  PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, EXT_COMMANDS_KEY, _resetPatrolDocking,
+  patrolDockingFailed, PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, EXT_COMMANDS_KEY, _resetPatrolDocking,
 } from '../../services/patrolRuns.js';
 
 const SN = 'LFIN_PATROL_RUNS';
@@ -192,6 +192,114 @@ describe('patrolDockingUnderWay', () => {
 
   it('nothing without a docking', () => {
     expect(patrolDockingUnderWay(SN, false, 0)).toBe(false);
+  });
+});
+
+// Novabot-bqzs: the drive home after a patrol that does not end on the dock is
+// reported once per go home, with the run it belongs to, and recorded on that run.
+describe('patrolDockingFailed', () => {
+  it('names the run of the go home on the first failure; a second one is only "again"', () => {
+    started('2000');
+    markPatrolDocking(SN, 0);
+    expect(patrolDockingFailed(SN, false, 1_000)).toEqual({ run: '2000', first: true });
+    expect(patrolDockingFailed(SN, false, 2_000)).toEqual({ run: '2000', first: false });
+  });
+
+  it('records the time of the first failure on the run, the run having ended before the go home', () => {
+    started('2000');
+    patrolRunsRepo.markEnded(SN, '2000', 'error');
+    markPatrolDocking(SN, 0);
+    patrolDockingFailed(SN, false, 5_000);
+    patrolDockingFailed(SN, false, 6_000);
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '2000', ended_phase: 'error', dock_failed_at: 5_000 });
+  });
+
+  it('nothing without a go home', () => {
+    started('2000');
+    expect(patrolDockingFailed(SN, false, 1_000)).toBeNull();
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBeNull();
+  });
+
+  it('nothing while the mower is docked or charging, and that does not use up the report', () => {
+    started('2000');
+    markPatrolDocking(SN, 0);
+    expect(patrolDockingFailed(SN, true, 1_000)).toBeNull();
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBeNull();
+    expect(patrolDockingFailed(SN, false, 2_000)).toEqual({ run: '2000', first: true });
+  });
+
+  it('watches for 15 minutes after the go home, the last millisecond included', () => {
+    started('2000');
+    markPatrolDocking(SN, 0);
+    expect(patrolDockingFailed(SN, false, PATROL_DOCKING_MAX_MS + 1)).toBeNull();
+    markPatrolDocking(SN, 0);
+    expect(patrolDockingFailed(SN, false, PATROL_DOCKING_MAX_MS)).toEqual({ run: '2000', first: true });
+  });
+
+  it('is not the business of a patrol that started after the go home', () => {
+    started('2000');
+    markPatrolDocking(SN, 0);
+    started('3000');
+    expect(patrolDockingFailed(SN, false, 1_000)).toBeNull();
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBeNull();
+  });
+
+  it('a go home with no run row is still reported, with no run, and records nothing', () => {
+    markPatrolDocking(SN, 0);
+    expect(patrolDockingFailed(SN, false, 1_000)).toEqual({ run: null, first: true });
+    expect(patrolRunsRepo.get(SN)).toBeUndefined();
+  });
+
+  it('each go home is watched anew', () => {
+    started('2000');
+    markPatrolDocking(SN, 0);
+    expect(patrolDockingFailed(SN, false, 1_000)?.first).toBe(true);
+    started('3000');
+    markPatrolDocking(SN, 10_000);
+    expect(patrolDockingFailed(SN, false, 11_000)).toEqual({ run: '3000', first: true });
+  });
+
+  it('is not the docking under way: that goes on after a failure, until the mower docks', () => {
+    started('2000');
+    markPatrolDocking(SN, 0);
+    patrolDockingFailed(SN, false, 1_000);
+    expect(patrolDockingUnderWay(SN, false, 2_000)).toBe(true);
+    expect(patrolDockingUnderWay(SN, true, 3_000)).toBe(true);
+    expect(patrolDockingFailed(SN, false, 4_000)).toBeNull();   // docked: the go home is over
+  });
+});
+
+describe('markDockFailed', () => {
+  it("records the failure of the mower's run once", () => {
+    started('2000');
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBeNull();
+    expect(patrolRunsRepo.markDockFailed(SN, '2000', 7_000)).toBe(true);
+    expect(patrolRunsRepo.markDockFailed(SN, '2000', 8_000)).toBe(false);
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBe(7_000);
+  });
+
+  it('is for that run of that mower only', () => {
+    started('2000');
+    expect(patrolRunsRepo.markDockFailed(SN, '1999', 1)).toBe(false);
+    expect(patrolRunsRepo.markDockFailed('LFIN_OTHER', '2000', 1)).toBe(false);
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBeNull();
+  });
+
+  it("survives the handling of the run's end, and a new run starts without it", () => {
+    started('2000');
+    patrolRunsRepo.markDockFailed(SN, '2000', 7_000);
+    patrolRunsRepo.markEnded(SN, '2000', 'done');
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBe(7_000);
+    started('3000');
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at).toBeNull();
+  });
+
+  it('the end of a run the database does not know replaces the row without it', () => {
+    started('2000');
+    patrolRunsRepo.markDockFailed(SN, '2000', 7_000);
+    patrolRunsRepo.markEnded(SN, '2000', 'done');
+    patrolRunsRepo.recordEnded(SN, '5000', 'error', 5000, 0);
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '5000', dock_failed_at: null });
   });
 });
 

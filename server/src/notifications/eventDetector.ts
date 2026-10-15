@@ -9,7 +9,7 @@
 import { dispatchEvent } from './dispatcher.js';
 import { lookupError } from './errorMap.js';
 import { MowerEvent, EventType } from './types.js';
-import { isPatrolDriving, patrolDockingUnderWay } from '../services/patrolRuns.js';
+import { isPatrolDriving, patrolDockingUnderWay, patrolDockingFailed, DOCK_FAILED_ERROR_CODES } from '../services/patrolRuns.js';
 
 const LOW_BATTERY_THRESHOLD = parseInt(process.env.LOW_BATTERY_THRESHOLD ?? '20', 10);
 
@@ -210,7 +210,23 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
   // produces one notification, not one per report tick.
   const wasDockFailed = prev.msg.includes('Recharge: FAILED');
   const nowDockFailed = next.msg.includes('Recharge: FAILED');
-  if (!wasDockFailed && nowDockFailed) {
+  const rechargeFailed = !wasDockFailed && nowDockFailed;
+  // Novabot-bqzs: the drive home the server sends after a night patrol can fail
+  // without the msg saying so (live 2026-10-15: error 126, nav2 refusing the goal
+  // at the pile pose, and the mower stood 17 m out for six hours), so an error
+  // 126 / 113 that comes up counts there as well.
+  const dockErrorCame = prev.errorStatus !== next.errorStatus
+    && DOCK_FAILED_ERROR_CODES.has(parseInt(next.errorStatus, 10) || 0);
+  const patrolDock = rechargeFailed || dockErrorCame ? patrolDockingFailed(sn, docked) : null;
+  if (patrolDock) {
+    // That go home is watched: its failure is ONE dock_failed, whichever signal
+    // came first, and it carries the patrol's context instead of the generic text.
+    if (patrolDock.first) {
+      dispatchPatrolDockFailedEvent(sn, {
+        run: patrolDock.run, msg: next.msg, errorStatus: next.errorStatus, batteryPower: next.batteryPower,
+      });
+    }
+  } else if (rechargeFailed) {
     dispatchEvent(makeEvent(
       sn,
       'dock_failed',
@@ -274,9 +290,29 @@ export function dispatchPatrolFailedEvent(sn: string, reason: string, wentHome: 
     'patrol_failed',
     TITLE_BY_TYPE.patrol_failed,
     `The night patrol stopped (${reason}).`
-      + (wentHome ? ' The mower was sent back to its dock.'
+      + (wentHome ? ' The mower is being sent to its dock.'
         : stoppedOnMower ? ' The mower stays where it stopped.' : ' The mower did not leave its dock.'),
     { reason, went_home: wentHome },
+  ));
+}
+
+/**
+ * The drive home the server sent after a night patrol did not end on the dock:
+ * the recharge failed, or error 126 / 113 came up (patrolRuns.patrolDockingFailed;
+ * Novabot-bqzs). It is the dock_failed event: the generic text says the mower
+ * reached the charger and could not park, here it may stand anywhere, so it says
+ * where it is. The data carries `patrol` and the run.
+ */
+export function dispatchPatrolDockFailedEvent(
+  sn: string,
+  d: { run: string | null; msg: string; errorStatus: string; batteryPower: number },
+): void {
+  dispatchEvent(makeEvent(
+    sn,
+    'dock_failed',
+    TITLE_BY_TYPE.dock_failed,
+    'Docking after the patrol failed; the mower is standing still in the garden.',
+    { msg: d.msg, battery_power: d.batteryPower, error_status: d.errorStatus, patrol: true, run: d.run },
   ));
 }
 
