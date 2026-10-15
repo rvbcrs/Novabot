@@ -46,10 +46,12 @@ So there is nothing to finish. We build it from parts that do work:
    sent it is replaced.
 2. **Route planned on the server.** From the zone polygons in the DB (local map
    metres, the same frame `nav_to_point` uses): every `spacing` metres along the
-   border (default 6 m), step 0.6 m inward, keep the point only when it lies at
-   least 0.48 m inside. At most 60 checkpoints per patrol. The dock's zone first,
-   the other chosen zones after it. The mower re-checks every point against its
-   own zone files and skips points outside them.
+   border (default 6 m), step 1.0 m inward, keep the point only when it lies at
+   least 0.8 m inside (0.6 m put checkpoints on occupied costmap cells, hedge
+   overhang and the edge of the pool, in the first live patrol). At most 60
+   checkpoints per patrol. The dock's zone first, the other chosen zones after
+   it. The mower re-checks every point against its own zone files and skips
+   points outside them.
 3. **Between zones only over recorded channels or touching zones** (`edge_route`),
    like the edge cut. A zone without such a route is skipped and reported.
 4. **Departure and docking are stock.** Docked: the firmware departs
@@ -102,6 +104,14 @@ So there is nothing to finish. We build it from parts that do work:
    `patrol_respond` with `result: 1` (refused before anything moved) is an `error`
    with `patrol_failed`, never a docking, and a schedule that started it shows it
    as failed.
+   The text of `patrol_failed` says the mower *is being* sent to its dock: the
+   go home has only started then. The server watches that drive home for 15
+   minutes (until the mower charges, at most): a recharge that fails
+   (`Recharge: FAILED` in the status, or error 126 / 113 coming up) while the
+   mower is not charging raises one `dock_failed` with the patrol's context
+   ("Docking after the patrol failed; the mower is standing still in the
+   garden."), whichever signal comes first, and the run records the time
+   (`patrol_runs.dock_failed_at`).
 9. **Starting.** Dashboard and app button, and patrol schedules
    (`dashboard_schedules.kind = 'patrol'`). Patrol schedules are run by the server
    only: never sent to the mower as `timer_task` (the firmware would mow), never
@@ -140,7 +150,10 @@ feature would be a blind drive.
 - No motion command to any mower without Ramon's explicit OK for that test.
 - Blades off throughout; deck at its highest during the departure.
 - Departure and docking are stock; we never reverse off the dock ourselves.
-- Headlight 0 before any go_to_charge.
+- Headlight at docking: the mower sets its headlight to a low docking value (1,
+  the owner's decision; 30 was the value tested) as soon as a recharge runs and
+  restores it afterwards. The server still sends `led_set 0` before every
+  `go_to_charge`.
 - Patrol only in a validated frame; frame-blocked like every other drive.
 - Costmap detection layer on during the patrol, so people and animals (hedgehogs)
   are obstacles to the planner, and restored afterwards.
@@ -193,6 +206,8 @@ theft/lift alarm, tap-to-open from a notification, rain pause for patrol.
   `localizing`) kills the drive, and the drive's release of its departure task
   (`stop_task`) may then cancel that Home; the owner presses Home again. To be
   checked in the live test.
+- Whether headlight 1 gives the camera enough light for the marker at night (30
+  did).
 
 ## First live tests
 
@@ -230,6 +245,16 @@ reaches a mower through a custom build (first build that ships `patrol`: 50).
     are still accepted, and the end is handled once.
 11. Far-zone Wi-Fi gap at the end of a patrol: the `done` arrives after the reconnect.
 12. A drive under an `extended_commands` started with nohup over SSH survives the logout.
+13. Occupied checkpoints: a checkpoint that nav2 refuses as occupied (hedge
+    overhang, the edge of the pool) is retried once 0.6 m further inward; when
+    that fails as well the point is skipped and the patrol goes on with the next
+    one. Five unreachable checkpoints in a row end the run
+    (`checkpoints_unreachable`). Check that a run with one blocked checkpoint
+    skips it and finishes, and that the hedge side and the pool edge of the
+    first live patrol (2026-10-15) no longer end the run.
+14. Docking light: as soon as a recharge runs after a patrol the headlight goes
+    to the docking value 1, and afterwards it is back at its earlier value. At
+    night: the mower still finds the marker with 1 (30 did), and docks.
 
 ## Phase 0 result
 
