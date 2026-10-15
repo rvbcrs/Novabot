@@ -107,8 +107,11 @@ So there is nothing to finish. We build it from parts that do work:
    only: never sent to the mower as `timer_task` (the firmware would mow), never
    mirrored into the stock app's plans, not listed among mow schedules, they ignore
    the night guard and keep the frost guard. No rain pause for patrol.
-10. **Guards before a start:** online, OpenNova build at or above
-    `PATROL_MIN_BUILD` (the first build that ships `patrol`), not busy, no map
+10. **Guards before a start:** online, OpenNova firmware whose
+    `extended_commands` announces `patrol` (it publishes `ext_hello` with its
+    command list after every connect; the server caches it per mower) or, when no
+    announcement is cached, a build at or above `PATROL_MIN_BUILD` (the first
+    build that ships `patrol`); not busy, no zone drive or edge cut running, no map
     operation, frame validated, battery at least 50 %, at least one checkpoint.
 11. **Settings** (device_settings, written through the existing
     `POST /sensor-override/:sn`): `patrol_zones` (JSON array, empty = dock zone),
