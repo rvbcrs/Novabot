@@ -1242,5 +1242,21 @@ def override_copies():
 scenario("the blade relay's own RobotStatus copies (merged 1 forced while its override is armed) "
          "do not toggle the light; unarmed, the same status counts", override_copies)
 
+
+def armed_status_of_robot_decision():
+    real_node = ec._ROS_BLADE_NODE[0]
+    relay = ec._ROS_BLADE_NODE[0] = ArmedRelay()
+    light = copy.copy(ec._RECHARGE_LIGHT)
+    own = types.SimpleNamespace(recharge_status=191, merged_work_status=1, work_status=55, error_status=0)
+    try:
+        quietly(lambda: (light.on_user_led(30), light.on_status(own)))
+    finally:
+        ec._ROS_BLADE_NODE[0] = real_node
+    return relay.levels == [ec.DOCKING_HEADLIGHT]
+
+
+scenario("while armed, a status with merged 1 but a work_status other than 10 is robot_decision's and counts",
+         armed_status_of_robot_decision)
+
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)

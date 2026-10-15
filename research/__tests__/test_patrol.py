@@ -595,6 +595,20 @@ def test_a_checkpoint_along_a_long_hedge_steps_straight_away_from_it():
     assert drv.goals == [(5, 1), (5, 1.6)], drv.goals
 
 
+STRIP_2M = [(0, 0), (30, 0), (30, 2), (0, 2)]
+
+
+def test_in_a_narrow_zone_a_retry_never_ends_closer_to_a_border():
+    # 1.0 m inside a 2 m strip is its middle: 0.6 m off the nearest edge would
+    # leave 0.4 m to the other one. Along the strip the clearance stays 1.0 m.
+    with_maps({"map0_work.csv": STRIP_2M, "map0tocharge_unicom.csv": DOCK})
+    drv = CheckpointDriver(occupied=[(5, 1)])
+    rc, seen, _uploads, _out = run_checkpoints(drv, [{"zone": "map0", "points": [[5, 1]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert drv.goals == [(5, 1), (5.6, 1)], drv.goals
+    assert mzd._dist_to_poly((5.6, 1.0), STRIP_2M) >= mzd._dist_to_poly((5.0, 1.0), STRIP_2M)
+
+
 def test_an_inner_corner_checkpoint_of_an_l_steps_into_the_zone():
     # Towards the middle of the L, (3.2, 3.2), it would leave the zone at (2.22, 2.22).
     with_maps({"map0_work.csv": L0, "map0tocharge_unicom.csv": DOCK})
@@ -641,6 +655,18 @@ def test_without_a_fresh_pose_a_checkpoint_is_reported_where_nav2_got_to():
     # The retry's point, then the goal itself; not the refused (1, 5), nor
     # (1.0, 1.0), where the patrol stood before it drove.
     assert [(c["x"], c["y"]) for c in looked_at(out)] == [(1.6, 5), (7, 7)], out
+
+
+def test_without_a_fresh_pose_a_skipped_checkpoint_leaves_the_pose_from_before_it():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6, "map0tocharge_unicom.csv": DOCK,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    drv = StaleCheckpointDriver(blocked=[(9.2, 5.2)])     # beside the channel's start
+    rc, seen, _uploads, _out = run_checkpoints(drv, [{"zone": "map0", "points": [[3, 3], [9.2, 5.2]]},
+                                                     {"zone": "map6", "points": [[35, 5]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    # The transit starts from (3, 3), the last goal reached, so it drives to
+    # the channel first; from the failed goal it would start at the channel.
+    assert drv.goals[:4] == [(3, 3), (9.2, 5.2), (9, 5), (35, 5)], drv.goals
 
 
 def test_an_inward_retry_that_fails_too_is_tried_once_and_the_checkpoint_skipped():
@@ -1574,12 +1600,71 @@ class LateAnswer:
         return None if self.reads == 1 else self.handle
 
 
+NAVS = (lambda drv: drv.nav_to(1.0, 2.0), lambda drv: drv.follow_path([(0.0, 0.0), (1.0, 0.0)]))
+
+
 def test_a_goal_nav2_takes_only_after_the_send_wait_is_cancelled_too():
+    for drive in NAVS:
+        handle = FakeGoalHandle()
+        with fake_actions(handle, send=LateAnswer), contextlib.redirect_stdout(io.StringIO()):
+            drv = mzd.Driver(FakeNode(misses=0))
+            assert drive(drv)[0] is False
+            assert handle.cancelled == 1 and drv.cancel_own_goal() is False
+
+
+class Unanswered:
+    """send_goal_async's future, answered only when the test says so."""
+
+    def __init__(self, handle):
+        self.handle, self.answered = handle, False
+
+    def done(self):
+        return self.answered
+
+    def result(self):
+        return self.handle if self.answered else None
+
+
+def unanswered_sends():
+    """A send for fake_actions that nav2 does not answer in time, and the sends made."""
+    sends = []
+
+    def send(handle):
+        sends.append(Unanswered(handle))
+        return sends[-1]
+    return send, sends
+
+
+def test_a_send_still_unanswered_after_the_drop_wait_is_kept_for_the_way_out():
+    for drive in NAVS:
+        handle = FakeGoalHandle()
+        send, sends = unanswered_sends()
+        with fake_actions(handle, send=send), contextlib.redirect_stdout(io.StringIO()):
+            drv = mzd.Driver(FakeNode(misses=0))
+            assert drive(drv)[0] is False and handle.cancelled == 0
+            sends[-1].answered = True                       # nav2 takes it after all
+            assert drv.cancel_own_goal() is True and handle.cancelled == 1
+
+
+def test_a_sigterm_in_the_drop_wait_leaves_the_send_for_the_way_out():
     handle = FakeGoalHandle()
-    with fake_actions(handle, send=LateAnswer), contextlib.redirect_stdout(io.StringIO()):
+    send, sends = unanswered_sends()
+
+    def spin(node, fut, timeout_sec=None):
+        if timeout_sec == 2.0:          # _drop_goal's wait, mid-drive: signals are not held there
+            raise SystemExit(143)
+    with fake_actions(handle, send=send), contextlib.redirect_stdout(io.StringIO()):
         drv = mzd.Driver(FakeNode(misses=0))
-        assert drv.nav_to(1.0, 2.0)[0] is False
-        assert handle.cancelled == 1 and drv.cancel_own_goal() is False
+        mzd.rclpy.spin_until_future_complete = spin
+        try:
+            drv.nav_to(1.0, 2.0)
+        except SystemExit as e:
+            assert e.code == 143, e.code
+        else:
+            raise AssertionError("the SIGTERM must reach the caller")
+        mzd.rclpy.spin_until_future_complete = lambda node, fut, timeout_sec=None: None
+        sends[-1].answered = True
+        assert drv.cancel_own_goal() is True and handle.cancelled == 1   # run()'s exit cancel
 
 
 def test_repeated_navs_reuse_one_client_per_action():

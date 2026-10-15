@@ -794,15 +794,22 @@ class Driver:
         """Cancel the nav2 goal this drive sent and still holds, by its own goal
         id, so never anybody else's (the go_to_charge that may follow a stop).
         Runs on the drive's way out, also after a SIGTERM, and when a goal
-        outlived its wait (_drop_goal). True when it cancelled one."""
+        outlived its wait (_drop_goal). True when it cancelled one.
+
+        A send nav2 has not answered yet stays held until it is: mid-drive
+        signals are not held here, and a SIGTERM in this wait, or an answer
+        that comes after it, must still leave it for the cancel on the way out."""
         gh, pending = self._goal, self._goal_send
-        self._goal = self._goal_send = None
         if gh is None and pending is not None:
             rclpy.spin_until_future_complete(self.node, pending, timeout_sec=timeout)
-            gh = pending.result() if pending.done() else None
+            if not pending.done():
+                return False
+            gh = pending.result()
         if gh is None or not getattr(gh, "accepted", False):
+            self._goal = self._goal_send = None
             return False
         fut = gh.cancel_goal_async()
+        self._goal = self._goal_send = None
         rclpy.spin_until_future_complete(self.node, fut, timeout_sec=timeout)
         log("cancelled our own nav2 goal")
         return True
@@ -2144,16 +2151,20 @@ def _inward_point(x, y, poly, step=PATROL_INWARD_M):
     polygon (a zone narrower than the step there) towards its centroid. The
     centroid alone ran along the border: in a 30 x 4 m strip along a hedge it
     moved a checkpoint 0.06 m from it, and at the inner corner of an L out of
-    the zone. None when neither lands inside."""
+    the zone. A step that brings the point closer to any border is not taken
+    either: in a zone narrower than twice the inset plus the step, off the
+    nearest edge is towards the opposite one (a 2 m strip: 1.0 m clearance
+    became 0.4 m). None when no step lands inside without losing clearance."""
     if len(poly) < 3:
         return None
+    clearance = _dist_to_poly((x, y), poly)
     border, middle = _nearest_on_border((x, y), poly), _poly_centroid(poly)
     for dx, dy in ((x - border[0], y - border[1]), (middle[0] - x, middle[1] - y)):
         d = math.hypot(dx, dy)
         if d < 1e-6:
             continue
         p = (x + dx / d * step, y + dy / d * step)
-        if point_in_poly(p[0], p[1], poly):
+        if point_in_poly(p[0], p[1], poly) and _dist_to_poly(p, poly) >= clearance - 1e-6:
             return p
     return None
 
