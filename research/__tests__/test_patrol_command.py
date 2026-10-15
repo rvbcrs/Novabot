@@ -635,27 +635,37 @@ check("an older run's late end does not replace the newer run's last status",
 
 class FakeMQTT:
     """MiniMQTT for main(): every connection publishes into `published`; the first
-    connection drops, the second ends the loop."""
-    published, connects = [], [0]
+    connection drops, the second ends the loop. `events` keeps what main() did to it, in
+    order, for the checks of what comes after what. A publish whose payload holds
+    `fail_publish_of` raises, as a dead link does."""
+    published, connects, events, fail_publish_of = [], [0], [], None
 
     def __init__(self, host, port, client_id, on_message=None):
         pass
 
     def connect(self):
         FakeMQTT.connects[0] += 1
+        if FakeMQTT.connects[0] > 4:
+            raise KeyboardInterrupt     # a main() that keeps reconnecting must not hang the run
+        FakeMQTT.events.append(("connect",))
 
     def subscribe(self, topic):
-        pass
+        FakeMQTT.events.append(("subscribe", topic))
 
     def publish(self, topic, payload):
+        if FakeMQTT.fail_publish_of and FakeMQTT.fail_publish_of in payload:
+            FakeMQTT.events.append(("publish_failed", topic))
+            raise OSError("broker link down")
         FakeMQTT.published.append((topic, json.loads(payload)))
+        FakeMQTT.events.append(("publish", topic, json.loads(payload)))
 
     def loop_forever(self):
+        FakeMQTT.events.append(("loop",))
         if FakeMQTT.connects[0] >= 2:
             raise KeyboardInterrupt
 
 
-def start_up(status_file):
+def start_up(status_file, fail_publish_of=None):
     """One start of extended_commands (main) against FakeMQTT, with the ROS
     relays off. The patrol_status messages it published, one list per connection."""
     patches = {
@@ -668,7 +678,8 @@ def start_up(status_file):
     real = {k: getattr(ec, k, MISSING) for k in patches}
     handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGCHLD)}
     real_sleep = ec.time.sleep
-    FakeMQTT.published, FakeMQTT.connects = [], [0]
+    FakeMQTT.published, FakeMQTT.connects, FakeMQTT.events = [], [0], []
+    FakeMQTT.fail_publish_of = fail_publish_of
     forget_patrol_status()   # a new process remembers nothing but the file
     for k, v in patches.items():
         setattr(ec, k, v)
@@ -696,6 +707,80 @@ check("no file, no status: nothing is invented", start_up(status_file) == [])
 with open(status_file, "w") as fh:
     json.dump({"body": {"phase": "done", "run": "1791"}, "t": time.time() - 600}, fh)
 check("a patrol that had ended is not reported again after a restart", start_up(status_file) == [])
+
+# ext_hello: the server learns which commands this script dispatches instead of guessing them
+# from the firmware build. Said on every connect (the server forgets a device when its link
+# drops): after the subscribe, before the last patrol status goes out again.
+RESPONSE_TOPIC = "novabot/extended_response/LFIN2230700238"
+
+
+def patrolling_status_file():
+    """What a mower leaves behind that went down mid-patrol: main() reports it (mower_restarted)
+    at every connect, so there is a patrol status to go out again."""
+    path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+    with open(path, "w") as fh:
+        json.dump({"body": {"phase": "patrolling", "run": "1791"}, "t": time.time() - 600}, fh)
+    return path
+
+
+def connections(events):
+    """FakeMQTT.events, one list per connection."""
+    split = []
+    for event in events:
+        if event[0] == "connect":
+            split.append([])
+        else:
+            split[-1].append(event)
+    return split
+
+
+def timeline(connection):
+    """What one connection did, in order, by name: the subscribe, every answer it published
+    (an answer's name is its one key), the loop."""
+    return [next(iter(ev[2])) if ev[0] == "publish" else ev[0] for ev in connection]
+
+
+def precedes(names, a, b):
+    """True when both `a` and `b` are in `names` and `a` comes first."""
+    return a in names and b in names and names.index(a) < names.index(b)
+
+
+def hellos(connection):
+    """The ext_hello answers one connection published, as (topic, body)."""
+    return [(ev[1], ev[2]) for ev in connection if ev[0] == "publish" and "ext_hello" in ev[2]]
+
+
+start_up(patrolling_status_file())
+conns = connections(FakeMQTT.events)
+said = hellos(conns[0])
+hello = said[0][1] if said else {}
+commands = hello.get("ext_hello", {}).get("commands")
+check("a connect says ext_hello once, on the response topic, after its subscribe",
+      [topic for topic, _body in said] == [RESPONSE_TOPIC] and precedes(timeline(conns[0]), "subscribe", "ext_hello"))
+check("the hello is exactly {ext_hello: {commands: [...]}}",
+      list(hello) == ["ext_hello"] and list(hello["ext_hello"]) == ["commands"])
+check("its commands are the keys of COMMANDS, sorted", commands == sorted(ec.COMMANDS))
+check("among them patrol, mow_zone and stop_mow_zone",
+      all(name in (commands or []) for name in ("patrol", "mow_zone", "stop_mow_zone")))
+check("after a reconnect it is said again, the same, after that connection's subscribe",
+      len(conns) == 2 and len(hellos(conns[1])) == 1 and hellos(conns[1]) == said
+      and precedes(timeline(conns[1]), "subscribe", "ext_hello"))
+check("on every connection the hello comes before the patrol status that goes out again",
+      len(conns) == 2 and all(precedes(timeline(c), "ext_hello", "patrol_status") for c in conns))
+
+# A hello that cannot be sent is logged and nothing more: the connection still re-announces the
+# patrol status and enters its loop, and the failure does not cost a reconnect.
+logged = []
+real = {"log": ec.log}
+ec.log = logged.append
+try:
+    start_up(patrolling_status_file(), fail_publish_of="ext_hello")
+finally:
+    restore(real)
+check("a hello that fails to send ends neither the connection nor the patrol re-announce",
+      [timeline(c) for c in connections(FakeMQTT.events)]
+      == [["subscribe", "publish_failed", "patrol_status", "loop"]] * 2)
+check("and the failure is logged", any("ext_hello" in line for line in logged))
 
 # The exit code is lost on the mower: main() ignores SIGCHLD (#60), so the kernel reaps every
 # child and Popen reads its returncode as 0. The end of a drive that did not report its own

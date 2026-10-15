@@ -7844,6 +7844,17 @@ def _ros_publish_blade_height_native(mm: int) -> bool:
         return False
 
 
+def announce_commands(respond):
+    """After every MQTT (re)connect: tell the server which extended commands this
+    script dispatches (ext_hello), so it need not infer them from the firmware
+    build. The server forgets a device when its link drops, so every connect says
+    it again. A send that fails is logged and never ends the session."""
+    try:
+        respond("ext_hello", {"commands": sorted(COMMANDS)})
+    except Exception as e:
+        log(f"ext_hello not sent: {e}")
+
+
 # ── Hoofdprogramma ─────────────────────────────────────────────────────────
 def main():
     log("=== Novabot Extended Commands ===")
@@ -7950,6 +7961,8 @@ def main():
             mqtt.connect()
             mqtt.subscribe(sub_topic)
             mqtt_ref[0] = mqtt
+            # First what this script can do, then the news it may have missed.
+            announce_commands(respond)
             # The end of a patrol may have gone out while the link was down.
             reannounce_patrol_status(respond)
             mqtt.loop_forever()
