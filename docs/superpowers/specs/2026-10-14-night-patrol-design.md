@@ -47,8 +47,10 @@ So there is nothing to finish. We build it from parts that do work:
 2. **Route planned on the server.** From the zone polygons in the DB (local map
    metres, the same frame `nav_to_point` uses): every `spacing` metres along the
    border (default 6 m), step 1.0 m inward, keep the point only when it lies at
-   least 0.8 m inside (0.6 m put checkpoints on occupied costmap cells, hedge
-   overhang and the edge of the pool, in the first live patrol). At most 60
+   least 0.8 m inside. (The first live patrol, with 0.6 m, had its checkpoints
+   on occupied costmap cells, hedge overhang and the edge of the pool; the main
+   cause was a map frame 1.57 m off its map, and 1.0 m is a mitigation for
+   hedges and pool edges, not a fix for that.) At most 60
    checkpoints per patrol. The dock's zone first, the other chosen zones after
    it. The mower re-checks every point against its own zone files and skips
    points outside them.
@@ -71,7 +73,9 @@ So there is nothing to finish. We build it from parts that do work:
    goal that follows survives it.
 6. **Headlight is set by the server** (`novabot/cmd/<SN>` `{led_set}`) on
    `patrolling`, and switched off (0) on every terminal phase before go_to_charge,
-   so the dock marker always sees the stock light (CLAUDE.md, dock LED = stock).
+   so the patrol's bright light never reaches the dock marker; the mower then
+   sets its own low docking light while the recharge runs (safety rules below;
+   the dock LED itself stays stock, CLAUDE.md).
    The mower switches it off as well: the drive before it reports `done` or `error`
    and on a killed drive's way out, the handler when its drive did not end by
    itself. A stop, go-home or start during a patrol sends `led_set 0` before
