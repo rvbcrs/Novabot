@@ -177,13 +177,17 @@ def test_channel_files_reads_the_route_from_disk():
 
 
 class FakeDriver:
-    def __init__(self, localized=None, status=(0, 0)):
+    def __init__(self, localized=None, status=(0, 0), merged=0):
         self.calls = []
         self._loc = localized
         self._status = status
+        self._merged = merged   # RobotStatus.merged_work_status
 
     def robot_xy(self, timeout=6.0):
         return self._loc
+
+    def docked(self, timeout=5.0):
+        return self._merged == mzd.MERGED_CHARGING
 
     def reload_map(self, map_yaml=None):
         # map_server leest map.pgm alleen bij het opstarten, dus do_mow moet dit
@@ -564,6 +568,44 @@ def test_a_mow_from_a_dock_inside_its_zone_still_drives_the_channel():
     assert rc == 0 and ("following_unicom",) in seen and seen[-1] == ("done", ""), seen
     n = [c[0] for c in drv.calls]
     assert n.index("localize") < n.index("follow_path") < n.index("start_cov"), drv.calls
+
+
+# Live on LFIN2230700238 (2026-10-15): docked at (-1.463, 1.218), 1.9 m from
+# the origin and 1.57 m from the anchor (0.03, 0.73), so outside DOCK_RADIUS of
+# both. The position said "not on the dock", the drive skipped the firmware
+# departure and sent nav2 goals from the dock. RobotStatus says CHARGING.
+ANCHOR_244 = (0.03, 0.73)
+DOCKED_244 = (-1.463, 1.218)
+GARDEN_244 = {"map0_work.csv": [(-3, -3), (10, -3), (10, 10), (-3, 10)], "map6_work.csv": SQ6,
+              "map0tocharge_unicom.csv": [ANCHOR_244, (2, 3)],
+              "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]}
+
+
+def test_a_charging_mower_departs_like_stock_even_outside_the_dock_disc():
+    with_maps(GARDEN_244)
+    assert mzd.current_zone_slot(DOCKED_244) == "map0"   # the position alone says "not on the dock"
+    drv = EdgeDriver(localized=DOCKED_244, merged=mzd.MERGED_CHARGING)
+    rc, seen, out = run_mow(drv, "map6")
+    assert rc == 0 and seen[-1] == ("done", ""), seen
+    n = [c[0] for c in drv.calls]
+    assert n.index("localize") < n.index("follow_path") < n.index("start_cov"), drv.calls
+    assert "on the dock (charging)" in out, out
+
+
+def test_a_mower_not_charging_there_starts_where_it_stands():
+    with_maps(GARDEN_244)
+    drv = EdgeDriver(localized=DOCKED_244, merged=0)
+    rc, seen, out = run_mow(drv, "map6")
+    assert rc == 0 and seen[-1] == ("done", ""), seen
+    assert ("localize",) not in drv.calls and "mow start" in out, (drv.calls, out)
+
+
+def test_charging_on_the_dock_disc_departs_once():
+    with_maps(GARDEN_244)
+    drv = EdgeDriver(localized=(0.05, 0.75), merged=mzd.MERGED_CHARGING)   # both signals say dock
+    rc, seen, out = run_mow(drv, "map6")
+    assert rc == 0 and drv.calls.count(("localize",)) == 1, drv.calls
+    assert "on the dock (charging)" in out, out
 
 
 def test_an_edge_cut_from_a_dock_beside_the_lawn_keeps_the_dock_zone_route():

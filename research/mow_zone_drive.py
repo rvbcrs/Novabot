@@ -74,6 +74,9 @@ TF_STATIC_QOS = QoSProfile(depth=10, history=QoSHistoryPolicy.KEEP_LAST)
 TASK_MODE_COVERAGE = 1
 WORK_STATUS_USER_STOP = 10
 WORK_STATUS_INIT_SUCCESS = 59  # robot_decision: init done, departure finished
+# RobotStatus.merged_work_status CHARGING: on the charger, charging or full
+# (enum in research/ros2_msg_definitions/decision_msgs/msg/RobotStatus.msg).
+MERGED_CHARGING = 4
 # Time a drive killed before its handover gets to stop and clear the
 # departure's task (Driver._release_departure). stop_mow_zone and the patrol
 # handler SIGKILL a drive 3 s after their SIGTERM; the goal cancel and the
@@ -258,6 +261,19 @@ def current_zone_slot(xy):
     return None
 
 
+def _on_dock_signal(docked, robot):
+    """Why a drive starts with the firmware's departure, for the log: on the
+    charger per RobotStatus ("charging"), no map frame yet ("no position
+    yet"), or within the dock disc ("position"). None when nothing says so.
+    Charging comes first: on LFIN2230700238 the docked pose lies outside the
+    dock disc (live, 2026-10-15)."""
+    if docked:
+        return "charging"
+    if robot is None:
+        return "no position yet"
+    return "position" if current_zone_slot(robot) == "dock" else None
+
+
 # ── Zone selection beyond slot 4 ─────────────────────────────────────────────
 # The zone selection is a decimal positional bitmask: map0 = 1, map1 = 10,
 # map2 = 100 and so on, summed for a multi-zone start. robot_decision refuses
@@ -353,6 +369,7 @@ class Driver:
         self._tf_buf = None
         self._status = None
         self._recharge = None
+        self._merged = None
         # Nachtpatrouille: koplamp-publisher, servicecliënten en het
         # points_labeled-abonnement komen lui en precies één keer: elk nieuw
         # ROS-object kost iceoryx-blokken die pas vrijkomen als het proces stopt
@@ -396,6 +413,7 @@ class Driver:
     def _on_status(self, m):
         self._status = (int(m.task_mode), int(m.work_status))
         self._recharge = int(m.recharge_status)
+        self._merged = int(m.merged_work_status)
 
     def robot_xy(self, timeout=6.0):
         """Read map -> base_link as it is now. Returns (x, y), or None when
@@ -846,6 +864,21 @@ class Driver:
                 return v
         return self._status
 
+    def docked(self, timeout=5.0):
+        """True while RobotStatus reports the mower on its charger
+        (merged_work_status CHARGING). The position is no signal for that: on
+        LFIN2230700238 the docked pose lies 1.9 m from the origin and 1.57 m
+        from the anchor, outside DOCK_RADIUS of both, so the drive skipped the
+        firmware's departure and sent nav2 goals from the dock (live,
+        2026-10-15). False when no status arrives within `timeout`."""
+        probe = self._probe()
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            rclpy.spin_once(probe, timeout_sec=0.2)
+            if self._merged is not None:
+                return self._merged == MERGED_CHARGING
+        return False
+
     def recharge_active(self, timeout=4.0):
         """True while RobotStatus reports the mower is on its way to the dock."""
         probe = self._probe()
@@ -942,7 +975,8 @@ class Driver:
         Only a departure that happened is handed over: its task showed up in
         RobotStatus within DEPARTURE_START_S, and after the handover the mower
         stands more than ON_PILE_M from the dock anchor and, if it stood on the
-        pile before the start, more than DEPARTURE_MIN_MOVE_M from there.
+        pile before the start (RobotStatus CHARGING, or within ON_PILE_M of the
+        anchor), more than DEPARTURE_MIN_MOVE_M from there.
         Otherwise None. In Walter's log (#142, custom-49) the status right
         after the start read (1, 1) or (1, 2), "no task running", so the waits
         below ended at once, the stop went out and nav2 drove the mower off the
@@ -960,7 +994,10 @@ class Driver:
         self._prepare_release()
         before = self.robot_xy(timeout=2.0)   # None without a frame yet
         anchor = _dock_anchor()
-        on_pile = bool(before and anchor and _dist(before, anchor) <= ON_PILE_M)
+        # On the pile: RobotStatus says charging, or the pose lies at the
+        # anchor. The pose alone missed a dock 1.57 m from its anchor (.244).
+        docked_before = self.docked()
+        on_pile = bool(docked_before or (before and anchor and _dist(before, anchor) <= ON_PILE_M))
         requested = handed_over = stop_sent = started = False
         try:
             requested = True   # a kill during the request itself may still start the task
@@ -1034,7 +1071,8 @@ class Driver:
         # Still on the pile, whatever it stood before (after a boot `before` is
         # None): a real 1 m departure ends well away from the anchor.
         still_on_pile = bool(anchor and _dist(pos, anchor) <= ON_PILE_M)
-        if still_on_pile or (on_pile and _dist(before, pos) <= DEPARTURE_MIN_MOVE_M):
+        if still_on_pile or (on_pile and before is not None
+                             and _dist(before, pos) <= DEPARTURE_MIN_MOVE_M):
             log(f"departure did not move the mower (before={before}, after={pos}, "
                 f"anchor={anchor}): not taking the wheels")
             return None
@@ -1646,8 +1684,9 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
     clear_parked_task(drv)
     clear_recharge(drv)
     robot = drv.robot_xy()
-    if robot is None or current_zone_slot(robot) == "dock":
-        # On the dock (no map->base_link yet after a fresh boot, or localized):
+    on_dock = _on_dock_signal(drv.docked(), robot)
+    if on_dock:
+        # On the dock (charging, no map->base_link yet after a fresh boot, or localized):
         # the departure is the firmware's own, exactly as stock (QUIT_PILE,
         # robot_decision.yaml quit_pile_distance 1.0 m). We never reverse off
         # the dock ourselves; the 2.25 m open-loop undock we used to do was not
@@ -1658,7 +1697,7 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction, edge=False):
         # task is executing" (live .244, 2026-09-14).
         anchor = _dock_anchor()
         home = _dock_zone()
-        log(f"on the dock: dock zone={home} anchor={anchor} to={to_slot} edge={edge}")
+        log(f"on the dock ({on_dock}): dock zone={home} anchor={anchor} to={to_slot} edge={edge}")
         if edge:
             if to_slot != home and not edge_route(home, to_slot):
                 log(f"edge: on the dock, no channel or touching zones {home}->{to_slot}; "
@@ -2043,7 +2082,9 @@ def do_patrol(drv, params):
     clear_recharge(drv)
     home = _dock_zone()
     robot = drv.robot_xy()
-    if robot is None or current_zone_slot(robot) == "dock":
+    on_dock = _on_dock_signal(drv.docked(), robot)
+    if on_dock:
+        log(f"on the dock ({on_dock}): dock zone={home} robot={robot}")
         if home is None:
             _patrol_end(drv, "error", "no_dock_zone")
             return 1

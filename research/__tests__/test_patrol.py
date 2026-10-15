@@ -371,12 +371,16 @@ DOCK = [(0.5, 0.7), (2, 3)]   # map0tocharge_unicom: anchor inside SQ0
 
 
 class PatrolDriver(HopDriver):
-    def __init__(self, unreachable=(), status=(0, 0)):
+    def __init__(self, unreachable=(), status=(0, 0), merged=0, at=None):
         super().__init__()
-        self._loc = None                 # on the dock after a boot: no frame yet
+        self._loc = at                   # None: on the dock after a boot, no frame yet
         self.unreachable = {tuple(p) for p in unreachable}
         self.status = status
+        self.merged = merged             # RobotStatus.merged_work_status
         self.events = []                 # headlight levels and phases, in order (run_patrol)
+
+    def docked(self, timeout=5.0):
+        return self.merged == mzd.MERGED_CHARGING
 
     def prepare_headlight(self):
         self.events.append(("light_ready",))
@@ -520,6 +524,45 @@ def test_a_running_mow_is_never_touched():
     assert not any(c[0] == "localize" for c in drv.calls)
 
 
+# Live on LFIN2230700238, 2026-10-15 13:42: docked at (-1.463, 1.218), 1.9 m
+# from the origin and 1.57 m from the anchor (0.03, 0.73). The position said
+# "not on the dock", the patrol skipped the firmware departure and nav2 aborted
+# every goal from the dock (checkpoints_unreachable). RobotStatus said CHARGING.
+DOCKED_244 = (-1.463, 1.218)
+DOCK_244 = {"map0tocharge_unicom.csv": [(0.03, 0.73), (2.0, 3.0)]}
+GARDEN_244 = dict(DOCK_244, **{"map0_work.csv": [(-3, -3), (10, -3), (10, 10), (-3, 10)]})
+
+
+def test_a_charging_mower_departs_before_patrolling_even_outside_the_dock_disc():
+    with_maps(GARDEN_244)
+    drv = PatrolDriver(merged=mzd.MERGED_CHARGING, at=DOCKED_244)
+    rc, seen, _uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert drv.calls[0] == ("localize", 1, mzd.PATROL_DEPART_CUTTERHIGH), drv.calls
+    assert any("on the dock (charging)" in line for line in out), out
+
+
+def test_docked_reads_merged_work_status_charging():
+    def status(merged):   # live while docked: work 2, recharge 9, merged 4
+        return types.SimpleNamespace(task_mode=1, work_status=2, recharge_status=9,
+                                     merged_work_status=merged)
+    for merged, expect in ((mzd.MERGED_CHARGING, True), (0, False), (2, False)):
+        drv = tf_driver(FakeTfBuffer(None))
+        with probe_spins(lambda: drv._on_status(status(merged))):
+            assert drv.docked(timeout=1.0) is expect, merged
+    drv = tf_driver(FakeTfBuffer(None))
+    with probe_spins(lambda: None):   # no RobotStatus at all
+        assert drv.docked(timeout=0.2) is False
+
+
+def test_a_patrol_not_charging_there_starts_where_it_stands():
+    with_maps(GARDEN_244)
+    drv = PatrolDriver(merged=0, at=DOCKED_244)
+    rc, seen, _uploads, _out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert not any(c[0] == "localize" for c in drv.calls), drv.calls
+
+
 def test_a_patrol_run_counts_as_a_stale_drive():
     root = tempfile.mkdtemp()
     os.makedirs(os.path.join(root, "111"))
@@ -645,10 +688,11 @@ class DepartureDriver(mzd.Driver):
     the departure starts and at `after` from then on."""
 
     def __init__(self, sigterm_in=None, fail_in=None, recharging=False,
-                 before=(0.0, 0.0), after=(1.0, 1.0)):
+                 before=(0.0, 0.0), after=(1.0, 1.0), merged=0):
         self.calls = []
         self.sigterm_in, self.fail_in, self.recharging = sigterm_in, fail_in, recharging
         self.before, self.after, self.departed = before, after, False
+        self.merged = merged   # RobotStatus.merged_work_status until the departure starts
         self._status = (mzd.TASK_MODE_COVERAGE, 30)   # the departure's init states
         self._recharge = 0
 
@@ -672,6 +716,10 @@ class DepartureDriver(mzd.Driver):
             return self.before   # the pose the departure starts from
         self._step("robot_xy")
         return self.after
+
+    def docked(self, timeout=5.0):
+        # On the charger until the departure starts: a read after start_cov says no.
+        return self.merged == mzd.MERGED_CHARGING and not self.departed
 
     def wait_status(self, pred, timeout=30.0):
         self.calls.append(("wait_status", timeout))
@@ -999,8 +1047,8 @@ class RunDriver(DepartureDriver):
     """robot_decision moves on one state per status read, through `states`,
     until a read finds what it waits for."""
 
-    def __init__(self, states, before, after):
-        super().__init__(before=before, after=after)
+    def __init__(self, states, before, after, merged=0):
+        super().__init__(before=before, after=after, merged=merged)
         self._status = (mzd.TASK_MODE_COVERAGE, 2)   # docked, no task yet
         self.states = list(states)
 
@@ -1056,6 +1104,26 @@ def test_a_departure_that_ends_on_the_pile_is_not_handed_over_even_without_a_fra
         code, pos = depart(drv, sleep=lambda s: None)
     assert code is None and pos is None, pos
     assert "departure did not move the mower" in out.getvalue(), out.getvalue()
+
+
+def test_a_departure_from_the_charger_that_did_not_move_is_not_handed_over():
+    # The pose says 1.57 m from the anchor, RobotStatus says on the charger.
+    with_maps(DOCK_244)
+    drv = RunDriver(DEPARTURE_RUN, before=DOCKED_244, after=DOCKED_244,
+                    merged=mzd.MERGED_CHARGING)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos is None, pos
+    assert "departure did not move the mower" in out.getvalue(), out.getvalue()
+
+
+def test_a_departure_from_the_charger_that_moved_hands_over():
+    with_maps(DOCK_244)
+    moved = (DOCKED_244[0] + 1.0, DOCKED_244[1])
+    drv = RunDriver(DEPARTURE_RUN, before=DOCKED_244, after=moved, merged=mzd.MERGED_CHARGING)
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos == moved, pos
 
 
 def test_a_mower_off_the_pile_is_not_held_to_the_distance():
