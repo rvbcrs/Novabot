@@ -8,7 +8,13 @@
  */
 import { pointInPolygon, type XY } from '../maps/editGeometry.js';
 
-export const PATROL_INSET_M = 0.6;
+/**
+ * How far inside the border a checkpoint lies. 0.6 m put checkpoints on
+ * occupied costmap cells (hedge overhang, the edge of the pool) on the first
+ * live patrol (2026-10-15). A point is kept only when it lies at least
+ * 0.8 * this (0.8 m) from every edge, so a strip needs to be 1.8 m wide.
+ */
+export const PATROL_INSET_M = 1.0;
 /** The mower refuses more (extended_commands.py PATROL_MAX_POINTS). */
 export const PATROL_MAX_POINTS = 60;
 /** The mower's own bound for patrol points (research/extended_commands.py validate_patrol_params). */

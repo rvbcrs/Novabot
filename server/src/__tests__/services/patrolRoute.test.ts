@@ -1,20 +1,25 @@
 // server/src/__tests__/services/patrolRoute.test.ts
 import { describe, it, expect } from 'vitest';
-import { patrolCheckpoints, buildPatrolZones, distToBoundary, PATROL_MAX_POINTS } from '../../services/patrolRoute.js';
+import { patrolCheckpoints, buildPatrolZones, distToBoundary, PATROL_MAX_POINTS, PATROL_INSET_M } from '../../services/patrolRoute.js';
 import { pointInPolygon } from '../../maps/editGeometry.js';
 
 const SQ = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
 const shift = (poly: Array<{ x: number; y: number }>, dx: number) => poly.map(p => ({ x: p.x + dx, y: p.y }));
 const row = (zone: string, poly: Array<{ x: number; y: number }>) => ({ canonical_name: zone, map_area: JSON.stringify(poly) });
 const key = (ps: Array<{ x: number; y: number }>) => ps.map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).sort();
+/** A 20 m long strip `width` metres wide. */
+const strip = (width: number) => [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: width }, { x: 0, y: width }];
 
 describe('patrol checkpoints', () => {
-  it('lie inside the zone, 0.6 m from the border, about every spacing metres', () => {
+  // First live patrol, 2026-10-15: checkpoints 0.6 m inside the border were
+  // occupied costmap cells (hedge overhang, pool edge).
+  it('lie inside the zone, 1.0 m from the border, about every spacing metres', () => {
+    expect(PATROL_INSET_M).toBe(1.0);
     const pts = patrolCheckpoints(SQ, 5);
     expect(pts).toHaveLength(8);
     for (const p of pts) {
       expect(pointInPolygon(p, SQ)).toBe(true);
-      expect(distToBoundary(p, SQ)).toBeCloseTo(0.6, 5);
+      expect(distToBoundary(p, SQ)).toBeCloseTo(1.0, 5);
     }
   });
 
@@ -22,9 +27,28 @@ describe('patrol checkpoints', () => {
     expect(key(patrolCheckpoints([...SQ].reverse(), 5))).toEqual(key(patrolCheckpoints(SQ, 5)));
   });
 
-  it('a strip narrower than twice the inset gets no checkpoint', () => {
-    const strip = [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 1 }, { x: 0, y: 1 }];
-    expect(patrolCheckpoints(strip, 3)).toEqual([]);
+  // A point is kept only when it lies at least 0.8 * inset (0.8 m) from every
+  // edge, so the opposite border of a strip must be 0.8 m beyond the checkpoint.
+  it('a strip narrower than 1.8 m (the inset plus 0.8 m) gets no checkpoint', () => {
+    for (const width of [1, 1.5, 1.7]) {
+      expect(patrolCheckpoints(strip(width), 3), `${width} m wide`).toEqual([]);
+    }
+  });
+
+  it('a 1.5 m wide strip yields no checkpoints while a 3 m wide one does', () => {
+    expect(patrolCheckpoints(strip(1.5), 3)).toEqual([]);
+    const wide = patrolCheckpoints(strip(3), 3);
+    expect(wide.length).toBeGreaterThan(0);
+    for (const p of wide) {
+      expect(pointInPolygon(p, strip(3))).toBe(true);
+      expect(distToBoundary(p, strip(3))).toBeGreaterThanOrEqual(0.8);
+    }
+  });
+
+  it('a 1.9 m wide strip is the narrowest that keeps its checkpoints: the margin is 0.8 m, not the old 0.48 m', () => {
+    const pts = patrolCheckpoints(strip(1.9), 3);
+    expect(pts.length).toBeGreaterThan(0);
+    for (const p of pts) expect(distToBoundary(p, strip(1.9))).toBeGreaterThanOrEqual(0.8);
   });
 
   it('a degenerate polygon gets none', () => {
