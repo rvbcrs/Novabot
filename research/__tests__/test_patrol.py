@@ -1126,6 +1126,16 @@ def test_a_departure_from_the_charger_that_moved_hands_over():
     assert code is None and pos == moved, pos
 
 
+def test_a_charging_mower_without_a_frame_before_hands_over_once_it_moved():
+    # The usual start after a reboot on the dock: charging, no map frame yet.
+    # Nothing to compare the pose after the handover with; only the anchor counts.
+    with_maps(DOCK_244)
+    moved = (DOCKED_244[0] + 1.0, DOCKED_244[1])
+    drv = RunDriver(DEPARTURE_RUN, before=None, after=moved, merged=mzd.MERGED_CHARGING)
+    code, pos = depart(drv, sleep=lambda s: None)
+    assert code is None and pos == moved, pos
+
+
 def test_a_mower_off_the_pile_is_not_held_to_the_distance():
     # A mow restarted right after a stopped departure: inside the 1.2 m dock
     # disc but 0.9 m from the anchor. Off the pile the firmware's departure

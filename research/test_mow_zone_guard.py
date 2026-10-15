@@ -92,6 +92,9 @@ class DockDrv(FakeDrv):
     def robot_xy(self, timeout=0):
         return (0.2, 0.1)
 
+    def docked(self, timeout=5.0):
+        return False   # not charging per RobotStatus: the position (0.2, 0.1) decides
+
     def undock(self, *a, **k):
         self.calls.append("undock")
 
