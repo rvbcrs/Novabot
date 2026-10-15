@@ -957,6 +957,118 @@ def test_a_sigterm_while_the_robot_reports_a_recharge_does_not_stop_it():
     assert "stop_task" not in names(drv) and "quit_mapping_mode" not in names(drv), drv.calls
 
 
+# ── A recharge runs from recharge_status 50 up (robot_decision rechargeDeal) ─
+# rechargeDeal sets 50 at the start and 51..59 before the AutoCharging goal;
+# from 90 the drive to the pile, the search and the alignment (191-193 seen
+# mid-dock). It ends below 50: 9 FINISHED, 2 CANCELLED, 1 FAILED (which stays),
+# 0 WAIT. Counting 1..8 as driving missed every real drive home and took a
+# failed one for one: each drive start after it waited 15 s for a FAILED that
+# never changes.
+
+def status_driver(recharge, cls=None):
+    """A real Driver whose RobotStatus reads recharge_status `recharge` (None: no status)."""
+    drv = (cls or mzd.Driver)(FakeNode(misses=0))
+    drv._probe_node = object()        # the probe exists already: no node is made
+    drv._recharge = recharge
+    return drv
+
+
+def test_a_recharge_runs_from_recharge_status_50_up():
+    with probe_spins(lambda: None):
+        for value, running in ((0, False), (1, False), (2, False), (9, False), (10, False), (49, False),
+                               (50, True), (53, True), (59, True), (90, True), (191, True), (193, True)):
+            assert status_driver(value).recharge_active(timeout=0.5) is running, value
+        assert status_driver(None).recharge_active(timeout=0.2) is False   # no RobotStatus at all
+
+
+class CancelDriver(mzd.Driver):
+    """robot_decision as clear_recharge sees it: a cancel ends the recharge as
+    CANCELLED (2)."""
+    cancels = 0
+
+    def wait_status(self, pred, timeout=30.0):
+        return (0, 0)
+
+    def cancel_recharge(self):
+        self.cancels += 1
+        self._recharge = 2
+        return True
+
+
+def clear_with(recharge):
+    """clear_recharge against recharge_status `recharge`: (driver, sleeps)."""
+    drv = status_driver(recharge, CancelDriver)
+    slept = []
+    real = mzd.time
+    mzd.time = types.SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=slept.append)
+    try:
+        with probe_spins(lambda: None), contextlib.redirect_stdout(io.StringIO()):
+            mzd.clear_recharge(drv)
+    finally:
+        mzd.time = real
+    return drv, slept
+
+
+def test_a_failed_recharge_is_nothing_to_break_off_before_a_drive():
+    drv, slept = clear_with(1)          # Recharge: FAILED stays at 1
+    assert drv.cancels == 0 and slept == [], (drv.cancels, slept)
+
+
+def test_a_drive_home_is_broken_off_before_a_drive():
+    for value in (53, 191):
+        drv, slept = clear_with(value)
+        assert drv.cancels == 1 and slept == [], (value, drv.cancels, slept)   # it let go at once
+
+
+class DepartureDuringRecharge(DepartureDriver):
+    """The departure's release with the real recharge test: RobotStatus reads
+    recharge_status `recharge`."""
+    recharge_active = mzd.Driver.recharge_active
+
+    def __init__(self, recharge, **kw):
+        super().__init__(**kw)
+        self._probe_node = object()
+        self._recharge = recharge
+
+
+def test_the_release_leaves_a_drive_home_alone_and_stops_after_a_failed_recharge():
+    for recharge, left_alone in ((191, True), (53, True), (1, False), (2, False), (9, False)):
+        drv = DepartureDuringRecharge(recharge, sigterm_in="robot_xy")
+        with probe_spins(lambda: None):
+            code, _pos = depart(drv)
+        assert code == 143, (recharge, code)
+        assert ("stop_task" not in names(drv)) is left_alone, (recharge, drv.calls)
+
+
+class CheckDriver(CancelDriver):
+    """check_mow's view of the mower: localized inside map0, map_server reloads."""
+
+    def robot_xy(self, timeout=6.0):
+        return (5.0, 5.0)
+
+    def reload_map(self, map_yaml=None):
+        return True, "ok"
+
+
+def firmware_check(recharge):
+    """check_mow's "firmware rijdt niet zelf" line at recharge_status `recharge`."""
+    with_maps({"map0_work.csv": SQ0})
+    drv = status_driver(recharge, CheckDriver)
+    out = io.StringIO()
+    real_phase, mzd.phase = mzd.phase, (lambda *a: None)
+    try:
+        with probe_spins(lambda: None), contextlib.redirect_stdout(out):
+            mzd.check_mow(drv, "map0")
+    finally:
+        mzd.phase = real_phase
+    return [line for line in out.getvalue().splitlines() if "firmware rijdt niet zelf" in line]
+
+
+def test_check_mow_names_a_drive_home_but_not_a_failed_recharge():
+    assert [line[:9] for line in firmware_check(1)] == ["CHECK ok "], firmware_check(1)
+    assert [line[:10] for line in firmware_check(191)] == ["CHECK FAIL"], firmware_check(191)
+
+
 def test_a_second_sigterm_does_not_cut_the_release_short():
     # stop_mow_zone sends SIGTERM, and pkill another one 3 s later: the release
     # holds signals, so the second one cannot stop it half way.

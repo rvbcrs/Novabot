@@ -77,6 +77,19 @@ WORK_STATUS_INIT_SUCCESS = 59  # robot_decision: init done, departure finished
 # RobotStatus.merged_work_status CHARGING: on the charger, charging or full
 # (enum in research/ros2_msg_definitions/decision_msgs/msg/RobotStatus.msg).
 MERGED_CHARGING = 4
+# RobotStatus.recharge_status from this value up: a recharge runs and the
+# firmware has, or is about to take, the wheels. robot_decision's rechargeDeal
+# sets 50 at the start and 51..59 before its AutoCharging goal; from 90 the drive
+# to the pile, the visual search and the alignment (191-193 seen mid-dock). A
+# recharge ends below 50: 9 FINISHED, 2 CANCELLED, 1 FAILED (which stays until
+# the next task), 0 WAIT. The values are robot_decision's work-status enum, the
+# same split task_parked uses (50 and up live).
+RECHARGE_RUNNING = 50
+
+
+def recharge_running(recharge_status):
+    """True when RobotStatus.recharge_status says a recharge runs."""
+    return recharge_status is not None and int(recharge_status) >= RECHARGE_RUNNING
 # Time a drive killed before its handover gets to stop and clear the
 # departure's task (Driver._release_departure). stop_mow_zone and the patrol
 # handler SIGKILL a drive 3 s after their SIGTERM; the goal cancel and the
@@ -880,13 +893,16 @@ class Driver:
         return False
 
     def recharge_active(self, timeout=4.0):
-        """True while RobotStatus reports the mower is on its way to the dock."""
+        """True while RobotStatus reports a recharge running (recharge_status
+        RECHARGE_RUNNING and up): the firmware drives to the dock or is about
+        to. A recharge that ended, FAILED (1) included, is not active. False
+        when no status arrives within `timeout`."""
         probe = self._probe()
         deadline = time.time() + timeout
         while time.time() < deadline:
             rclpy.spin_once(probe, timeout_sec=0.2)
             if self._recharge is not None:
-                return self._recharge in RECHARGE_DRIVING
+                return recharge_running(self._recharge)
         return False
 
     def _prepare_release(self):
@@ -928,8 +944,10 @@ class Driver:
         stop_mow_zone, or an exception), stop and clear that task here, as the
         handover does: otherwise robot_decision runs it to its end, which mows
         the dock zone (at night, for a patrol), or it stays parked and a later
-        Resume mows. A recharge that go_pile / go_to_charge already started is
-        left alone: that is where the mower should go now.
+        Resume mows. A recharge that go_pile / go_to_charge already started
+        (recharge_active) is left alone: that is where the mower should go now.
+        The departure itself never reads as one: a coverage start keeps
+        recharge_status at 0.
 
         The stop is queued behind the init states, so there is no waiting for it
         to land here. Every call is bounded so the whole release fits well
@@ -1522,13 +1540,11 @@ def _cover(drv, map_ids, cutterhigh, direction):
     return 0 if ok else 1
 
 
-# recharge_status-waarden waarbij de firmware onderweg is naar het dock en dus
-# de wielen heeft. 0 = WAIT, 9 = opgeladen/klaar; daartussen rijdt hij.
-RECHARGE_DRIVING = (1, 2, 3, 4, 5, 6, 7, 8)
-
-
 def clear_recharge(drv):
-    """Break off a recharge the firmware started itself, and wait until it lets go."""
+    """Break off a recharge the firmware runs itself (Driver.recharge_active:
+    recharge_status RECHARGE_RUNNING and up), and wait until it lets go. One
+    that ended is nothing to break off: a FAILED one stays at 1, and waiting
+    for that to change cost every drive start after it 15 s."""
     st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
     if st is None:
         return
