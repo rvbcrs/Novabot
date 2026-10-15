@@ -580,16 +580,67 @@ def test_a_checkpoint_refused_at_once_is_tried_again_further_in_and_looked_at_th
     assert [u[0] for u in uploads] == [1] and skipped_lines(out) == [], out
 
 
-def test_a_fallback_outside_the_zone_is_not_tried_and_the_checkpoint_is_skipped():
+STRIP = [(0, 0), (30, 0), (30, 4), (0, 4)]                 # 30 x 4 m along a hedge
+THIN = [(0, 0), (10, 0), (10, 0.5), (0, 0.5)]              # 0.5 m wide
+THIN_L = [(0, 0), (10, 0), (10, 0.5), (0.5, 0.5), (0.5, 10), (0, 10)]   # its middle (2.7, 2.7) lies outside
+
+
+def test_a_checkpoint_along_a_long_hedge_steps_straight_away_from_it():
+    # Towards the middle of the strip, (15, 2), the step ran along the hedge:
+    # 0.06 m further from it. Away from the nearest border point it is 0.6 m.
+    with_maps({"map0_work.csv": STRIP, "map0tocharge_unicom.csv": DOCK})
+    drv = CheckpointDriver(occupied=[(5, 1)])
+    rc, seen, _uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[5, 1]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert drv.goals == [(5, 1), (5, 1.6)], drv.goals
+
+
+def test_an_inner_corner_checkpoint_of_an_l_steps_into_the_zone():
+    # Towards the middle of the L, (3.2, 3.2), it would leave the zone at (2.22, 2.22).
     with_maps({"map0_work.csv": L0, "map0tocharge_unicom.csv": DOCK})
     drv = CheckpointDriver(occupied=[(1.8, 1.8)])
-    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[1.8, 1.8], [5, 1]]}])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[1.8, 1.8]]}])
     assert rc == 0 and seen[-1] == ("done",), seen
-    # 0.6 m towards the middle of the L is (2.22, 2.22): outside it, never sent
-    assert drv.goals == [(1.8, 1.8), (5, 1)], drv.goals
+    assert drv.goals == [(1.8, 1.8), (1.38, 1.38)], drv.goals
+    assert mzd.point_in_poly(1.38, 1.38, L0) and [u[0] for u in uploads] == [1]
+
+
+def test_where_the_step_off_the_border_leaves_the_zone_the_centroid_step_is_tried():
+    # 0.1 m from the edge of a 0.5 m wide zone: 0.6 m away from it is outside.
+    with_maps({"map0_work.csv": THIN, "map0tocharge_unicom.csv": DOCK})
+    drv = CheckpointDriver(occupied=[(2, 0.1)])
+    rc, seen, _uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[2, 0.1]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert drv.goals == [(2, 0.1), (2.6, 0.13)], drv.goals     # towards (5, 0.25)
+
+
+def test_a_fallback_outside_the_zone_is_not_tried_and_the_checkpoint_is_skipped():
+    # Both steps leave a thin L: off the border to (5, 0.7), towards its middle to (4.6, 0.55).
+    with_maps({"map0_work.csv": THIN_L, "map0tocharge_unicom.csv": DOCK})
+    drv = CheckpointDriver(occupied=[(5, 0.1)])
+    rc, seen, uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[5, 0.1], [8, 0.25]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    assert drv.goals == [(5, 0.1), (8, 0.25)], drv.goals
     assert skipped_lines(out) == [{"zone": "map0", "seq": 1, "reason": "checkpoint_unreachable"}], out
     assert [u[0] for u in uploads] == [2]
     assert any("checkpoint 1 skipped" in line for line in out), out
+
+
+class StaleCheckpointDriver(CheckpointDriver):
+    """No fresh pose comes back once the patrol drives."""
+
+    def robot_xy(self, timeout=6.0):
+        return None if self.goals else self._loc
+
+
+def test_without_a_fresh_pose_a_checkpoint_is_reported_where_nav2_got_to():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = StaleCheckpointDriver(occupied=[(1, 5)])
+    rc, seen, _uploads, out = run_checkpoints(drv, [{"zone": "map0", "points": [[1, 5], [7, 7]]}])
+    assert rc == 0 and seen[-1] == ("done",), seen
+    # The retry's point, then the goal itself; not the refused (1, 5), nor
+    # (1.0, 1.0), where the patrol stood before it drove.
+    assert [(c["x"], c["y"]) for c in looked_at(out)] == [(1.6, 5), (7, 7)], out
 
 
 def test_an_inward_retry_that_fails_too_is_tried_once_and_the_checkpoint_skipped():
@@ -1446,35 +1497,45 @@ class FakeGoalHandle:
 
 
 @contextlib.contextmanager
-def fake_actions(handle):
-    """nav2's NavigateToPose action, accepting every goal with `handle`."""
+def fake_actions(handle, send=Done):
+    """nav2's NavigateToPose and FollowPath actions, accepting every goal with
+    `handle`; send_goal_async answers with send(handle). Yields the action
+    clients made, as (action name, client)."""
+    made = []
+
     class Client:
         def __init__(self, node, action, name):
-            pass
+            made.append((name, self))
 
         def wait_for_server(self, timeout_sec=0.0):
             return True
 
         def send_goal_async(self, goal):
-            return Done(handle)
+            return send(handle)
 
-    def goal():
-        ns = types.SimpleNamespace
-        return ns(pose=ns(header=ns(frame_id=""), pose=ns(position=ns(x=0.0, y=0.0),
-                                                          orientation=ns(z=0.0, w=1.0))))
+    ns = types.SimpleNamespace
 
-    real = (mzd.ActionClient, mzd.NavigateToPose, getattr(mzd.rclpy, "spin_until_future_complete", None))
+    def pose():
+        return ns(header=ns(frame_id=""), pose=ns(position=ns(x=0.0, y=0.0), orientation=ns(z=0.0, w=1.0)))
+
+    names = ("ActionClient", "NavigateToPose", "FollowPath", "Path", "PoseStamped")
+    real = {name: getattr(mzd, name) for name in names}
+    real_spin = getattr(mzd.rclpy, "spin_until_future_complete", None)
     mzd.ActionClient = Client
-    mzd.NavigateToPose = types.SimpleNamespace(Goal=goal)
+    mzd.NavigateToPose = ns(Goal=lambda: ns(pose=pose()))
+    mzd.FollowPath = ns(Goal=lambda: ns(path=None, controller_id="", goal_checker_id=""))
+    mzd.Path = lambda: ns(header=ns(frame_id=""), poses=[])
+    mzd.PoseStamped = pose
     mzd.rclpy.spin_until_future_complete = lambda node, fut, timeout_sec=None: None
     try:
-        yield
+        yield made
     finally:
-        mzd.ActionClient, mzd.NavigateToPose = real[0], real[1]
-        if real[2] is None:
+        for name, value in real.items():
+            setattr(mzd, name, value)
+        if real_spin is None:
             del mzd.rclpy.spin_until_future_complete
         else:
-            mzd.rclpy.spin_until_future_complete = real[2]
+            mzd.rclpy.spin_until_future_complete = real_spin
 
 
 def test_a_drive_holds_the_goal_nav2_took_until_its_result_arrives():
@@ -1483,13 +1544,51 @@ def test_a_drive_holds_the_goal_nav2_took_until_its_result_arrives():
         drv = mzd.Driver(FakeNode(misses=0))
         assert drv.nav_to(1.0, 2.0) == (True, "nav_to_pose_status_4")
         assert drv.cancel_own_goal() is False and finished.cancelled == 0   # nothing left to cancel
-    hanging = FakeGoalHandle(result=None)                                 # no result within the timeout
-    with fake_actions(hanging):
+
+
+def test_a_goal_that_outlives_its_wait_is_cancelled_before_the_next_one_replaces_it():
+    # A 180 s checkpoint timeout returned with the goal still driving; the next
+    # goal then took its place in _goal, so nothing could cancel it any more.
+    for drive, timed_out in ((lambda drv: drv.nav_to(1.0, 2.0), "nav_to_pose timeout"),
+                             (lambda drv: drv.follow_path([(0.0, 0.0), (1.0, 0.0)]), "no result (timeout)")):
+        hanging = FakeGoalHandle(result=None)                 # no result within the wait
+        with fake_actions(hanging), contextlib.redirect_stdout(io.StringIO()):
+            drv = mzd.Driver(FakeNode(misses=0))
+            assert drive(drv) == (False, timed_out)
+            assert hanging.cancelled == 1, timed_out            # by its own id, at once
+            assert drv.cancel_own_goal() is False and hanging.cancelled == 1, timed_out
+
+
+class LateAnswer:
+    """send_goal_async's future: no answer within the send's wait, the goal
+    handle after it."""
+
+    def __init__(self, handle):
+        self.handle, self.reads = handle, 0
+
+    def done(self):
+        return self.reads > 0
+
+    def result(self):
+        self.reads += 1
+        return None if self.reads == 1 else self.handle
+
+
+def test_a_goal_nav2_takes_only_after_the_send_wait_is_cancelled_too():
+    handle = FakeGoalHandle()
+    with fake_actions(handle, send=LateAnswer), contextlib.redirect_stdout(io.StringIO()):
         drv = mzd.Driver(FakeNode(misses=0))
-        assert drv.nav_to(1.0, 2.0) == (False, "nav_to_pose timeout")
-        # On its way out the drive cancels that goal, by its own id, once.
-        assert drv.cancel_own_goal() is True and hanging.cancelled == 1
-        assert drv.cancel_own_goal() is False and hanging.cancelled == 1
+        assert drv.nav_to(1.0, 2.0)[0] is False
+        assert handle.cancelled == 1 and drv.cancel_own_goal() is False
+
+
+def test_repeated_navs_reuse_one_client_per_action():
+    finished = FakeGoalHandle(result=types.SimpleNamespace(status=4))
+    with fake_actions(finished) as made:
+        drv = mzd.Driver(FakeNode(misses=0))
+        for _ in range(3):
+            assert drv.nav_to(1.0, 2.0)[0] and drv.follow_path([(0.0, 0.0), (1.0, 0.0)])[0]
+    assert [name for name, _client in made] == ["/navigate_to_pose", "/follow_path"], made
 
 
 def test_a_goal_still_being_sent_is_cancelled_once_nav2_took_it():

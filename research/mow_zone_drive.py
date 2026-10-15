@@ -395,6 +395,7 @@ class Driver:
         # sent, so a drive that is killed cancels its own goal (cancel_own_goal).
         self._goal = None
         self._goal_send = None
+        self._actions = {}   # one action client per action (_action)
 
     def spin(self, sec):
         rclpy.spin_once(self.node, timeout_sec=sec)
@@ -737,7 +738,7 @@ class Driver:
         global planner is for, and over a few metres inside one zone it has no
         room to invent a route across the garden.
         """
-        ac = ActionClient(self.node, NavigateToPose, "/navigate_to_pose")
+        ac = self._action(NavigateToPose, "/navigate_to_pose")
         if not ac.wait_for_server(timeout_sec=8.0):
             return False, "no navigate_to_pose server"
         goal = NavigateToPose.Goal()
@@ -749,14 +750,31 @@ class Driver:
         goal.pose.pose.orientation.w = math.cos(th / 2.0)
         gh = self._send_goal(ac, goal)
         if gh is None or not gh.accepted:
+            self._drop_goal()
             return False, "nav_to_pose goal rejected"
         res_fut = gh.get_result_async()
         rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=timeout)
         r = res_fut.result()
         if r is None:
-            return False, "nav_to_pose timeout"   # still held: cancelled on the way out
+            self._drop_goal()
+            return False, "nav_to_pose timeout"
         self._goal = None
         return (r.status == 4), f"nav_to_pose_status_{r.status}"
+
+    def _action(self, action_type, name):
+        """One cached action client per action, like _client for services. A
+        client made per goal is never destroyed and keeps reading that
+        action's feedback and status: a patrol made 60 to 120 of them."""
+        ac = self._actions.get(name)
+        if ac is None:
+            ac = self._actions[name] = ActionClient(self.node, action_type, name)
+        return ac
+
+    def _drop_goal(self):
+        """A goal that outlived its wait (no result, or no answer to the send)
+        may still drive: cancel it by its own id now. The next goal takes its
+        place in _goal / _goal_send, and from then on nothing could."""
+        self.cancel_own_goal(timeout=2.0)
 
     def _send_goal(self, ac, goal):
         """Send a nav2 goal and remember it as this drive's own until its result
@@ -775,7 +793,8 @@ class Driver:
     def cancel_own_goal(self, timeout=0.5):
         """Cancel the nav2 goal this drive sent and still holds, by its own goal
         id, so never anybody else's (the go_to_charge that may follow a stop).
-        Runs on the drive's way out, also after a SIGTERM. True when it cancelled one."""
+        Runs on the drive's way out, also after a SIGTERM, and when a goal
+        outlived its wait (_drop_goal). True when it cancelled one."""
         gh, pending = self._goal, self._goal_send
         self._goal = self._goal_send = None
         if gh is None and pending is not None:
@@ -785,7 +804,7 @@ class Driver:
             return False
         fut = gh.cancel_goal_async()
         rclpy.spin_until_future_complete(self.node, fut, timeout_sec=timeout)
-        log("cancelled our own nav2 goal on the way out")
+        log("cancelled our own nav2 goal")
         return True
 
     def follow_path(self, pts):
@@ -806,7 +825,7 @@ class Driver:
             ps.pose.orientation.z = math.sin(yaw / 2.0)
             ps.pose.orientation.w = math.cos(yaw / 2.0)
             path.poses.append(ps)
-        ac = ActionClient(self.node, FollowPath, "/follow_path")
+        ac = self._action(FollowPath, "/follow_path")
         if not ac.wait_for_server(timeout_sec=8.0):
             return False, "no follow_path server"
         goal = FollowPath.Goal()
@@ -815,12 +834,14 @@ class Driver:
         goal.goal_checker_id = "general_goal_checker"
         gh = self._send_goal(ac, goal)
         if gh is None or not gh.accepted:
+            self._drop_goal()
             return False, "goal rejected"
         res_fut = gh.get_result_async()
         rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=600.0)
         res = res_fut.result()
         if res is None:
-            return False, "no result (timeout)"   # still held: cancelled on the way out
+            self._drop_goal()
+            return False, "no result (timeout)"
         self._goal = None
         # GoalStatus.STATUS_SUCCEEDED == 4; anything else (ABORTED 6, CANCELED 5)
         # means the controller did not finish the path (e.g. "Failed to make
@@ -1292,14 +1313,22 @@ def _dock_anchor():
     return _dock_channel()[1]
 
 
-def _dist_to_poly(p, poly):
-    """Distance from a point to a polygon's boundary."""
-    best = float("inf")
-    for a, b in zip(poly, poly[1:] + poly[:1]):
+def _nearest_on_border(p, poly):
+    """The point of a polygon's boundary closest to p; None for no polygon."""
+    best = None
+    for a, b in zip(poly, list(poly[1:]) + list(poly[:1])):
         dx, dy = b[0] - a[0], b[1] - a[1]
         t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)))
-        best = min(best, _dist(p, (a[0] + t * dx, a[1] + t * dy)))
+        q = (a[0] + t * dx, a[1] + t * dy)
+        if best is None or _dist(p, q) < _dist(p, best):
+            best = q
     return best
+
+
+def _dist_to_poly(p, poly):
+    """Distance from a point to a polygon's boundary."""
+    q = _nearest_on_border(p, poly)
+    return float("inf") if q is None else _dist(p, q)
 
 
 def _dock_zone():
@@ -2028,8 +2057,8 @@ PATROL_MAX_NAV_FAILS = 5
 # planner found it in an occupied cell. Live on LFIN2230700238, 2026-10-15
 # 14:46: "goal is occupied with no tolerance", aborted within ~1 s; the
 # checkpoints lay 0.6 m inside the border (hedge overhang, pool edge) in a frame
-# 1.57 m off its map. Such a goal gets one retry PATROL_INWARD_M further
-# towards the middle of its zone. A goal driven towards and then given up on
+# 1.57 m off its map. Such a goal gets one retry PATROL_INWARD_M further into
+# its zone (_inward_point). A goal driven towards and then given up on
 # (~30 s of driving, TEB "trajectory not feasible") gets none.
 PATROL_FAST_ABORT_S = 8.0
 PATROL_INWARD_M = 0.6
@@ -2110,25 +2139,31 @@ def _poly_centroid(poly):
 
 
 def _inward_point(x, y, poly, step=PATROL_INWARD_M):
-    """`step` metres from (x, y) towards the centroid of `poly`, or None when
-    that point lies outside the polygon (a concave zone) or there is no
-    centroid to go towards."""
-    c = _poly_centroid(poly)
-    if c is None:
+    """`step` metres further into `poly` from (x, y): straight away from the
+    nearest point of its border, and only when that does not land inside the
+    polygon (a zone narrower than the step there) towards its centroid. The
+    centroid alone ran along the border: in a 30 x 4 m strip along a hedge it
+    moved a checkpoint 0.06 m from it, and at the inner corner of an L out of
+    the zone. None when neither lands inside."""
+    if len(poly) < 3:
         return None
-    d = math.hypot(c[0] - x, c[1] - y)
-    if d < 1e-6:
-        return None
-    p = (x + (c[0] - x) / d * step, y + (c[1] - y) / d * step)
-    return p if point_in_poly(p[0], p[1], poly) else None
+    border, middle = _nearest_on_border((x, y), poly), _poly_centroid(poly)
+    for dx, dy in ((x - border[0], y - border[1]), (middle[0] - x, middle[1] - y)):
+        d = math.hypot(dx, dy)
+        if d < 1e-6:
+            continue
+        p = (x + dx / d * step, y + dy / d * step)
+        if point_in_poly(p[0], p[1], poly):
+            return p
+    return None
 
 
 def _patrol_drive_to(drv, poly, seq, x, y):
     """Drive to checkpoint `seq` at (x, y) in a zone with work polygon `poly`.
     Returns (ok, why, goal), goal being where nav2 was sent last. A goal nav2
     gives up on within PATROL_FAST_ABORT_S of wall time was never driven (an
-    occupied cell) and gets one retry PATROL_INWARD_M towards the middle of
-    the zone, when that point still lies in it."""
+    occupied cell) and gets one retry PATROL_INWARD_M further into the zone
+    (_inward_point), when that point still lies in it."""
     t0 = time.monotonic()
     ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
     if ok:
@@ -2157,8 +2192,9 @@ def do_patrol(drv, params):
     Checkpoints: a point outside every zone is never driven. A goal nav2 gives
     up on within PATROL_FAST_ABORT_S was never driven (an occupied cell: a
     hedge overhang, a pool edge, a frame that is off) and gets one retry
-    PATROL_INWARD_M towards the centroid of its zone's work polygon, when that
-    point still lies in the polygon; the mower looks where it got to. A goal
+    PATROL_INWARD_M into its zone's work polygon, away from the nearest border
+    point or else towards the centroid, when that point still lies in the
+    polygon; the mower looks where it got to. A goal
     given up on after driving gets no retry. A checkpoint that still fails is
     skipped: a log line, a SKIPPED line (zone, seq, reason
     checkpoint_unreachable) the handler forwards as patrol_skipped, and on to
