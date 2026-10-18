@@ -34,7 +34,7 @@ for mod, attrs in {
     "decision_msgs.srv": ["StartCoverageTask"],
     "decision_msgs.msg": ["RobotStatus"],
     "std_srvs.srv": ["Trigger", "SetBool", "Empty"],
-    "geometry_msgs.msg": ["PoseStamped", "Point", "Twist"],
+    "geometry_msgs.msg": ["PoseStamped", "PointStamped", "Point", "Twist"],
     "nav_msgs.msg": ["Path", "Odometry", "OccupancyGrid"],
     "nav2_msgs.action": ["FollowPath", "NavigateToPose"],
     "nav2_msgs.srv": ["LoadMap"],
@@ -435,6 +435,53 @@ def run_patrol(drv, zones):
     finally:
         mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint = real
     return rc, seen, uploads, buf.getvalue().splitlines()
+
+
+class SettleDriver(PatrolDriver):
+    """The frame after the departure: |/map_utm - map pose| per measurement,
+    in order; the last value repeats."""
+    def __init__(self, residuals, **kw):
+        super().__init__(**kw)
+        self.residuals = list(residuals)
+
+    def frame_residual(self, timeout=6.0):
+        r = self.residuals.pop(0) if len(self.residuals) > 1 else self.residuals[0]
+        return r, 200
+
+
+# Live LFIN2230700238, 2026-10-18: straight after the departure the map pose
+# sat 1.3 m from GPS, the costmap's trampoline 1.3 m from the real one, and
+# the patrol lost all five checkpoints. A short leg settles the frame first.
+def test_patrol_settles_the_frame_before_the_first_checkpoint():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = SettleDriver([1.3, 0.2], merged=mzd.MERGED_CHARGING)
+    rc, seen, uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[7, 7]]}])
+    assert rc == 0, (rc, seen)
+    navs = [c for c in drv.calls if c[0] == "nav_to"]
+    assert len(navs) == 2 and navs[1][1:] == (7, 7), navs          # one settle leg, then the checkpoint
+    leg = navs[0][1:]
+    assert mzd.point_in_poly(leg[0], leg[1], SQ0) and mzd._dist_to_poly(leg, SQ0) >= 1.5, leg
+    assert len(uploads) == 1
+
+
+def test_patrol_ends_when_the_frame_never_settles():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = SettleDriver([1.3], merged=mzd.MERGED_CHARGING)
+    rc, seen, uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[7, 7]]}])
+    assert rc == 1 and ("error", "frame_not_settled") in seen, seen
+    assert len([c for c in drv.calls if c[0] == "nav_to"]) == mzd.PATROL_SETTLE_LEGS
+    assert uploads == []
+
+
+def test_settle_target_keeps_clear_of_borders_and_obstacles():
+    robot, middle = (1.0, 1.9), (5.0, 5.0)
+    t = mzd._settle_target(robot, SQ0, [], middle)
+    assert t is not None and mzd._dist_to_poly(t, SQ0) >= 1.5
+    assert abs(((t[0] - robot[0]) ** 2 + (t[1] - robot[1]) ** 2) ** 0.5 - 3.0) < 1e-6
+    box = [(2, 3), (4, 3), (4, 5), (2, 5)]        # on the way to the middle: no leg at all
+    assert mzd._settle_target(robot, SQ0, [box], middle) is None
+    far = [(7, 7), (8, 7), (8, 8), (7, 8)]        # an obstacle elsewhere changes nothing
+    assert mzd._settle_target(robot, SQ0, [far], middle) == t
 
 
 def test_patrol_departs_like_stock_and_looks_at_every_checkpoint():

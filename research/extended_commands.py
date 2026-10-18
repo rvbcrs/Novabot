@@ -3423,9 +3423,17 @@ def _runtime_robot_idle(msg):
     return int(msg["merged_work_status"]) in (0, 4, 5) and int(msg["error_status"]) in (0, 8)
 
 
+# The localisation status is published at exactly 1 Hz (measured on two
+# mowers), so 1.5 s left half a second: one late message stopped a dock
+# measurement. 2.5 s allows one missed message; odometry (0.5 s) and the map
+# pose (0.75 s) keep guarding the motion itself.
+COMBINATION_STATUS_MAX_AGE = 2.5
+# How long a dock movement waits, standing still, for fresh telemetry.
+MOTION_START_WAIT_S = 15
+
 _MARKER_HEALTH_TOPICS = (
     ("/bestpos_parsed_data", _marker_rtk_fixed, 1.5),
-    ("/robot_combination_localization/combination_status", lambda d: int(d["status"]) == 200, 1.5),
+    ("/robot_combination_localization/combination_status", lambda d: int(d["status"]) == 200, COMBINATION_STATUS_MAX_AGE),
     ("/robot_decision/robot_status", _marker_robot_idle, 1.5),
     # Stock ChassisIncident is published every 2s with a zero source stamp.
     ("/chassis_incident", _marker_lora_healthy, 3),
@@ -5669,7 +5677,7 @@ def handle_dock_measurement_move(params, respond):
         # acceptable there; every later movement and measurement needs Fixed.
         if (quality not in ((4, 5) if action == "reverse" and from_dock else (4,)) or
                 not math.isfinite(age) or not 0 <= age <= 3 or
-                int(read("/robot_combination_localization/combination_status", 1.5)["status"]) != 200):
+                int(read("/robot_combination_localization/combination_status", COMBINATION_STATUS_MAX_AGE)["status"]) != 200):
             raise ValueError("RTK corrections or localization lost during motion")
         odom = read("/robot_combination_localization/odom", .5)
         stamp = _marker_stamp(odom)
@@ -5749,7 +5757,11 @@ def handle_dock_measurement_move(params, respond):
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         for topic, kind in topics:
             node.create_subscription(get_message(kind), topic, lambda msg, t=topic: record(t, msg), qos)
-        deadline = time.monotonic() + 5
+        # The mower stands still while this waits. 5 s was too tight right after
+        # the departure re-initialised the localisation: its 1 Hz status had not
+        # come through yet and the return to the dock stopped before it began
+        # (LFIN1231000009, Oct 2026).
+        deadline = time.monotonic() + MOTION_START_WAIT_S
         while True:
             _dock_motion_lease(state)
             spin()

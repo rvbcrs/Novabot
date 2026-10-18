@@ -29,7 +29,7 @@ for mod, attrs in {
     "decision_msgs.srv": ["StartCoverageTask"],
     "decision_msgs.msg": ["RobotStatus"],
     "std_srvs.srv": ["Trigger", "SetBool", "Empty"],
-    "geometry_msgs.msg": ["PoseStamped", "Point", "Twist"],
+    "geometry_msgs.msg": ["PoseStamped", "PointStamped", "Point", "Twist"],
     "nav_msgs.msg": ["Path", "Odometry"],
     "nav2_msgs.action": ["FollowPath", "NavigateToPose"],
     "coverage_planner.action": ["NavigateThroughCoveragePaths"],
