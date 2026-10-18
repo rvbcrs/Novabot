@@ -134,6 +134,7 @@ try { fs.mkdirSync(walkerBundlesDir, { recursive: true }); } catch { /* ignore �
 
 
 import { SERVER_VERSION } from '../services/serverVersion.js';
+import { runningImage } from '../services/selfUpdate.js';
 import { normalizeBundleGeometry } from '../services/portableSnapshot.js';
 import { preparePortableImport } from '../services/portableImport.js';
 import { withMowerMapOperation, isMapOperationCommandBlocked, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
@@ -1017,27 +1018,80 @@ adminStatusRouter.get('/walker-firmware/binary/:filename', handleWalkerFirmwareB
 // ── Server self-update check ─────────────────────────────────────────────────
 
 const HUB_TAGS_URL = 'https://hub.docker.com/v2/repositories/rvbcrs/opennova/tags?page_size=25&ordering=last_updated';
-let _serverUpdateCache: { ts: number; payload: { current: string; latest: string | null; updateAvailable: boolean; lastUpdatedAt: string | null } } | null = null;
+const HUB_BETA_URL = 'https://hub.docker.com/v2/repositories/rvbcrs/opennova/tags/beta';
+let _serverUpdateCache: { ts: number; payload: ServerUpdatePayload } | null = null;
 
 export interface ServerUpdatePayload {
   current: string;
+  /** Release: the newest version tag. Beta: "beta@<short digest>" of the newest :beta image. */
   latest: string | null;
   updateAvailable: boolean;
   lastUpdatedAt: string | null;
+  /** What `updateAvailable` compares: version tags (release) or the :beta image digest (beta). */
+  channel: 'beta' | 'release';
+  /** Beta only: when Docker Hub last updated :beta, i.e. when the newer build was made. */
+  latestBuiltAt?: string | null;
+  /** Beta only: why no claim is made. The running image has no registry digest to compare, or Docker Hub sent none. */
+  reason?: 'digest_unknown' | 'hub_digest_missing';
 }
 
+export interface ServerUpdateDeps {
+  fetchJson: (url: string) => Promise<unknown>;
+  runningImage: () => Promise<{ tag: string; digest: string | null } | null>;
+}
+
+const realUpdateDeps: ServerUpdateDeps = { fetchJson, runningImage };
+
 /**
- * Compare the running version with the newest Docker Hub tag for
- * rvbcrs/opennova. Cached for 5 minutes so polling (admin panel + dashboard)
+ * Is a newer rvbcrs/opennova image published on Docker Hub? A server running
+ * the :beta image compares the digest of its own image with the one Docker Hub
+ * holds for :beta; every other install compares the running version with the
+ * newest version tag. Cached for 5 minutes so polling (admin panel + dashboard)
  * doesn't hammer Docker Hub. Shared by both the admin and dashboard routes.
  */
-export async function checkServerUpdate(): Promise<ServerUpdatePayload> {
+export async function checkServerUpdate(d: ServerUpdateDeps = realUpdateDeps): Promise<ServerUpdatePayload> {
   if (_serverUpdateCache && Date.now() - _serverUpdateCache.ts < 5 * 60 * 1000) {
     return _serverUpdateCache.payload;
   }
+  // Null when Docker cannot be asked: the channel is unknown then, and the version
+  // tags decide as they always did.
+  const image = await d.runningImage();
+  const payload = image?.tag === 'beta' ? await checkBetaUpdate(d, image.digest) : await checkReleaseUpdate(d);
+  _serverUpdateCache = { ts: Date.now(), payload };
+  return payload;
+}
 
+/** Tests only. */
+export function _resetServerUpdateCache(): void {
+  _serverUpdateCache = null;
+}
+
+/**
+ * :beta is rebuilt under the version number of the release it was cut from, so
+ * the version tags never show a newer beta. Compare image digests instead. An
+ * unknown running digest (a locally built image has none) is no claim.
+ */
+async function checkBetaUpdate(d: ServerUpdateDeps, runningDigest: string | null): Promise<ServerUpdatePayload> {
+  const hub = await d.fetchJson(HUB_BETA_URL) as { digest?: unknown; last_updated?: string };
+  const hubDigest = typeof hub.digest === 'string' && /^sha256:[0-9a-f]{64}$/.test(hub.digest) ? hub.digest : null;
+  if (!hubDigest) {
+    return { current: SERVER_VERSION, latest: null, updateAvailable: false, lastUpdatedAt: null, latestBuiltAt: null, channel: 'beta', reason: 'hub_digest_missing' };
+  }
+  const builtAt = hub.last_updated ?? null;
+  return {
+    current: SERVER_VERSION,
+    latest: `beta@${hubDigest.replace('sha256:', '').slice(0, 12)}`,
+    updateAvailable: runningDigest !== null && runningDigest !== hubDigest,
+    lastUpdatedAt: builtAt,
+    latestBuiltAt: builtAt,
+    channel: 'beta',
+    ...(runningDigest === null ? { reason: 'digest_unknown' as const } : {}),
+  };
+}
+
+async function checkReleaseUpdate(d: ServerUpdateDeps): Promise<ServerUpdatePayload> {
   const cmp = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-  const data = await fetchJson(HUB_TAGS_URL) as { results?: Array<{ name: string; last_updated: string }> };
+  const data = await d.fetchJson(HUB_TAGS_URL) as { results?: Array<{ name: string; last_updated: string }> };
   const tags = data.results ?? [];
   // release.sh writes timestamp version tags like "2026.0505.0821" plus rolling
   // aliases ("latest", "beta"). Compare ONLY against real version tags — a
@@ -1053,12 +1107,10 @@ export async function checkServerUpdate(): Promise<ServerUpdatePayload> {
     }
   }
   const updateAvailable = !!(latest && cmp.compare(latest, SERVER_VERSION) > 0);
-  const payload: ServerUpdatePayload = { current: SERVER_VERSION, latest, updateAvailable, lastUpdatedAt };
-  _serverUpdateCache = { ts: Date.now(), payload };
-  return payload;
+  return { current: SERVER_VERSION, latest, updateAvailable, lastUpdatedAt, channel: 'release' };
 }
 
-// GET /api/admin-status/check-server-update — compare running version with newest Docker Hub tag.
+// GET /api/admin-status/check-server-update: compare the running version (on :beta, the running image) with Docker Hub.
 adminStatusRouter.get('/check-server-update', async (_req: AuthRequest, res: Response) => {
   try {
     res.json(await checkServerUpdate());

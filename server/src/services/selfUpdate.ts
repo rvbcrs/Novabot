@@ -105,6 +105,52 @@ export async function selfUpdateStatus(d: SelfUpdateDeps = realDeps): Promise<{ 
   }
 }
 
+/** The tag of an image reference as a compose file writes it: "rvbcrs/opennova:beta"
+ *  is "beta", no tag is "latest". */
+function imageTag(ref: string): string {
+  const name = ref.split('@')[0];
+  const colon = name.lastIndexOf(':');
+  // A colon before the last slash is a registry port ("localhost:5000/opennova"), not a tag.
+  return colon > name.lastIndexOf('/') ? name.slice(colon + 1) || 'latest' : 'latest';
+}
+
+const IMAGE_ID = /^sha256:[0-9a-f]{64}$/;
+const REPO_DIGEST = /@(sha256:[0-9a-f]{64})$/;
+
+/** The registry digest of an image, from the first of its RepoDigests; null for an
+ *  image that never came from a registry (a local build) or that cannot be inspected. */
+async function repoDigest(d: SelfUpdateDeps, imageId: string | undefined): Promise<string | null> {
+  if (!imageId || !IMAGE_ID.test(imageId)) return null;
+  try {
+    const image = await d.docker('GET', `/images/${imageId}/json`) as { RepoDigests?: string[] | null };
+    return REPO_DIGEST.exec(image.RepoDigests?.[0] ?? '')?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The image this server runs: the tag from the name its container was started
+ * with, the digest from the image the container was created from. The digest is
+ * looked up by that image id, never by the name: after a `docker compose pull`
+ * the name already points at the new image while this container still runs the
+ * old one. Null when Docker cannot be asked (no socket, unknown container, API
+ * error): the cases where selfUpdateStatus reports "unavailable".
+ */
+export async function runningImage(d: SelfUpdateDeps = realDeps): Promise<{ tag: string; digest: string | null } | null> {
+  try {
+    if (!d.socketExists()) return null;
+    const id = ownContainerId(d.mountinfo(), d.hostname());
+    if (!id) return null;
+    const self = await d.docker('GET', `/containers/${id}/json`) as { Image?: string; Config?: { Image?: string } };
+    const name = self.Config?.Image;
+    if (!name) return null;
+    return { tag: imageTag(name), digest: await repoDigest(d, self.Image) };
+  } catch {
+    return null;
+  }
+}
+
 let running = false;
 
 /** Start the helper that pulls the new image and recreates the OpenNova

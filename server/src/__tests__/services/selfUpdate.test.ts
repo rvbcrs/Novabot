@@ -4,7 +4,7 @@
  * for the OpenNova services only. Opt-in through the Docker socket mount.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ownContainerId, selfUpdateStatus, startSelfUpdate, HELPER_IMAGE, _resetSelfUpdate, type DockerCall } from '../../services/selfUpdate.js';
+import { ownContainerId, selfUpdateStatus, startSelfUpdate, runningImage, HELPER_IMAGE, _resetSelfUpdate, type DockerCall } from '../../services/selfUpdate.js';
 
 beforeEach(() => _resetSelfUpdate());
 
@@ -93,5 +93,92 @@ describe('startSelfUpdate', () => {
 
   it('refuses without the socket', async () => {
     expect((await startSelfUpdate(deps(fakeDocker().docker, false))).ok).toBe(false);
+  });
+});
+
+/**
+ * Which image this server runs: the tag decides the update channel (:beta
+ * moves under a fixed version number), the digest says which build it is.
+ */
+describe('runningImage', () => {
+  const IMAGE_ID = `sha256:${'b'.repeat(64)}`;
+  const RUNNING = `sha256:${'c'.repeat(64)}`; // manifest-list digest of the image this container was created from
+  const MOVED = `sha256:${'d'.repeat(64)}`; // what the name points at after a later `docker compose pull`
+
+  /** A container as the Docker API reports it: Config.Image is the name from
+   *  the compose file, Image the id of the image it was created from. */
+  function imageDocker(o: { configImage?: string; repoDigests?: unknown; imageInspect?: 'fails' } = {}) {
+    const calls: string[] = [];
+    const docker: DockerCall = async (method, path) => {
+      calls.push(`${method} ${path}`);
+      if (path === `/containers/${ID}/json`) {
+        return { Id: ID, Image: IMAGE_ID, Config: { Image: o.configImage ?? 'rvbcrs/opennova:beta', Labels: LABELS } };
+      }
+      if (path === `/images/${IMAGE_ID}/json`) {
+        if (o.imageInspect === 'fails') throw new Error(`docker GET ${path}: 500`);
+        return { Id: IMAGE_ID, RepoTags: [], RepoDigests: 'repoDigests' in o ? o.repoDigests : [`rvbcrs/opennova@${RUNNING}`] };
+      }
+      // The same pull moved the tag to a newer image; this container still runs the old one.
+      if (path === '/images/rvbcrs/opennova:beta/json') {
+        return { Id: `sha256:${'e'.repeat(64)}`, RepoTags: ['rvbcrs/opennova:beta'], RepoDigests: [`rvbcrs/opennova@${MOVED}`] };
+      }
+      throw new Error(`unexpected docker call ${method} ${path}`);
+    };
+    return { docker, calls };
+  }
+
+  it('reports the digest of the image the container runs, not of the one its tag points at by now', async () => {
+    const { docker } = imageDocker();
+    expect(await runningImage(deps(docker))).toEqual({ tag: 'beta', digest: RUNNING });
+  });
+
+  it.each([
+    ['rvbcrs/opennova:beta', 'beta'],
+    ['rvbcrs/opennova:2026.1013.2326', '2026.1013.2326'],
+    ['rvbcrs/opennova:latest', 'latest'],
+    ['rvbcrs/opennova', 'latest'],
+    ['docker.io/rvbcrs/opennova:beta', 'beta'],
+    ['localhost:5000/rvbcrs/opennova', 'latest'], // a registry port is not a tag
+    ['localhost:5000/rvbcrs/opennova:beta', 'beta'],
+    [`rvbcrs/opennova:beta@sha256:${'a'.repeat(64)}`, 'beta'],
+  ])('reads the tag out of %s', async (configImage, tag) => {
+    const { docker } = imageDocker({ configImage });
+    expect((await runningImage(deps(docker)))?.tag).toBe(tag);
+  });
+
+  it('takes the first RepoDigests entry', async () => {
+    const { docker } = imageDocker({ repoDigests: [`rvbcrs/opennova@${RUNNING}`, `ghcr.io/example/opennova@sha256:${'f'.repeat(64)}`] });
+    expect((await runningImage(deps(docker)))?.digest).toBe(RUNNING);
+  });
+
+  it.each([
+    ['an empty list', []],
+    ['null, as for an image that never came from a registry', null],
+    ['an entry that is not a sha256 reference', ['not-a-digest']],
+  ])('has the tag but no digest when RepoDigests is %s', async (_what, repoDigests) => {
+    const { docker } = imageDocker({ repoDigests });
+    expect(await runningImage(deps(docker))).toEqual({ tag: 'beta', digest: null });
+  });
+
+  it('keeps the tag when the image itself cannot be inspected', async () => {
+    const { docker } = imageDocker({ imageInspect: 'fails' });
+    expect(await runningImage(deps(docker))).toEqual({ tag: 'beta', digest: null });
+  });
+
+  it('is null without the Docker socket, and does not ask Docker', async () => {
+    const { docker, calls } = imageDocker();
+    expect(await runningImage(deps(docker, false))).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('is null when it cannot tell which container it is', async () => {
+    const { docker, calls } = imageDocker();
+    expect(await runningImage({ docker, socketExists: () => true, mountinfo: () => '', hostname: () => 'nas' })).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('is null when Docker fails on the container itself', async () => {
+    const docker: DockerCall = async () => { throw new Error('connect ECONNREFUSED /var/run/docker.sock'); };
+    expect(await runningImage(deps(docker))).toBeNull();
   });
 });
