@@ -27,9 +27,10 @@ import { deviceCache } from '../../mqtt/sensorData.js';
 import { goHome } from '../../services/mowingService.js';
 import { freshPositionState } from '../../services/positionTelemetry.js';
 import { dispatchPatrolDetectionEvent, dispatchPatrolFailedEvent } from '../../notifications/eventDetector.js';
-import { mapRepo, deviceSettingsRepo, scheduleRepo } from '../../db/repositories/index.js';
+import { mapRepo, deviceSettingsRepo, scheduleRepo, patrolRunsRepo } from '../../db/repositories/index.js';
 import { renderMsg, type Msg } from '../../services/serverText.js';
 import { patrolDockingUnderWay } from '../../services/patrolRuns.js';
+import { planPatrol } from '../../services/patrolPlan.js';
 
 const SN = 'LFIN_PATROL_0001';
 const SQ = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
@@ -77,6 +78,27 @@ describe('patrol service', () => {
     expect(cmd.patrol.zones[0].points.length).toBeGreaterThan(0);
     expect(cmd.patrol.dwell_s).toBe(8);
     expect(cmd.patrol.photo_topic).toBe('front');
+  });
+
+  // The dashboard draws these on the map (GET /patrol/:sn/plan, and `plan` per run
+  // in GET /patrol/:sn/runs): the very checkpoints the mower was sent, which the
+  // plan preview computes the same way.
+  it('keeps the checkpoints it sent on the run row, the same ones the plan preview gives', () => {
+    mower({});
+    // A recorded obstacle takes the first checkpoint, (3, 1), out of the plan: both must know it.
+    mapRepo.create({ map_id: 'po0', mower_sn: SN, map_name: 'map0_0_obstacle', canonical_name: 'map0_0_obstacle',
+      map_type: 'obstacle', map_area: JSON.stringify([{ x: 2, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 2.5 }, { x: 2, y: 2.5 }]),
+      file_name: 'map0_0_obstacle.csv' });
+    expect(startPatrol(SN, 1000).ok).toBe(true);
+    const sent = (vi.mocked(publishExtendedCommand).mock.calls[0][1] as { patrol: { zones: Array<{ points: number[][] }> } }).patrol.zones;
+    expect(sent[0].points.length).toBeGreaterThan(0);
+    expect(sent[0].points).not.toContainEqual([3, 1]);
+    const row = patrolRunsRepo.get(SN);
+    expect(row?.run).toBe('1000');
+    expect(JSON.parse(row!.plan!)).toEqual(sent);
+    expect(planPatrol(SN).zones).toEqual(sent);
+    expect(startPatrol(SN, 2000).ok).toBe(true);
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '2000' });
   });
 
   it('refuses a build without patrol, a low battery and a garden without checkpoints', () => {
@@ -611,5 +633,49 @@ describe('patrol service', () => {
     onPatrolRefused(SN, 'drive_script_missing');
     expect(dispatchPatrolFailedEvent).toHaveBeenCalledWith(SN, 'drive_script_missing', false);
     expect(goHome).not.toHaveBeenCalled();
+  });
+
+  // The patrol report says how a run ended: the end on the run row, and the
+  // error or flag that came with it.
+  describe('the end of a run on its row', () => {
+    it('keeps the error an error end came with, and none for a clean end', () => {
+      mower({});
+      expect(startPatrol(SN, 1000).ok).toBe(true);
+      onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '1000');
+      expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '1000', ended_phase: 'error', ended_error: 'checkpoints_unreachable' });
+      expect(startPatrol(SN, 2000).ok).toBe(true);
+      onPatrolStatus(SN, 'done', undefined, '2000');
+      expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '2000', ended_phase: 'done', ended_error: null });
+    });
+
+    it('keeps the flag of a stop on the mower, and none for the owner\'s own stop', () => {
+      mower({});
+      expect(startPatrol(SN, 1000).ok).toBe(true);
+      onPatrolStatus(SN, 'stopped', 'error_push_button_stop', '1000');
+      expect(patrolRunsRepo.get(SN)).toMatchObject({ ended_phase: 'stopped', ended_error: 'error_push_button_stop' });
+      expect(startPatrol(SN, 2000).ok).toBe(true);
+      onPatrolStatus(SN, 'stopped', undefined, '2000');
+      expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '2000', ended_phase: 'stopped', ended_error: null });
+    });
+
+    it('a repeat of the end does not change what the first one kept', () => {
+      mower({});
+      expect(startPatrol(SN, 1000).ok).toBe(true);
+      onPatrolStatus(SN, 'error', 'not_localized', '1000');
+      onPatrolStatus(SN, 'error', 'something_else', '1000');
+      expect(patrolRunsRepo.get(SN)).toMatchObject({ ended_error: 'not_localized' });
+    });
+
+    it('keeps the error of the end of a run the database did not know', () => {
+      onPatrolStatus(SN, 'error', 'checkpoints_unreachable', '5000');
+      expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '5000', ended_phase: 'error', ended_error: 'checkpoints_unreachable' });
+    });
+
+    it('keeps the reason of a patrol the mower refused', () => {
+      mower({});
+      expect(startPatrol(SN, 1000).ok).toBe(true);
+      onPatrolRefused(SN, 'edge_cut_running');
+      expect(patrolRunsRepo.get(SN)).toMatchObject({ ended_phase: 'error', ended_error: 'edge_cut_running' });
+    });
   });
 });

@@ -56,6 +56,28 @@ describe('patrol checkpoints', () => {
   });
 });
 
+describe('patrol checkpoints and recorded obstacles', () => {
+  // 2026-10-18 on LFIN2230700238: a checkpoint beside the trampoline. The
+  // border inset knows nothing about obstacles; the planner does.
+  const trampoline = [{ x: 0, y: 4 }, { x: 2.5, y: 4 }, { x: 2.5, y: 6 }, { x: 0, y: 6 }];   // against the west border
+  const obstacle = (zone: string) => ({ canonical_name: `${zone}_0_obstacle`, map_area: JSON.stringify(trampoline) });
+  it('drops a checkpoint in or within 0.8 m of an obstacle of its zone', () => {
+    const plain = buildPatrolZones([row('map0', SQ)], ['map0'], 2, null)[0].points;
+    const kept = buildPatrolZones([row('map0', SQ)], ['map0'], 2, null, undefined, [obstacle('map0')])[0].points;
+    expect(plain.some(([x, y]) => pointInPolygon({ x, y }, trampoline))).toBe(true);
+    expect(kept.length).toBe(plain.length - 1);
+    for (const [x, y] of kept) {
+      expect(pointInPolygon({ x, y }, trampoline)).toBe(false);
+      expect(distToBoundary({ x, y }, trampoline)).toBeGreaterThanOrEqual(0.8);
+    }
+  });
+  it("an obstacle of another zone, or a broken one, changes nothing", () => {
+    const plain = buildPatrolZones([row('map0', SQ)], ['map0'], 2, null)[0].points;
+    expect(buildPatrolZones([row('map0', SQ)], ['map0'], 2, null, undefined, [obstacle('map1')])[0].points).toEqual(plain);
+    expect(buildPatrolZones([row('map0', SQ)], ['map0'], 2, null, undefined, [{ canonical_name: 'map0_0_obstacle', map_area: '{oops' }])[0].points).toEqual(plain);
+  });
+});
+
 describe('patrol plan', () => {
   it("without a choice patrols only the dock's zone", () => {
     const plan = buildPatrolZones([row('map0', SQ), row('map1', shift(SQ, 20))], [], 5, { x: 1, y: 1 });

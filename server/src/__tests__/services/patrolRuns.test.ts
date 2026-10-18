@@ -8,6 +8,7 @@ import { patrolRunsRepo } from '../../db/repositories/index.js';
 import {
   isOlderPatrolRun, isLivePatrolRun, patrolReport, extHelloReport, isPatrolDriving, markPatrolDocking, patrolDockingUnderWay,
   patrolDockingFailed, DOCK_FAILED_ERROR_CODES, PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, EXT_COMMANDS_KEY, _resetPatrolDocking,
+  patrolRunOutcome, withPatrolOutcome,
 } from '../../services/patrolRuns.js';
 
 const SN = 'LFIN_PATROL_RUNS';
@@ -333,5 +334,126 @@ describe('recordEnded', () => {
     started('3000');
     patrolRunsRepo.recordEnded(SN, '6000', 'error', 6000, 3001);      // started before 3001: past the TTL
     expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '6000', ended_phase: 'error' });
+  });
+});
+
+// What the dashboard's patrol report reads off the run row: the checkpoints the
+// run started with and the error it ended with.
+describe('what a run row keeps for the patrol report', () => {
+  const PLAN = JSON.stringify([{ zone: 'map0', points: [[1, 2], [3, 4]] }]);
+
+  it('keeps the plan for the run it was set for, and for no other', () => {
+    started('2000');
+    expect(patrolRunsRepo.get(SN)?.plan).toBeNull();
+    expect(patrolRunsRepo.setPlan(SN, '2000', PLAN)).toBe(true);
+    expect(patrolRunsRepo.setPlan(SN, '1999', '[]')).toBe(false);
+    expect(patrolRunsRepo.setPlan('LFIN_OTHER', '2000', '[]')).toBe(false);
+    expect(patrolRunsRepo.get(SN)?.plan).toBe(PLAN);
+  });
+
+  it('keeps the error of a run that has ended, and of no other', () => {
+    started('2000');
+    expect(patrolRunsRepo.setEndError(SN, '2000', 'busy_mowing')).toBe(false);   // still out: it has no end
+    expect(patrolRunsRepo.get(SN)?.ended_error).toBeNull();
+    patrolRunsRepo.markEnded(SN, '2000', 'error');
+    expect(patrolRunsRepo.setEndError(SN, '1999', 'x')).toBe(false);
+    expect(patrolRunsRepo.setEndError('LFIN_OTHER', '2000', 'x')).toBe(false);
+    expect(patrolRunsRepo.setEndError(SN, '2000', 'busy_mowing')).toBe(true);
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ ended_phase: 'error', ended_error: 'busy_mowing' });
+  });
+
+  it('a new run starts without the plan and the error of the last', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', PLAN);
+    patrolRunsRepo.markEnded(SN, '2000', 'error');
+    patrolRunsRepo.setEndError(SN, '2000', 'busy_mowing');
+    started('3000');
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '3000', plan: null, ended_error: null });
+  });
+
+  it('the end of a run the database does not know replaces the row without them', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', PLAN);
+    patrolRunsRepo.markEnded(SN, '2000', 'error');
+    patrolRunsRepo.setEndError(SN, '2000', 'busy_mowing');
+    patrolRunsRepo.recordEnded(SN, '5000', 'stopped', 5000, 0);
+    expect(patrolRunsRepo.get(SN)).toMatchObject({ run: '5000', plan: null, ended_error: null });
+  });
+});
+
+describe('patrolRunOutcome', () => {
+  const PLAN = [{ zone: 'map0', points: [[1, 2], [3, 4]] }, { zone: 'map1', points: [[5, 6]] }];
+  const NONE = { plan: null, endedPhase: null, error: null, dockFailedAt: null };
+
+  it('is the plan, the end, the error and the failed docking of the run the row is about', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', JSON.stringify(PLAN));
+    patrolRunsRepo.markEnded(SN, '2000', 'error');
+    patrolRunsRepo.setEndError(SN, '2000', 'checkpoints_unreachable');
+    patrolRunsRepo.markDockFailed(SN, '2000', 7_000);
+    expect(patrolRunOutcome(patrolRunsRepo.get(SN), '2000')).toEqual({
+      plan: PLAN, endedPhase: 'error', error: 'checkpoints_unreachable', dockFailedAt: '1970-01-01T00:00:07.000Z',
+    });
+  });
+
+  it('has no end, no error and no failed docking while the run is out', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', JSON.stringify(PLAN));
+    expect(patrolRunOutcome(patrolRunsRepo.get(SN), '2000')).toEqual({ ...NONE, plan: PLAN });
+  });
+
+  it('is empty for a run the row is not about, and without a row', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', JSON.stringify(PLAN));
+    patrolRunsRepo.markEnded(SN, '2000', 'done');
+    expect(patrolRunOutcome(patrolRunsRepo.get(SN), '1999')).toEqual(NONE);
+    expect(patrolRunOutcome(undefined, '2000')).toEqual(NONE);
+  });
+
+  it('reads a plan it cannot use as none, and an end it does not know as none', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', 'not json');
+    expect(patrolRunOutcome(patrolRunsRepo.get(SN), '2000').plan).toBeNull();
+    patrolRunsRepo.setPlan(SN, '2000', '{"zone":"map0"}');   // not a list
+    expect(patrolRunOutcome(patrolRunsRepo.get(SN), '2000').plan).toBeNull();
+    patrolRunsRepo.markEnded(SN, '2000', 'weird');
+    expect(patrolRunOutcome(patrolRunsRepo.get(SN), '2000').endedPhase).toBeNull();
+  });
+});
+
+describe('withPatrolOutcome', () => {
+  const PLAN = [{ zone: 'map0', points: [[1, 2]] }];
+  const frame = (seq: number) => ({ seq, x: 1, y: 2, person: 0, animal: 0, frames: 3, image: false, ts: 1 });
+  const onDisk = (run: string, ...seqs: number[]) => ({ run, startedAt: Number(run), frames: seqs.map(frame) });
+  const NONE = { plan: null, endedPhase: null, error: null, dockFailedAt: null };
+
+  it('adds the outcome to the run of the row and leaves every run and frame as it was', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', JSON.stringify(PLAN));
+    patrolRunsRepo.markEnded(SN, '2000', 'done');
+    const runs = [onDisk('2000', 1, 2), onDisk('1000', 1)];
+    const out = withPatrolOutcome(runs, patrolRunsRepo.get(SN));
+    expect(out).toEqual([
+      { ...runs[0], plan: PLAN, endedPhase: 'done', error: null, dockFailedAt: null },
+      { ...runs[1], ...NONE },
+    ]);
+    expect(out[0].frames).toEqual(runs[0].frames);
+  });
+
+  it('lists the run the server started last when no checkpoint of it is on disk, newest first', () => {
+    started('2000');
+    patrolRunsRepo.setPlan(SN, '2000', JSON.stringify(PLAN));
+    patrolRunsRepo.markEnded(SN, '2000', 'error');
+    patrolRunsRepo.setEndError(SN, '2000', 'not_localized');
+    const out = withPatrolOutcome([onDisk('1000', 1)], patrolRunsRepo.get(SN));
+    expect(out.map(r => r.run)).toEqual(['2000', '1000']);
+    expect(out[0]).toEqual({ run: '2000', startedAt: 2000, frames: [], plan: PLAN, endedPhase: 'error', error: 'not_localized', dockFailedAt: null });
+  });
+
+  it('adds no run without a row, and none for a row whose run is on disk already', () => {
+    expect(withPatrolOutcome([onDisk('1000', 1)], undefined)).toEqual([{ ...onDisk('1000', 1), ...NONE }]);
+    expect(withPatrolOutcome([], undefined)).toEqual([]);
+    started('2000');
+    expect(withPatrolOutcome([onDisk('2000', 1)], patrolRunsRepo.get(SN))).toHaveLength(1);
   });
 });

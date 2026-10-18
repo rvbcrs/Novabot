@@ -177,7 +177,8 @@ export function startPatrol(sn: string, now = Date.now(), scheduleId: string | n
     return refuse(M`accu te leeg voor een patrouille (${battery}%, minimaal ${PATROL_MIN_BATTERY}%)`);
   }
   const s = readPatrolSettings(sn);
-  const zones = buildPatrolZones(mapRepo.findWorkMaps(sn), s.zones, s.spacingM, getPolygonAnchor(sn));
+  const zones = buildPatrolZones(mapRepo.findWorkMaps(sn), s.zones, s.spacingM, getPolygonAnchor(sn), undefined,
+    mapRepo.findAllByMowerSnAndType(sn, 'obstacle'));
   if (!zones.length) return refuse(M`geen controlepunten: kies zones in de patrouille-instellingen`);
   const run = String(now);
   // The patrol that is about to start owns the mower: a docking still waiting
@@ -188,6 +189,7 @@ export function startPatrol(sn: string, now = Date.now(), scheduleId: string | n
   outOnPatrol.delete(sn);
   const token = randomBytes(16).toString('hex');
   patrolRunsRepo.start({ mower_sn: sn, run, token, started_at: now, schedule_id: scheduleId });
+  patrolRunsRepo.setPlan(sn, run, JSON.stringify(zones));   // the patrol report draws it (services/patrolPlan.ts)
   publishExtendedCommand(sn, { patrol: { run, token, zones, dwell_s: s.dwellS, photo_topic: s.photoTopic } });
   console.log(`[Patrol] start ${sn} run=${run} ${zones.map(z => `${z.zone}:${z.points.length}`).join(',')}`);
   return { ok: true, run };
@@ -260,6 +262,7 @@ export function onPatrolStatus(sn: string, phase: string, error?: string, run?: 
     console.log(`[Patrol] ${sn} ${phase} of run ${run} again (re-sent after a reconnect): handled before`);
     return;
   }
+  if (run && error) patrolRunsRepo.setEndError(sn, run, error);   // the patrol report says how the run ended
   led(0);
   const wasOut = outOnPatrol.delete(sn);
   const dock = freshPositionState(sn);
@@ -288,6 +291,7 @@ export function onPatrolStatus(sn: string, phase: string, error?: string, run?: 
 export function onPatrolRefused(sn: string, error = 'unknown'): void {
   const last = patrolRunsRepo.get(sn);
   if (last && !patrolRunsRepo.markEnded(sn, last.run, 'error')) return;   // handled before
+  if (last) patrolRunsRepo.setEndError(sn, last.run, error);
   console.log(`[Patrol] ${sn} refused by the mower (${error}), leaving it where it is`);
   dispatchPatrolFailedEvent(sn, error, false);
   if (last?.schedule_id) {

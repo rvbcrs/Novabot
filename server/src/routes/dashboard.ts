@@ -87,6 +87,9 @@ import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { deriveMowerActivity } from '../mqtt/mowerActivity.js';
 import { MOW_PARA_SETTLE_MS, edgeObstacleLevel, startEdgeCuts } from '../services/mowingService.js';
 import { startPatrol, stopPatrol, readPatrolSettings, alertKinds } from '../services/patrolService.js';
+import { planPatrol } from '../services/patrolPlan.js';
+import { withPatrolOutcome } from '../services/patrolRuns.js';
+import { patrolRunsRepo } from '../db/repositories/patrolRuns.js';
 import { listPatrolRuns, patrolImagePath } from '../services/patrolFrames.js';
 import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
 import {
@@ -4560,10 +4563,38 @@ dashboardRouter.post('/stop-patrol/:sn', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// GET /api/dashboard/patrol/:sn/plan: the checkpoints a start would drive now,
+// for the map; nothing is started or sent. The same settings, work-map rows,
+// obstacle rows and dock anchor as startPatrol (services/patrolPlan.ts).
+// `zones` is in driving order, points in map metres. The checkpoint `seq` that
+// the mower reports (a run's frames, patrol_checkpoint, patrol_skipped) is
+// 1-based over that list flattened, zone by zone: do_patrol in
+// research/mow_zone_drive.py does `seq += 1` per point of `zones[].points[]`, and
+// a zone it skips whole (no_route) still uses up its points' numbers. So
+// checkpoint `seq` is zones.flatMap(z => z.points)[seq - 1]. Its frame's x/y is
+// where the mower stood, which can differ from the planned point.
+// 404 for a mower the server does not know (no equipment row, no registry row),
+// then the same OpenNova gate as POST /patrol.
+dashboardRouter.get('/patrol/:sn/plan', (req: Request, res: Response) => {
+  const T = reqT(req);
+  const { sn } = req.params;
+  if (!equipmentRepo.findByMowerSn(sn) && !deviceRepo.findBySn(sn)) {
+    res.status(404).json({ ok: false, error: T`Apparaat niet gevonden` });
+    return;
+  }
+  if (rejectUnlessOpenNova(sn, req, res, M`Patrouille`)) return;
+  res.json({ ok: true, ...planPatrol(sn) });
+});
+
+// Each run also carries what the patrol report needs: `plan` (the checkpoints it
+// started with, or null), `endedPhase` (done | error | stopped, null while it is
+// out), `error` (the error or stop flag its end came with) and `dockFailedAt`
+// (ISO, the go home after it failed). patrol_runs keeps these for the run the
+// server started last only, so every older run has them null.
 dashboardRouter.get('/patrol/:sn/runs', (req: Request, res: Response) => {
   const { sn } = req.params;
   const min = readPatrolSettings(sn).minPoints;
-  const runs = listPatrolRuns(sn).map(r => ({
+  const runs = withPatrolOutcome(listPatrolRuns(sn), patrolRunsRepo.get(sn)).map(r => ({
     ...r,
     frames: r.frames.map(f => ({ ...f, seen: alertKinds(f, min) })),
   }));

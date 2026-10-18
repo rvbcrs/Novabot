@@ -282,6 +282,30 @@ export function dispatchPatrolDetectionEvent(
   ));
 }
 
+/** The mower's reason for ending a patrol (mow_zone_drive.py / the chassis
+ *  watcher), in words. A code nobody reads ("checkpoints_unreachable") was
+ *  all the push said. An unknown code stays visible for the bug report. */
+export function patrolStopReason(reason: string): string {
+  const known: Record<string, string> = {
+    checkpoints_unreachable: 'it could not reach five checkpoints in a row; something blocked them, or its position was off',
+    frame_not_settled: 'its position did not line up with GPS after it left the dock',
+    not_localized: 'it could not find its position after it left the dock',
+    no_dock_zone: 'no zone is recorded around the charging station',
+    no_route: 'no recorded channel leads to a chosen zone',
+    no_route_home: "no recorded channel leads back to the dock's zone",
+    busy_mowing: 'it was already on a task',
+    push_button: 'the STOP button was pressed',
+    no_pin_code: 'the PIN lock engaged',
+    upraise: 'it was lifted',
+    tile: 'it tilted',
+    turn_over: 'it turned over',
+    stopped: 'it was stopped',
+  };
+  // The chassis watcher's codes read error_<cause>_stop.
+  const code = reason.replace(/^error_/, '').replace(/_stop$/, '');
+  return known[code] ?? `reason: ${reason}`;
+}
+
 /** The night patrol stopped with an error, or on the mower itself (the STOP
  *  button, a lift or a tilt: `stoppedOnMower`), patrolService.onPatrolStatus. */
 export function dispatchPatrolFailedEvent(sn: string, reason: string, wentHome: boolean, stoppedOnMower = false): void {
@@ -289,7 +313,7 @@ export function dispatchPatrolFailedEvent(sn: string, reason: string, wentHome: 
     sn,
     'patrol_failed',
     TITLE_BY_TYPE.patrol_failed,
-    `The night patrol stopped (${reason}).`
+    `The night patrol stopped: ${patrolStopReason(reason)}.`
       + (wentHome ? ' The mower is being sent to its dock.'
         : stoppedOnMower ? ' The mower stays where it stopped.' : ' The mower did not leave its dock.'),
     { reason, went_home: wentHome },

@@ -108,10 +108,12 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { publishToDevice, publishToExtended } from '../../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
-import { startPatrol, stopPatrol } from '../../services/patrolService.js';
+import { startPatrol, stopPatrol, readPatrolSettings } from '../../services/patrolService.js';
+import { buildPatrolZones, PATROL_INSET_M } from '../../services/patrolRoute.js';
+import { getPolygonAnchor } from '../../services/anchor.js';
 import { savePatrolFrame } from '../../services/patrolFrames.js';
 import { M } from '../../services/serverText.js';
-import { mapRepo, scheduleRepo, seamFixRepo, deviceSettingsRepo, equipmentRepo } from '../../db/repositories/index.js';
+import { mapRepo, scheduleRepo, seamFixRepo, deviceSettingsRepo, equipmentRepo, deviceRepo, patrolRunsRepo } from '../../db/repositories/index.js';
 
 const app = express();
 app.use(express.json());
@@ -338,5 +340,134 @@ describe('patrol routes', () => {
     expect(mow.status).toBe(200);
     expect(mow.body.schedule.rainPause).toBe(true);
     expect(scheduleRepo.findById(mowId)!.rain_pause).toBe(1);
+  });
+});
+
+// The dashboard draws the planned checkpoints on the map and shows a run's
+// report: GET /patrol/:sn/plan, and the plan, end, error and failed docking
+// that GET /patrol/:sn/runs adds to a run.
+describe('patrol plan and report routes', () => {
+  const PSN = 'LFIN2230700998';
+  const SQ = [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }];
+  const TRAMPOLINE = [{ x: 0, y: 8 }, { x: 3, y: 8 }, { x: 3, y: 12 }, { x: 0, y: 12 }];   // against map0's west border
+  const zone = (slot: number, dx: number) => mapRepo.create({
+    map_id: `plan-z${slot}`, mower_sn: PSN, map_name: `map${slot}`, canonical_name: `map${slot}`, map_type: 'work',
+    map_area: JSON.stringify(SQ.map(p => ({ x: p.x + dx, y: p.y }))), file_name: `map${slot}.csv`,
+  });
+  const known = () => equipmentRepo.create({ equipment_id: `eq-${PSN}`, mower_sn: PSN });
+
+  beforeEach(() => { vi.clearAllMocks(); fw.supported = true; });
+
+  describe('GET /patrol/:sn/plan', () => {
+    it('gives the checkpoints a start would drive, in driving order, with the spacing and inset they were planned with', async () => {
+      known(); zone(0, 0); zone(1, 40);
+      mapRepo.create({
+        map_id: 'plan-o0', mower_sn: PSN, map_name: 'map0_0_obstacle', canonical_name: 'map0_0_obstacle',
+        map_type: 'obstacle', map_area: JSON.stringify(TRAMPOLINE), file_name: 'map0_0_obstacle.csv',
+      });
+      deviceSettingsRepo.upsert(PSN, 'patrol_zones', '["map0","map1"]');
+      deviceSettingsRepo.upsert(PSN, 'patrol_spacing_m', '5');
+      const res = await request(server).get(`${B}/patrol/${PSN}/plan`);
+      expect(res.status).toBe(200);
+      const s = readPatrolSettings(PSN);
+      // startPatrol's own call, spelled out.
+      const asStarted = buildPatrolZones(mapRepo.findWorkMaps(PSN), s.zones, s.spacingM, getPolygonAnchor(PSN), undefined,
+        mapRepo.findAllByMowerSnAndType(PSN, 'obstacle'));
+      expect(res.body).toEqual({ ok: true, zones: asStarted, spacingM: 5, insetM: PATROL_INSET_M });
+      expect((res.body.zones as Array<{ zone: string }>).map(z => z.zone)).toEqual(['map0', 'map1']);
+      // The recorded obstacle takes checkpoints out, as it does in a start.
+      const bare = buildPatrolZones(mapRepo.findWorkMaps(PSN), s.zones, s.spacingM, getPolygonAnchor(PSN));
+      expect(res.body.zones[0].points.length).toBeLessThan(bare[0].points.length);
+    });
+
+    it('gives no zones, and still the settings, when nothing is planned', async () => {
+      known();
+      const res = await request(server).get(`${B}/patrol/${PSN}/plan`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true, zones: [], spacingM: 6, insetM: PATROL_INSET_M });
+    });
+
+    it('starts nothing and sends the mower nothing', async () => {
+      known(); zone(0, 0);
+      expect((await request(server).get(`${B}/patrol/${PSN}/plan`)).status).toBe(200);
+      expect(startPatrol).not.toHaveBeenCalled();
+      expect(publishExtendedCommand).not.toHaveBeenCalled();
+      expect(publishToDevice).not.toHaveBeenCalled();
+      expect(patrolRunsRepo.get(PSN)).toBeUndefined();
+    });
+
+    it('is refused on stock firmware like the start is: 409 unsupported_firmware', async () => {
+      known(); zone(0, 0);
+      fw.supported = false;
+      const res = await request(server).get(`${B}/patrol/${PSN}/plan`);
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ ok: false, reason: 'unsupported_firmware', msgKey: 'requiresOpenNovaFirmware' });
+      expect(res.body.zones).toBeUndefined();
+    });
+
+    it('404s a mower the server does not know, whatever its firmware', async () => {
+      for (const supported of [true, false]) {
+        fw.supported = supported;
+        const res = await request(server).get(`${B}/patrol/${PSN}/plan`);
+        expect(res.status, `supported ${supported}`).toBe(404);
+        expect(res.body).toEqual({ ok: false, error: 'Equipment not found' });
+      }
+    });
+
+    // The dashboard lists a mower from its MQTT registry row, bound or not.
+    it('knows a mower that is not bound yet, from its MQTT registry row', async () => {
+      expect((await request(server).get(`${B}/patrol/${PSN}/plan`)).status).toBe(404);
+      deviceRepo.upsertDevice('client-plan', PSN, null);
+      expect((await request(server).get(`${B}/patrol/${PSN}/plan`)).status).toBe(200);
+    });
+  });
+
+  describe('GET /patrol/:sn/runs', () => {
+    const meta = { x: 1, y: 2, person: 0, animal: 0, frames: 3, image: false, ts: 1 };
+    const PLAN = [{ zone: 'map0', points: [[2.5, 1], [7.5, 1]] }];
+    const start = (run: string) => patrolRunsRepo.start({ mower_sn: PSN, run, token: 'f'.repeat(32), started_at: Number(run), schedule_id: null });
+    const runs = async () => (await request(server).get(`${B}/patrol/${PSN}/runs`)).body.runs as Array<Record<string, unknown>>;
+
+    it('adds the plan, how it ended, the error and the failed docking to the run the server started last', async () => {
+      savePatrolFrame(PSN, '7002', { ...meta, seq: 1 }, null);
+      start('7002');
+      patrolRunsRepo.setPlan(PSN, '7002', JSON.stringify(PLAN));
+      patrolRunsRepo.markEnded(PSN, '7002', 'error');
+      patrolRunsRepo.setEndError(PSN, '7002', 'checkpoints_unreachable');
+      patrolRunsRepo.markDockFailed(PSN, '7002', Date.UTC(2026, 9, 18, 23, 30));
+      expect((await runs()).find(r => r.run === '7002')).toEqual({
+        run: '7002', startedAt: 7002, frames: [{ ...meta, seq: 1, seen: [] }],
+        plan: PLAN, endedPhase: 'error', error: 'checkpoints_unreachable', dockFailedAt: '2026-10-18T23:30:00.000Z',
+      });
+    });
+
+    it('has no end, error or failed docking for a run that is still out', async () => {
+      savePatrolFrame(PSN, '7005', { ...meta, seq: 1 }, null);
+      start('7005');
+      patrolRunsRepo.setPlan(PSN, '7005', JSON.stringify(PLAN));
+      expect((await runs()).find(r => r.run === '7005')).toMatchObject({ plan: PLAN, endedPhase: null, error: null, dockFailedAt: null });
+    });
+
+    it('leaves a run the row is not about with nulls, and every frame as it was', async () => {
+      savePatrolFrame(PSN, '7003', { ...meta, seq: 1, person: 60 }, null);
+      savePatrolFrame(PSN, '7004', { ...meta, seq: 1 }, null);
+      start('7004');
+      patrolRunsRepo.setPlan(PSN, '7004', JSON.stringify(PLAN));
+      expect((await runs()).find(r => r.run === '7003')).toEqual({
+        run: '7003', startedAt: 7003, frames: [{ ...meta, seq: 1, person: 60, seen: ['person'] }],
+        plan: null, endedPhase: null, error: null, dockFailedAt: null,
+      });
+    });
+
+    it('lists the run the server started last before its first checkpoint, and when it never reaches one', async () => {
+      start('9001');
+      patrolRunsRepo.setPlan(PSN, '9001', JSON.stringify(PLAN));
+      expect((await runs())[0]).toEqual({
+        run: '9001', startedAt: 9001, frames: [], plan: PLAN, endedPhase: null, error: null, dockFailedAt: null,
+      });
+      patrolRunsRepo.markEnded(PSN, '9001', 'error');
+      patrolRunsRepo.setEndError(PSN, '9001', 'not_localized');
+      expect((await runs())[0]).toMatchObject({ run: '9001', frames: [], endedPhase: 'error', error: 'not_localized' });
+    });
   });
 });

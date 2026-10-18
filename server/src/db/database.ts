@@ -881,6 +881,23 @@ export function initDb(): void {
     // Column already exists
   }
 
+  // What the dashboard's patrol report reads off the run: the checkpoints it was
+  // started with (patrolService.startPatrol), as JSON [{ zone, points: [[x, y]] }],
+  // and the error or stop flag its end came with. NULL = a run from before these
+  // columns, or one that has not ended with an error.
+  try {
+    db.exec(`ALTER TABLE patrol_runs ADD COLUMN plan TEXT`);
+    console.log('[DB] Migrated: added patrol_runs.plan');
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE patrol_runs ADD COLUMN ended_error TEXT`);
+    console.log('[DB] Migrated: added patrol_runs.ended_error');
+  } catch {
+    // Column already exists
+  }
+
   // Feature: actieve regenpauze sessies (rain monitor → go_to_charge → herstart na regen)
   db.exec(`
     CREATE TABLE IF NOT EXISTS rain_sessions (

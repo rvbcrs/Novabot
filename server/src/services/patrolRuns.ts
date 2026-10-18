@@ -2,11 +2,14 @@
  * Which night patrol run a report of the mower belongs to, and what the broker
  * mirrors of it. The run the server started last is on disk (patrol_runs), so
  * all of this holds across a server restart in the middle of a patrol. Also
- * the command list a mower announces (ext_hello), which the patrol start reads.
+ * the command list a mower announces (ext_hello), which the patrol start reads,
+ * and what the dashboard's patrol report reads off a run's row (patrolRunOutcome).
  * Design: docs/superpowers/specs/2026-10-14-night-patrol-design.md
  */
-import { patrolRunsRepo } from '../db/repositories/patrolRuns.js';
+import { patrolRunsRepo, type PatrolRunRow } from '../db/repositories/patrolRuns.js';
 import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
+import type { PatrolRun } from './patrolFrames.js';
+import type { PatrolZone } from './patrolRoute.js';
 
 /** How long a patrol run counts as out after its start (also its upload window). */
 export const PATROL_RUN_TTL_MS = 6 * 3_600_000;
@@ -211,4 +214,54 @@ export function extHelloReport(body: unknown): Map<string, string> | null {
   const commands = (body as { commands?: unknown }).commands;
   if (!Array.isArray(commands) || !commands.every(c => typeof c === 'string')) return null;
   return new Map([[EXT_COMMANDS_KEY, JSON.stringify(commands)]]);
+}
+
+/** What the patrol report shows of a run besides its checkpoint frames (GET /patrol/:sn/runs). */
+export interface PatrolRunOutcome {
+  /** The checkpoints the run was started with, in the order the mower drives them; null when none were kept. */
+  plan: PatrolZone[] | null;
+  /** How the run ended; null while it is out. */
+  endedPhase: 'done' | 'error' | 'stopped' | null;
+  /** The error, or the stop flag (STOP button, lift, tilt), the end came with. */
+  error: string | null;
+  /** ISO time the mower did not end on the dock after the server's go home, null if it did. */
+  dockFailedAt: string | null;
+}
+
+/**
+ * The plan, end, error and failed docking of `run`, from the mower's patrol_runs
+ * row. That table holds one row per mower, the run the server started last, so
+ * every other run gets nothing here.
+ */
+export function patrolRunOutcome(row: PatrolRunRow | undefined, run: string): PatrolRunOutcome {
+  if (!row || row.run !== run) return { plan: null, endedPhase: null, error: null, dockFailedAt: null };
+  let plan: PatrolZone[] | null = null;
+  try {
+    const parsed: unknown = row.plan ? JSON.parse(row.plan) : null;
+    if (Array.isArray(parsed)) plan = parsed as PatrolZone[];
+  } catch { /* unreadable: no plan */ }
+  const ended = row.ended_phase;
+  const failedAt = row.dock_failed_at == null ? null : new Date(row.dock_failed_at);
+  return {
+    plan,
+    endedPhase: ended === 'done' || ended === 'error' || ended === 'stopped' ? ended : null,
+    error: row.ended_error,
+    dockFailedAt: failedAt && !Number.isNaN(failedAt.getTime()) ? failedAt.toISOString() : null,
+  };
+}
+
+/**
+ * The runs on disk (patrolFrames.listPatrolRuns), each with its outcome. The run
+ * the server started last is listed even when no checkpoint of it is on disk: it
+ * has none before its first, and none at all when it ends before reaching one
+ * (not localized, a busy mower), and its plan and how it ended are what the
+ * report is for then. Newest first, as listPatrolRuns lists them.
+ */
+export function withPatrolOutcome(runs: PatrolRun[], last: PatrolRunRow | undefined): Array<PatrolRun & PatrolRunOutcome> {
+  const out = runs.map(r => ({ ...r, ...patrolRunOutcome(last, r.run) }));
+  if (last && !runs.some(r => r.run === last.run)) {
+    out.push({ run: last.run, startedAt: Number(last.run), frames: [], ...patrolRunOutcome(last, last.run) });
+    out.sort((a, b) => Number(b.run) - Number(a.run));
+  }
+  return out;
 }

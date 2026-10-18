@@ -17,6 +17,12 @@ import { pointInPolygon, type XY } from '../maps/editGeometry.js';
  * strip needs to be 1.8 m wide.
  */
 export const PATROL_INSET_M = 1.0;
+/**
+ * A checkpoint keeps this much from every recorded obstacle of its zone (the
+ * trampoline, the pond, a tree). The border inset never knew about those, and
+ * a checkpoint in one is a goal nav2 refuses (live LFIN2230700238, 2026-10-18).
+ */
+export const PATROL_OBSTACLE_CLEAR_M = 0.8;
 /** The mower refuses more (extended_commands.py PATROL_MAX_POINTS). */
 export const PATROL_MAX_POINTS = 60;
 /** The mower's own bound for patrol points (research/extended_commands.py validate_patrol_params). */
@@ -78,6 +84,27 @@ export function patrolCheckpoints(poly: XY[], spacingM = 6, insetM = PATROL_INSE
   return out;
 }
 
+/** Not in any obstacle and at least `clearM` from each of them. */
+export function clearOfObstacles(p: XY, obstacles: XY[][], clearM = PATROL_OBSTACLE_CLEAR_M): boolean {
+  return obstacles.every(o => !pointInPolygon(p, o) && distToBoundary(p, o) >= clearM);
+}
+
+/** The recorded obstacles per zone: mapN_M_obstacle rows with a usable polygon. */
+export function obstaclesByZone(rows: Array<{ canonical_name: string | null; map_area: string | null }>): Map<string, XY[][]> {
+  const out = new Map<string, XY[][]>();
+  for (const r of rows) {
+    const zone = r.canonical_name?.match(/^(map\d+)_\d+_obstacle$/)?.[1];
+    if (!zone || !r.map_area) continue;
+    try {
+      const poly = JSON.parse(r.map_area) as XY[];
+      if (Array.isArray(poly) && poly.length >= 3 && poly.every(p => p != null && Number.isFinite(p.x) && Number.isFinite(p.y))) {
+        out.set(zone, [...(out.get(zone) ?? []), poly]);
+      }
+    } catch { /* a broken obstacle row is skipped */ }
+  }
+  return out;
+}
+
 /** The zone the dock stands in, or beside within 2 m (the anchor can sit just outside). */
 function dockZone(polys: Map<string, XY[]>, dock: XY | null): string | null {
   if (!dock) return null;
@@ -101,7 +128,9 @@ function dockZone(polys: Map<string, XY[]>, dock: XY | null): string | null {
 export function buildPatrolZones(
   rows: Array<{ canonical_name: string | null; map_area: string | null }>,
   wanted: string[], spacingM: number, dock: XY | null, maxPoints = PATROL_MAX_POINTS,
+  obstacleRows: Array<{ canonical_name: string | null; map_area: string | null }> = [],
 ): PatrolZone[] {
+  const obstacles = obstaclesByZone(obstacleRows);
   if (maxPoints < 1) return [];
   if (!(spacingM >= 0.5)) return [];
   const polys = new Map<string, XY[]>();
@@ -130,7 +159,9 @@ export function buildPatrolZones(
   const slot = (z: string) => Number(z.slice(3));
   chosen.sort((a, b) => (a === home ? -1 : b === home ? 1 : slot(a) - slot(b)));
   // At most maxPoints zones: the dock's zone sorts first, so it survives the cut.
-  const zones = chosen.slice(0, maxPoints).map(zone => ({ zone, pts: patrolCheckpoints(polys.get(zone)!, spacingM) }));
+  const zones = chosen.slice(0, maxPoints).map(zone => ({
+    zone, pts: patrolCheckpoints(polys.get(zone)!, spacingM).filter(p => clearOfObstacles(p, obstacles.get(zone) ?? [])),
+  }));
   const kept = (stride: number) => zones.reduce((n, z) => n + Math.ceil(z.pts.length / stride), 0);
   let stride = 1;
   while (kept(stride) > maxPoints) stride++;

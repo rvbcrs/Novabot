@@ -34,7 +34,7 @@ describe('patrol events', () => {
   it('a failed patrol does not claim the mower is already back on its dock', () => {
     dispatchPatrolFailedEvent('LFIN1', 'checkpoints_unreachable', true);
     const ev = vi.mocked(dispatchEvent).mock.calls[0][0];
-    expect(ev.message).toBe('The night patrol stopped (checkpoints_unreachable). The mower is being sent to its dock.');
+    expect(ev.message).toBe('The night patrol stopped: it could not reach five checkpoints in a row; something blocked them, or its position was off. The mower is being sent to its dock.');
     expect(ev.message).not.toContain('was sent');
     expect(ev.data).toMatchObject({ reason: 'checkpoints_unreachable', went_home: true });
   });
@@ -56,7 +56,7 @@ describe('patrol events', () => {
     dispatchPatrolFailedEvent('LFIN1', 'error_push_button_stop', false, true);
     const ev = vi.mocked(dispatchEvent).mock.calls[0][0];
     expect(ev.type).toBe('patrol_failed');
-    expect(ev.message).toBe('The night patrol stopped (error_push_button_stop). The mower stays where it stopped.');
+    expect(ev.message).toBe('The night patrol stopped: the STOP button was pressed. The mower stays where it stopped.');
     expect(ev.data).toMatchObject({ reason: 'error_push_button_stop', went_home: false });
   });
 });

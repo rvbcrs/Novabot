@@ -88,7 +88,7 @@ describe('the docking after a night patrol', () => {
     patrolEnds('error');
     expect(events('patrol_failed')).toHaveLength(1);
     expect(events('patrol_failed')[0].message)
-      .toBe('The night patrol stopped (checkpoints_unreachable). The mower is being sent to its dock.');
+      .toBe('The night patrol stopped: it could not reach five checkpoints in a row; something blocked them, or its position was off. The mower is being sent to its dock.');
     expect(goHome).not.toHaveBeenCalled();
     vi.advanceTimersByTime(PATROL_HOME_DELAY_MS);
     expect(goHome).toHaveBeenCalledWith(SN);
