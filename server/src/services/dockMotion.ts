@@ -2,8 +2,38 @@ import { randomUUID } from 'node:crypto';
 import { publishToExtended } from '../mqtt/mapSync.js';
 import type { MowerMapOperation } from './mowerMapOperation.js';
 import { freshPositionState, stablePosition } from './positionTelemetry.js';
+import { M, TextError, type Msg } from './serverText.js';
 
-export class DockMotionError extends Error {}
+/** A stop on the mower, in words a user can act on; `raw` keeps the firmware's own reason for logs. */
+export class DockMotionError extends TextError {
+  constructor(msg: Msg, readonly raw = '') { super(msg); }
+}
+
+/**
+ * The firmware's reason (extended_commands.py dock_measurement_move) as a
+ * sentence with a next step. The raw reason, e.g. "motion telemetry stale:
+ * /robot_combination_localization/combination_status", went straight to the
+ * screen and meant nothing to anyone (Aaron, Oct 2026). The wizard adds its
+ * own "return it to the dock and restart" hint underneath.
+ */
+export function readableDockMotionError(raw: string): Msg {
+  const r = raw.toLowerCase();
+  if (/telemetry stale|stamp stale|localization lost|localization jump|frame changed/.test(r)) {
+    return M`De positiegegevens van de maaier vielen even weg, daarom stopte hij voor de veiligheid. Dat gebeurt soms vlak na het opstarten of bij een zwak RTK-signaal: wacht een minuut voordat je opnieuw begint.`;
+  }
+  if (r.includes('busy, low on battery')) return M`De maaier is bezig, heeft minder dan 30% accu of meldt een fout. Laat hem eerst opladen of los de fout op.`;
+  if (r.includes('chassis stop')) return M`De STOP-knop, de pincodevergrendeling of een opgetilde of gekantelde maaier hield de controle tegen.`;
+  if (r.includes('manual control')) return M`De joystick werd gebruikt tijdens de controle, daarom stopte die.`;
+  if (r.includes('left the bounded dock approach')) return M`De maaier kwam buiten het veilige gebied vóór het laadstation en stopte.`;
+  if (/dock pattern/.test(r)) return M`De camera zag het patroon op het laadstation niet goed. Maak de camera en het patroon schoon en zorg dat niets het zicht blokkeert.`;
+  if (r.includes('without charging contact')) return M`De maaier reed naar het laadstation maar maakte geen laadcontact. Controleer of de laadcontacten schoon zijn en niets de maaier tegenhoudt.`;
+  if (r.includes('reverse distance')) return M`De maaier kwam niet ver genoeg achteruit. Misschien slipten de wielen of stond er iets achter hem.`;
+  if (r.includes('not stationary') || r.includes('dock contact at movement start')) return M`De maaier stond niet stil of niet op de verwachte plek toen de beweging moest beginnen.`;
+  if (/not confirmed|stop button/.test(r)) return M`De maaier bevestigde niet dat hij gestopt is. Druk voor de zekerheid op de STOP-knop van de maaier.`;
+  if (/unavailable|rejected|did not confirm/.test(r)) return M`Een onderdeel van de maaiersoftware reageerde niet. Herstart de maaier en probeer het opnieuw.`;
+  if (/lease expired|heartbeat expired/.test(r)) return M`De verbinding met de server viel even weg tijdens de beweging, daarom stopte de maaier. Houd deze pagina open tijdens de controle.`;
+  return M`De controle stopte op de maaier (${raw}).`;
+}
 /** A pose in the mower's current map frame (metres, radians). */
 export type DockPose = { x: number; y: number; yaw: number };
 /**
@@ -47,7 +77,7 @@ export async function guardedDockMove(sn: string, operation: MowerMapOperation,
     const armed = await operation.command('dock_measurement_control', { action: 'arm', motion_id: id }, 5_000);
     check();
     if (stopped) throw stopped;
-    if (armed?.result !== 0 || armed?.protocol !== DOCK_MOTION_PROTOCOL) throw new Error('The mower needs the current guarded dock recovery protocol. Update extended_commands.py first.');
+    if (armed?.result !== 0 || armed?.protocol !== DOCK_MOTION_PROTOCOL) throw new TextError(M`Deze controle heeft nieuwere maaierfirmware nodig. Werk de firmware van de maaier bij en probeer het opnieuw.`);
     beforeMove();
     // A visual dock took 35 s live; the native lease allows 120 s.
     const result = await operation.command('dock_measurement_move', { action: input.action, distance_m: input.distance,
@@ -55,9 +85,11 @@ export async function guardedDockMove(sn: string, operation: MowerMapOperation,
       ...(input.chargePose ? { charge_pose: input.chargePose } : {}) }, input.action === 'dock' ? 100_000 : 60_000);
     if (result?.result !== 0 || result.protocol !== armed.protocol || result.frame_fingerprint !== input.signature ||
         (input.action === 'dock' && result.docked !== true)) {
-      throw new DockMotionError(typeof result?.error === 'string' ? result.error : 'Movement stop was not confirmed. Check the mower and use its STOP button if needed.');
+      const raw = typeof result?.error === 'string' ? result.error : 'stop not confirmed';
+      console.warn(`[DOCK-MOTION] ${sn}: ${input.action} stopped on the mower: ${raw}`);
+      throw new DockMotionError(readableDockMotionError(raw), raw);
     }
-    if (input.fromDock && !isPose(result.start_pose)) throw new DockMotionError('The mower did not report the pose it left the dock from.');
+    if (input.fromDock && !isPose(result.start_pose)) throw new DockMotionError(M`Deze controle heeft nieuwere maaierfirmware nodig. Werk de firmware van de maaier bij en probeer het opnieuw.`, 'no start_pose');
     if (stopped) throw stopped;
     check();
     return input.fromDock ? { startPose: result.start_pose as DockPose } : {};
@@ -73,5 +105,5 @@ export async function settleDockMotion(sn: string, docked: boolean, check: () =>
     if (sample && (docked || !freshPositionState(sn).docked)) return sample;
     await sleep(250);
   }
-  throw new Error('The mower did not settle with fresh RTK Fixed. Return it to its own dock with the joystick before retrying.');
+  throw new TextError(M`De maaier kreeg na de beweging geen stabiele RTK Fixed-positie. Wacht tot RTK Fixed stabiel is voordat je opnieuw begint.`);
 }

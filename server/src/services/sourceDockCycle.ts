@@ -6,6 +6,7 @@ import { snapshotDockPose } from './dockPhotoReference.js';
 import { readMowerMapSnapshot, withMowerMapOperation } from './mowerMapOperation.js';
 import { beginCopyAlignment, captureCopyAlignment, consumeCopyAlignment, frameSnapshotSignature, getCopyAlignment, type CopyAlignmentView } from './copyAlignment.js';
 import { disarmEdgeWatch } from './scheduleRunner.js';
+import { errorText } from './serverText.js';
 import { guardedDockMove, rememberDockedPose, settleDockMotion, DockMotionError, type DockPose } from './dockMotion.js';
 import { measureReanchorDock } from './reanchorGps.js';
 
@@ -117,8 +118,10 @@ async function run(c: Cycle): Promise<void> {
       c.phase = 'done';
     });
   } catch (error) {
-    if (error instanceof DockMotionError) c.error = error.message;
-    cancel(c, error instanceof Error ? error.message : String(error));
+    // This cycle speaks English; a TextError (dockMotion.ts) is rendered so.
+    const text = errorText('en', error);
+    if (error instanceof DockMotionError) c.error = text;
+    cancel(c, text);
     c.phase = 'error';
     c.alignment = undefined;
     if (c.alignmentId) consumeCopyAlignment(c.alignmentId);

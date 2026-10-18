@@ -10,6 +10,82 @@
 import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
+  // ── Dock measurement / re-anchor: the firmware's reason in plain words (services/dockMotion.ts) ──
+  "De positiegegevens van de maaier vielen even weg, daarom stopte hij voor de veiligheid. Dat gebeurt soms vlak na het opstarten of bij een zwak RTK-signaal: wacht een minuut voordat je opnieuw begint.": {
+    en: "The mower's position data dropped out for a moment, so it stopped for safety. This can happen shortly after start-up or with a weak RTK signal: wait a minute before you start again.",
+    fr: "Les données de position de la tondeuse ont été interrompues un instant, elle s'est donc arrêtée par sécurité. Cela peut arriver peu après le démarrage ou avec un signal RTK faible : attendez une minute avant de recommencer.",
+    de: "Die Positionsdaten des Mähers sind kurz ausgefallen, deshalb hat er aus Sicherheitsgründen angehalten. Das kann kurz nach dem Start oder bei schwachem RTK-Signal passieren: Warten Sie eine Minute, bevor Sie neu beginnen.",
+  },
+  "De maaier is bezig, heeft minder dan 30% accu of meldt een fout. Laat hem eerst opladen of los de fout op.": {
+    en: "The mower is busy, has less than 30% battery or reports an error. Let it charge first or clear the error.",
+    fr: "La tondeuse est occupée, a moins de 30 % de batterie ou signale une erreur. Laissez-la d'abord charger ou corrigez l'erreur.",
+    de: "Der Mäher ist beschäftigt, hat weniger als 30 % Akku oder meldet einen Fehler. Lassen Sie ihn zuerst laden oder beheben Sie den Fehler.",
+  },
+  "De STOP-knop, de pincodevergrendeling of een opgetilde of gekantelde maaier hield de controle tegen.": {
+    en: "The STOP button, the PIN lock or a lifted or tilted mower stopped the check.",
+    fr: "Le bouton STOP, le verrouillage par code PIN ou une tondeuse soulevée ou inclinée a arrêté le contrôle.",
+    de: "Die STOP-Taste, die PIN-Sperre oder ein angehobener oder gekippter Mäher hat die Prüfung angehalten.",
+  },
+  "De joystick werd gebruikt tijdens de controle, daarom stopte die.": {
+    en: "The joystick was used during the check, so it stopped.",
+    fr: "Le joystick a été utilisé pendant le contrôle, il s'est donc arrêté.",
+    de: "Der Joystick wurde während der Prüfung benutzt, deshalb wurde sie abgebrochen.",
+  },
+  "De maaier kwam buiten het veilige gebied vóór het laadstation en stopte.": {
+    en: "The mower left the safe area in front of the charging station and stopped.",
+    fr: "La tondeuse est sortie de la zone sûre devant la station de charge et s'est arrêtée.",
+    de: "Der Mäher hat den sicheren Bereich vor der Ladestation verlassen und angehalten.",
+  },
+  "De camera zag het patroon op het laadstation niet goed. Maak de camera en het patroon schoon en zorg dat niets het zicht blokkeert.": {
+    en: "The camera could not see the pattern on the charging station properly. Clean the camera and the pattern and make sure nothing blocks the view.",
+    fr: "La caméra ne voyait pas correctement le motif de la station de charge. Nettoyez la caméra et le motif et assurez-vous que rien ne bloque la vue.",
+    de: "Die Kamera konnte das Muster an der Ladestation nicht richtig sehen. Reinigen Sie Kamera und Muster und sorgen Sie dafür, dass nichts die Sicht versperrt.",
+  },
+  "De maaier reed naar het laadstation maar maakte geen laadcontact. Controleer of de laadcontacten schoon zijn en niets de maaier tegenhoudt.": {
+    en: "The mower drove to the charging station but made no charging contact. Check that the charging contacts are clean and nothing holds the mower back.",
+    fr: "La tondeuse s'est dirigée vers la station mais n'a pas établi le contact de charge. Vérifiez que les contacts sont propres et que rien ne bloque la tondeuse.",
+    de: "Der Mäher ist zur Ladestation gefahren, hat aber keinen Ladekontakt hergestellt. Prüfen Sie, ob die Ladekontakte sauber sind und nichts den Mäher aufhält.",
+  },
+  "De maaier kwam niet ver genoeg achteruit. Misschien slipten de wielen of stond er iets achter hem.": {
+    en: "The mower did not get far enough backwards. The wheels may have slipped or something was behind it.",
+    fr: "La tondeuse n'a pas assez reculé. Les roues ont peut-être patiné ou quelque chose se trouvait derrière elle.",
+    de: "Der Mäher ist nicht weit genug zurückgefahren. Vielleicht sind die Räder durchgedreht oder etwas stand hinter ihm.",
+  },
+  "De maaier stond niet stil of niet op de verwachte plek toen de beweging moest beginnen.": {
+    en: "The mower was not standing still, or not where it was expected, when the movement was about to start.",
+    fr: "La tondeuse n'était pas immobile, ou pas à l'endroit attendu, au moment où le mouvement devait commencer.",
+    de: "Der Mäher stand nicht still oder nicht an der erwarteten Stelle, als die Bewegung beginnen sollte.",
+  },
+  "Een onderdeel van de maaiersoftware reageerde niet. Herstart de maaier en probeer het opnieuw.": {
+    en: "A part of the mower software did not respond. Restart the mower and try again.",
+    fr: "Un composant du logiciel de la tondeuse n'a pas répondu. Redémarrez la tondeuse et réessayez.",
+    de: "Ein Teil der Mähersoftware hat nicht reagiert. Starten Sie den Mäher neu und versuchen Sie es erneut.",
+  },
+  "De maaier bevestigde niet dat hij gestopt is. Druk voor de zekerheid op de STOP-knop van de maaier.": {
+    en: "The mower did not confirm that it stopped. Press the mower's STOP button to be safe.",
+    fr: "La tondeuse n'a pas confirmé son arrêt. Appuyez par sécurité sur le bouton STOP de la tondeuse.",
+    de: "Der Mäher hat nicht bestätigt, dass er angehalten hat. Drücken Sie sicherheitshalber die STOP-Taste des Mähers.",
+  },
+  "De verbinding met de server viel even weg tijdens de beweging, daarom stopte de maaier. Houd deze pagina open tijdens de controle.": {
+    en: "The connection to the server dropped for a moment during the movement, so the mower stopped. Keep this page open during the check.",
+    fr: "La connexion au serveur a été interrompue un instant pendant le mouvement, la tondeuse s'est donc arrêtée. Gardez cette page ouverte pendant le contrôle.",
+    de: "Die Verbindung zum Server ist während der Bewegung kurz ausgefallen, deshalb hat der Mäher angehalten. Lassen Sie diese Seite während der Prüfung geöffnet.",
+  },
+  "De controle stopte op de maaier ({0}).": {
+    en: "The check stopped on the mower ({0}).",
+    fr: "Le contrôle s'est arrêté sur la tondeuse ({0}).",
+    de: "Die Prüfung wurde auf dem Mäher beendet ({0}).",
+  },
+  "Deze controle heeft nieuwere maaierfirmware nodig. Werk de firmware van de maaier bij en probeer het opnieuw.": {
+    en: "This check needs newer mower firmware. Update the mower's firmware and try again.",
+    fr: "Ce contrôle nécessite un firmware de tondeuse plus récent. Mettez à jour le firmware de la tondeuse et réessayez.",
+    de: "Diese Prüfung benötigt eine neuere Mäher-Firmware. Aktualisieren Sie die Firmware des Mähers und versuchen Sie es erneut.",
+  },
+  "De maaier kreeg na de beweging geen stabiele RTK Fixed-positie. Wacht tot RTK Fixed stabiel is voordat je opnieuw begint.": {
+    en: "The mower did not get a stable RTK Fixed position after the movement. Wait until RTK Fixed is stable before you start again.",
+    fr: "La tondeuse n'a pas obtenu de position RTK Fixed stable après le mouvement. Attendez que le RTK Fixed soit stable avant de recommencer.",
+    de: "Der Mäher hat nach der Bewegung keine stabile RTK-Fixed-Position bekommen. Warten Sie, bis RTK Fixed stabil ist, bevor Sie neu beginnen.",
+  },
   "Ongeldig serienummer": {
     en: "Invalid serial number",
     fr: "Numéro de série invalide",

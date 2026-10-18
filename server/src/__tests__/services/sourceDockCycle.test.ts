@@ -50,7 +50,7 @@ it.each(['dock-measurement-motion-v3', 'dock-measurement-motion-v4'])('docking r
   const move = guardedDockMove('source', { sn: 'source', id: 'lease', reanchor: true, command: h.command },
     { action: 'dock', distance: 0, fromDock: false, signature: 'fingerprint', chargePose: LEFT_FROM }, () => {}, undefined, beforeMove);
   if (protocol.endsWith('v3')) {
-    await expect(move).rejects.toThrow('Update extended_commands.py');
+    await expect(move).rejects.toThrow('nieuwere maaierfirmware');
     expect(h.command).toHaveBeenCalledTimes(1);
     expect(beforeMove).not.toHaveBeenCalled();
   } else {
@@ -94,7 +94,7 @@ it('stops after a departure whose response lacks the pose it left from', async (
     return { ...native(params, h.docked), start_pose: undefined };
   });
   start(); tick(); await advance();
-  expect(tick('stop')).toMatchObject({ phase: 'error', error: expect.stringContaining('pose') });
+  expect(tick('stop')).toMatchObject({ phase: 'error', error: expect.stringContaining('newer mower firmware') });
   expect(h.command.mock.calls.filter(([cmd]) => cmd === 'dock_measurement_move')).toHaveLength(1);
   expect(h.capture).not.toHaveBeenCalled();
 });
@@ -190,5 +190,5 @@ it('surfaces a failed native cancellation instead of hiding it behind the operat
   start(); tick(); await advance(); tick('stop');
   release({ result: 1, error: 'visual docking cancellation not confirmed; use the mower STOP button' });
   await advance();
-  expect(tick('stop')).toMatchObject({ phase: 'error', error: 'visual docking cancellation not confirmed; use the mower STOP button' });
+  expect(tick('stop')).toMatchObject({ phase: 'error', error: "The mower did not confirm that it stopped. Press the mower's STOP button to be safe." });
 });
