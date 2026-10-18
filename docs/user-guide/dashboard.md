@@ -206,6 +206,11 @@ firmware and do not depend on the app being open.
 
 ## Night patrol
 
+The Patrol button appears in the control bar once you enable **Experimental
+features** under Settings. With that switch off, the button and its panel are
+hidden and nothing else changes: the server still runs a patrol schedule that
+is on, and patrol events still show in the notification bell.
+
 !!! warning "Custom firmware 50 or newer"
     Night patrol needs OpenNova custom firmware **50 or newer**. On stock
     firmware, or on an older custom build, the dashboard refuses to start it
@@ -229,24 +234,46 @@ each chosen work area, 60 at most. Between work areas the mower only drives
 over a recorded channel or where two areas touch, like the edge cut does; an
 area it cannot reach that way is skipped.
 
-The **Night patrol** card sits in the drawer, which the activity icon in the
-header opens (*Diagnostics & logs*):
+The **Patrol** button sits in the control bar over the map, right of the home
+button (on a narrow screen it is just the moon icon). A click starts a patrol.
+The small chevron next to it opens the **patrol panel** under the bar, the way
+the Mapping button opens its panel. Opening one of the bar's panels closes the
+others.
 
-- **Phase line with a Start / Stop button.** The line says what the patrol is
-  doing: ready, on patrol, coming back, back and docking, stopped, or the
-  error that stopped it. The button is **Start** when nothing runs. As soon as
-  the mower has accepted the patrol, which is before it leaves the dock, the
-  button becomes **Stop**, and it stays Stop until the mower is back.
-  Stop ends the drive where the mower stands and does not send it home; use
-  *Go to charger* for that. The normal stop and go-to-charger buttons, in the
-  apps too, end a patrol as well. So do the STOP button on the mower and
-  lifting or tilting it: the patrol then ends where the mower stands, and you
-  get a *Patrol stopped* notification.
+- **The Patrol button.** Idle, one click starts the patrol. As soon as the
+  mower has accepted it, which is before it leaves the dock, the button turns
+  into a red **Stop patrol**, and it stays that until the mower is back. A
+  refusal comes up as the bar's usual red message, with the reason. Stop ends
+  the drive where the mower stands and does not send it home; use *Go to
+  charger* for that. The normal stop and go-to-charger buttons, in the apps
+  too, end a patrol as well. So do the STOP button on the mower and lifting or
+  tilting it: the patrol then ends where the mower stands, and you get a
+  *Patrol stopped* notification. While a patrol drives, the button's tooltip
+  says what it is doing.
+- **Greyed out.** While an edge cut or a drive to a zone holds the wheels, the
+  button is greyed out, and its tooltip and an amber line in the panel say why.
+  Wait until that drive is over, or stop it first. While the mower is offline
+  the button is greyed out too, and only its tooltip says so. After a start was
+  accepted the button also stays off for a few seconds, until the mower
+  reports in.
+- **Phase line.** The panel opens with it. It says what the patrol is doing:
+  ready, starting, finding its position, on patrol, coming back, back and
+  docking, stopped, or the reason that stopped it, in words (the STOP button was
+  pressed, it was lifted, no zone is recorded around the charging station, and
+  so on). After a finished patrol, once the mower stands on the dock again, it
+  says ready.
+- **Skipped areas and checkpoints.** When the mower cannot reach a chosen work
+  area it leaves that area out, and the panel shows *Skipped: area (reason)*
+  under the phase line. A single checkpoint it cannot reach is listed as
+  *Skipped checkpoints: 3, 7 (unreachable)*. These come from live reports from
+  the mower, so you only see them when the dashboard was open while the patrol
+  ran, and they are gone after a reload.
 - **Zones.** One checkbox per work area. With none ticked, the patrol covers
   the area the dock stands in.
 - **Headlight.** A switch for the mower's headlight during the patrol, on by
   default. The light goes on once the mower drives and goes off again before
-  it docks, so the dock marker sees the same light as after mowing. The mower
+  it docks; while it docks the mower uses its own low docking light, so the
+  dock marker is never overexposed by the patrol light. The mower
   switches it off itself at the end of a patrol too, also when the server
   misses that end.
 - **Every night at HH:MM.** One patrol schedule per mower: a time and an on/off
@@ -257,15 +284,77 @@ header opens (*Diagnostics & logs*):
   does not pause it.
 - **Last patrol.** The latest patrol, with the photo of each checkpoint (a
   checkpoint can lack a photo), labelled *person*, *animal*, *nothing* or
-  *no camera data*.
+  *no camera data*. The **Report** button beside it opens the full report of
+  that patrol.
+- **Last patrols.** One line for each of the last 10 patrols: when it
+  started, how many checkpoints it reached (out of how many were planned), how
+  many it skipped, how many checkpoints showed a person and how many an
+  animal, and how it ended: done, stopped, failed or still running. A click on
+  a line opens the report of that patrol.
 
 *No camera data* means the camera gave nothing usable at that checkpoint
 (fewer than two detection readings), so nobody knows what was there. It does
 not mean the garden was empty. Such a checkpoint never raises a notification
 and is never counted as all clear.
 
+### The route on the map
+
+While the patrol panel is open, and while a patrol is out, the map shows the
+route as numbered circles in driving order, with a dashed line through the
+checkpoints of each work area. A second dashed line joins the last checkpoint
+of one area to the first of the next. The colour says where the patrol is:
+
+- grey: not visited yet
+- blue and pulsing: the checkpoint the mower is heading for (none while it is
+  coming back, since the round is over by then)
+- green: reached
+- red with a cross: skipped, because the mower could not reach it or left its
+  whole area out
+
+With the panel open and no patrol out, the circles show the route a patrol
+started now would drive, all grey. They change when you tick or clear a zone.
+While a patrol is out they follow the mower's reports, so you can watch it
+work through the route, also with the panel closed. While a report is open,
+the map shows the checkpoints of the patrol you picked, as that patrol ended.
+Closing the panel, with no patrol out, takes the circles away again. They
+never move or zoom the map. Like the rest of the patrol, they need the
+Experimental features switch.
+
+### The patrol report
+
+The report opens as a large dialog, and full screen on a phone. At the top is
+a summary: when the patrol started, how many checkpoints it reached (out of how
+many were planned), how many it skipped, how many showed a person and how many
+an animal, and how it ended. When the patrol failed, or the mower stopped it
+itself (the STOP button, a lift or a tilt), the reason is there in words. If
+the mower did not manage to dock after the patrol, the summary says so, with
+the time.
+
+Under the summary is the photo of the selected checkpoint, large. Next to it
+(below it on a phone) are the details: the checkpoint number out of the total,
+what was seen, the time, the work area, the position in metres, the person and
+animal points (the scores the camera gave there), the number of camera frames
+behind them, and whether it raised an alert. A checkpoint without a photo
+shows a placeholder. The report opens on the first checkpoint that showed a
+person or an animal, or on the first checkpoint when nothing was seen.
+
+Step through the checkpoints with the arrows beside the photo or with the left
+and right arrow keys; Home and End jump to the first and the last. Escape
+closes the report. A strip of thumbnails under the photo lists every
+checkpoint of the route. Its border shows what was seen: red for a person,
+amber for an animal, green for nothing and grey for no camera data. A
+checkpoint the mower skipped has a red cross, and one it never got to has a
+dashed outline. The menu at the top picks another of the last 10 patrols, and
+the map follows the choice.
+
+A server that does not record the route yet still gives the panel and the
+report, but without the circles on the map, without the *out of* and *skipped*
+counts, without how a patrol ended, and with only the checkpoints that left a
+photo or a result in the strip.
+
 The photos and results of the last 10 patrols are kept on your own server;
-older ones are deleted. A notification is text only, the photo is in the card.
+older ones are deleted. A notification is text only, the photo is in the panel
+and the report.
 A person or an animal gives a *Patrol alert* (at most one per kind every two
 minutes during a patrol), and a patrol that stops with an error gives
 *Patrol stopped*. See [Notifications & Push](../guide/notifications.md).

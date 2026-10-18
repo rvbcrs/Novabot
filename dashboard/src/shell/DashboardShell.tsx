@@ -7,6 +7,7 @@ import { Drawer } from './Drawer';
 import { DeviceChips } from './DeviceChips';
 import { useDevices } from '../hooks/useDevices';
 import { useActiveMower } from '../hooks/useActiveMower';
+import { usePatrolReports } from '../hooks/usePatrolReports';
 import { deriveMowerActivity } from '../utils/mowerActivity';
 import { ActiveMowerProvider } from '../contexts/ActiveMowerContext';
 import { MapTab } from '../pages/MapTab';
@@ -19,6 +20,7 @@ import { DockDriftCard } from '../components/drawer/DockDriftCard';
 import { ServerLogTail, FloatingServerLog } from '../components/drawer/ServerLogTail';
 import { MowerControls } from '../components/dashboard/MowerControls';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
+import type { PatrolOverlay } from '../utils/patrolPlan';
 import { LongPauseBanner } from './LongPauseBanner';
 import { MdnsConflictBanner } from './MdnsConflictBanner';
 import { UpdateBanner } from './UpdateBanner';
@@ -38,6 +40,9 @@ function ShellInner() {
   const { devices, loading, connected, otaProgress, liveOutlines, coveredLanes,
     mowerEvents, addMowerEvents } = useDevices();
   const { activeMower, activeMowerSn, setActiveMowerSn, knownMowers } = useActiveMower(devices);
+  // Skipped areas and checkpoint reports of a night patrol: socket events, kept
+  // here so they survive a tab switch (the patrol panel sits in the Map tab's control bar).
+  const patrolReports = usePatrolReports(activeMowerSn, activeMower?.sensors.patrol_phase);
   const charger = [...devices.values()].find(d => d.deviceType === 'charger') ?? null;
   // Terrain is experimental and only appears once the operator opts in under
   // Settings, mirroring the app's Experimental Features switch.
@@ -79,6 +84,9 @@ function ShellInner() {
   // the MowerMap (in MapTab) to show a fresh coverage preview at the chosen
   // direction. Nonce makes repeated clicks re-fire even with the same direction.
   const [zoneHighlight, setZoneHighlight] = useState<string | null>(null);
+  // The night patrol's route and checkpoints on the map: set by the patrol panel in
+  // the control bar (MowerControls), drawn by the map. Same bridge as the highlight.
+  const [patrolOverlay, setPatrolOverlay] = useState<PatrolOverlay | null>(null);
   const [previewRequest, setPreviewRequest] = useState<{ nonce: number; covDirection: number; canonicals: string[]; polygonArea?: Array<{ latitude: number; longitude: number }> } | null>(null);
   // Pattern placement bridge: the Start-sheet Pattern tab (header MowerControls)
   // and the MowerMap (MapTab) are far apart in the tree. patternMode tells the
@@ -137,9 +145,11 @@ function ShellInner() {
       toastedEvents.current.add(key);
       // The red banner already says this, in one place; the bell keeps the event.
       if (e.type === 'firmware_required') continue;
+      // The amber types of the bell (low battery, weak GPS, a patrol that saw someone) are the
+      // blue info toast: there is no amber one. patrol_failed stays red, like the bell.
       const kind = e.type === 'docked' || e.type === 'mowing_finished' || e.type === 'error_cleared'
         ? 'success'
-        : (e.type === 'mowing_started' || e.type === 'low_battery' || e.type === 'gps_weak' ? 'info' : 'error');
+        : (e.type === 'mowing_started' || e.type === 'low_battery' || e.type === 'gps_weak' || e.type === 'patrol_detection' ? 'info' : 'error');
       showToast(`${e.title}: ${e.message}`, kind);
     }
   }, [mowerEvents, showToast]);
@@ -178,6 +188,8 @@ function ShellInner() {
       onPatternPlacementChange={setPatternPlacement}
       previewLoading={previewLoading}
       onZoneHighlight={setZoneHighlight}
+      patrolReports={patrolReports}
+      onPatrolOverlay={setPatrolOverlay}
     />
   ) : null;
 
@@ -279,6 +291,7 @@ function ShellInner() {
             progressSuppressed={freshSession}
             onPreviewLoading={setPreviewLoading}
             highlightMapId={zoneHighlight}
+            patrolOverlay={patrolOverlay}
           />
         )}
         {tab === 'schedule' && <SchedulePage mower={activeMower} />}

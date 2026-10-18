@@ -40,6 +40,14 @@ import { offsetPolygon } from '../../utils/polygonOffset.js';
 import type { PatternPlacement } from '../patterns/PatternOverlay';
 import { ManualControlPanel } from './ManualControlPanel';
 import { ReanchorWizard } from './ReanchorWizard';
+import { PatrolButton } from './PatrolButton';
+import { PatrolPanel } from './PatrolPanel';
+import { PatrolReport } from './PatrolReport';
+import type { PatrolReports } from '../../hooks/usePatrolReports';
+import { usePatrolView } from '../../hooks/usePatrolView';
+import type { PatrolOverlay } from '../../utils/patrolPlan';
+import { patrolStatus } from '../../utils/patrolStatus';
+import { useExperimental } from '../../utils/experimental';
 
 // Path direction: 0–180° in 15° steps (matches app StartMowSheet.tsx stepper).
 
@@ -69,17 +77,47 @@ interface Props {
   /** The work area chosen in the Start sheet, while the sheet is open, so the
    *  map can light it up; null once the sheet closes or "all" is chosen. */
   onZoneHighlight?: (mapId: string | null) => void;
+  /** What the mower reported during a night patrol that no sensor carries (usePatrolReports,
+   *  kept in the shell so it is not lost while another tab is open). For the patrol panel. */
+  patrolReports?: PatrolReports;
+  /** The night patrol's route for the map (checkpoints with their state), or null for nothing.
+   *  Pushed up like onZoneHighlight; null again when these controls go. */
+  onPatrolOverlay?: (overlay: PatrolOverlay | null) => void;
 }
 
 export function MowerControls({
   sn, online, sensors, onPathDirectionChange, pendingPolygon, onStarted,
   onPatternPlacementChange, onPatternModeChange, onOffsetPreviewChange, patternCenter, onPreview,
-  previewLoading, onZoneHighlight,
+  previewLoading, onZoneHighlight, patrolReports, onPatrolOverlay,
 }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [mappingExpanded, setMappingExpanded] = useState(false);
+  // The patrol panel under the bar (zones, headlight, nightly schedule, last patrol),
+  // opened by the chevron beside the Patrol button, like the Mapping panel.
+  const [patrolExpanded, setPatrolExpanded] = useState(false);
+  const patrolActive = patrolStatus(sensors).active;
+  // The night patrol is experimental: its button and panel only exist while the
+  // Experimental features switch (Settings) is on, like the Terrain tab.
+  const experimental = useExperimental();
+  // Turning the switch off while the panel is open closes it, so turning it on
+  // again does not bring a stale panel back (adjusted while rendering, as React documents).
+  const [seenExperimental, setSeenExperimental] = useState(experimental);
+  if (experimental !== seenExperimental) {
+    setSeenExperimental(experimental);
+    if (!experimental) setPatrolExpanded(false);
+  }
   const [maps, setMaps] = useState<MapData[]>([]);
+  // The patrol's data: the runs, the plan, the report dialog, and from those the
+  // checkpoints the map draws while the panel is open or a patrol is out.
+  const patrol = usePatrolView({ sn, sensors, enabled: experimental, panelOpen: patrolExpanded, reports: patrolReports });
+  const patrolOverlay = patrol.overlay;
+  useEffect(() => { onPatrolOverlay?.(patrolOverlay); }, [patrolOverlay, onPatrolOverlay]);
+  useEffect(() => () => onPatrolOverlay?.(null), [onPatrolOverlay]);
+  const patrolZoneName = useCallback(
+    (slot: string) => maps.find(m => m.canonicalName === slot)?.mapName || slot,
+    [maps],
+  );
   const [chargerGps, setChargerGps] = useState<GpsPoint | null>(null);
   const [cuttingHeight, setCuttingHeight] = useState(() => readMowDefaults().cuttingHeight);
   const [pathDirection, setPathDirection] = useState(() => readMowDefaults().pathDirection);
@@ -243,14 +281,16 @@ export function MowerControls({
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const [sheetAnchor, setSheetAnchor] = useState<{ top: number; right: number } | null>(null);
   useLayoutEffect(() => {
-    if (!expanded && !mappingExpanded) { setSheetAnchor(null); return; }
+    if (!expanded && !mappingExpanded && !patrolExpanded) { setSheetAnchor(null); return; }
     const r = toolbarRef.current?.getBoundingClientRect();
     if (!r) return;
     // Clamp BOTH edges: `right` ≥ 8 keeps the sheet on-screen at the right,
     // and capping it at vw - width - 8 keeps the LEFT edge on-screen too (on
     // phones the sheet is viewport-wide while the toolbar sits mid-map, so an
     // unclamped right-anchor pushes half the sheet off the left edge).
-    const sheetW = window.innerWidth < 640 ? window.innerWidth - 16 : 288;
+    // The patrol panel is wider (sm:w-80); `patrolActive` re-measures when the
+    // Patrol button turns into the wider Stop patrol and moves the centred bar.
+    const sheetW = window.innerWidth < 640 ? window.innerWidth - 16 : (patrolExpanded ? 320 : 288);
     setSheetAnchor({
       top: r.bottom + 4,
       right: Math.min(
@@ -258,7 +298,7 @@ export function MowerControls({
         Math.max(8, window.innerWidth - sheetW - 8),
       ),
     });
-  }, [expanded, mappingExpanded]);
+  }, [expanded, mappingExpanded, patrolExpanded, patrolActive]);
   // Manual-control floating window position (px, fixed). Draggable + persistent
   // so it never opens hidden behind the top bar.
   // Restore-clamp: bring the window FULLY into view — a position saved on a
@@ -993,6 +1033,7 @@ export function MowerControls({
               const next = !expanded;
               setExpanded(next);
               setMappingExpanded(false);
+              setPatrolExpanded(false);
               onPathDirectionChange?.(next ? pathDirection : null);
             }}
             disabled={startDisabled}
@@ -1122,9 +1163,28 @@ export function MowerControls({
           <Home className="w-3.5 h-3.5" />
         </button>
 
+        {/* Drive controls | tools. PATROL: persistent button. Idle: starts the night
+            patrol; while it drives it is a red Stop patrol. The chevron beside it
+            opens the patrol panel (zones, headlight, nightly schedule, last patrol)
+            under the bar. Experimental: absent, with its divider, while the switch is off. */}
+        {experimental && (
+          <>
+            <div className="w-px self-stretch bg-gray-700/50 mx-0.5" />
+            <PatrolButton
+              sn={sn}
+              sensors={sensors}
+              disabled={disabled}
+              offline={!online && !demoActive}
+              expanded={patrolExpanded}
+              onToggleExpanded={() => { setPatrolExpanded(!patrolExpanded); setExpanded(false); setMappingExpanded(false); }}
+              baseClass={btnBase}
+            />
+          </>
+        )}
+
         {/* MANUAL CONTROL — persistent button (joystick / blade / speed sheet). */}
         <button
-          onClick={() => { setShowManualControl(true); setExpanded(false); setMappingExpanded(false); }}
+          onClick={() => { setShowManualControl(true); setExpanded(false); setMappingExpanded(false); setPatrolExpanded(false); }}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-sky-300 hover:bg-sky-700/40`}
           title={t('controls.manualControl', 'Handmatige besturing')}
@@ -1134,7 +1194,7 @@ export function MowerControls({
 
         {/* MAPPING — persistent button; opens the mapping dropdown. */}
         <button
-          onClick={() => { setMappingExpanded(!mappingExpanded); setExpanded(false); }}
+          onClick={() => { setMappingExpanded(!mappingExpanded); setExpanded(false); setPatrolExpanded(false); }}
           disabled={disabled}
           className={`${btnBase} ${mappingExpanded || isMappingActive ? 'bg-purple-700/40 text-purple-200' : 'bg-gray-700/60 text-gray-400 hover:text-white'}`}
           title={t('controls.mapping')}
@@ -1481,6 +1541,43 @@ export function MowerControls({
           </button>
         </div>
       , document.body)}
+
+      {/* Patrol panel: same portal treatment as the sheets above. Keyed by mower:
+          another mower starts from its own settings, not the last one's. */}
+      {experimental && patrolExpanded && sheetAnchor && createPortal(
+        <div
+          className="fixed w-[calc(100vw-1rem)] sm:w-80 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 max-h-[80vh] overflow-y-auto overflow-x-hidden"
+          style={{ top: sheetAnchor.top, right: sheetAnchor.right }}
+        >
+          <PatrolPanel
+            key={sn}
+            sn={sn}
+            sensors={sensors}
+            reports={patrolReports}
+            runs={patrol.runs}
+            runsLoad={patrol.runsLoad}
+            runsError={patrol.runsError}
+            onZonesSaved={patrol.reloadPlan}
+            onOpenReport={patrol.openReport}
+          />
+        </div>
+      , document.body)}
+
+      {/* Patrol report: a full-screen dialog (portaled by itself) over the panel, which stays
+          open behind it. While it is open the map shows the selected run's checkpoints. */}
+      {experimental && patrol.reportRun !== null && (
+        <PatrolReport
+          sn={sn}
+          runs={patrol.runs}
+          runsLoad={patrol.runsLoad}
+          runsError={patrol.runsError}
+          runId={patrol.reportRun}
+          out={patrolActive}
+          zoneName={patrolZoneName}
+          onSelectRun={patrol.openReport}
+          onClose={patrol.closeReport}
+        />
+      )}
 
 
       {/* Return-to-home keuze (zoals de OpenNova app): beëindigen of pauzeren + terug. */}

@@ -50,6 +50,8 @@ import { coverageLaneStrokes, type LaneStroke } from '../../utils/coverageStyle'
 import { mapApplyView } from '../../utils/mapApply';
 import { PatternOverlay, type PatternPlacement } from '../patterns/PatternOverlay';
 import { CameraTile } from './CameraTile';
+import { PatrolOverlayLayer } from './PatrolOverlayLayer';
+import type { PatrolOverlay } from '../../utils/patrolPlan';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { readMowDefaults } from '../../utils/mowDefaults';
 import { activeWorkSlots, previewMapIdsFromCanonicals, workMapSlotIndex } from '../../utils/mqtt';
@@ -263,6 +265,9 @@ interface Props {
   onPreviewLoading?: (loading: boolean) => void;
   /** Work area chosen in the Start sheet: drawn highlighted, like a clicked one. */
   highlightMapId?: string | null;
+  /** The night patrol's checkpoints and route (checkpoint states included), from the patrol
+   *  panel / report in the control bar; null or absent draws nothing. */
+  patrolOverlay?: PatrolOverlay | null;
 }
 
 function locColor(quality: number): string {
@@ -1149,7 +1154,7 @@ function CelebrationOverlay({ area, onDismiss }: { area: number; onDismiss: () =
   );
 }
 
-export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, progressSuppressed, sensors, signals, mowing, pathDirectionPreview, previewRequest, onMapSaved: _onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes, controlsSlot, onPreviewLoading, highlightMapId }: Props) {
+export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, progressSuppressed, sensors, signals, mowing, pathDirectionPreview, previewRequest, onMapSaved: _onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes, controlsSlot, onPreviewLoading, highlightMapId, patrolOverlay }: Props) {
   const dialog = useDialog();
   const { t } = useTranslation();
   const mowingSensors = sensors ?? {};
@@ -1866,6 +1871,18 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (!isUsableChargerGps(chargerGps)) return { lat: NaN, lng: NaN };
     return calibrateGps(localToGps({ x: p.x - (chargingPose?.x ?? 0), y: p.y - (chargingPose?.y ?? 0) }, chargerGps), displayCal, polyCenter);
   }, [chargerGps, chargingPose, displayCal, polyCenter]);
+  // The night patrol's checkpoints are in the frame of the zone polygons (stored
+  // geometry), so they are placed the way those are: through gpsMaps and
+  // calibratePoints, geometry offset included. Not like the mower's own
+  // telemetry (displayFromMower), which is already in effective mower metres.
+  const patrolToLatLng = useCallback((p: LocalPoint): [number, number] | null => {
+    if (!isUsableChargerGps(chargerGps)) return null;
+    const g = calibrateGps(
+      localToGps({ x: p.x - (chargingPose?.x ?? 0), y: p.y - (chargingPose?.y ?? 0) }, chargerGps),
+      displayCal, polyCenter, geometryOffset,
+    );
+    return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? [g.lat, g.lng] : null;
+  }, [chargerGps, chargingPose, displayCal, polyCenter, geometryOffset]);
 
   // Area type labels (translated)
   const AREA_TYPE_META: Record<AreaType, { color: string; label: string }> = useMemo(() => ({
@@ -4074,6 +4091,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               })}
             </Fragment>
           ))}
+          {/* Night patrol: the route and its checkpoints (control bar → patrol panel). */}
+          {patrolOverlay && <PatrolOverlayLayer overlay={patrolOverlay} toLatLng={patrolToLatLng} />}
           {/* Push/pull brush (R3): live in-progress stroke + pointer handler. */}
           {brushMode && brushOverlayGps && brushOverlayGps.length >= 3 && (
             <Polygon

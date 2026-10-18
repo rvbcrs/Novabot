@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Bell, BatteryLow, CheckCircle2, Home, AlertTriangle, ShieldAlert, Lock,
-  WifiOff, Satellite, Map as MapIcon, Cpu, Play, XCircle, type LucideIcon,
+  WifiOff, Satellite, Map as MapIcon, Cpu, Play, XCircle, ScanEye, OctagonX, type LucideIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -36,6 +36,10 @@ const META: Record<MowerEventType, { icon: LucideIcon; tone: string }> = {
   error: { icon: AlertTriangle, tone: 'text-red-400' },
   dock_drift: { icon: Home, tone: 'text-amber-400' },
   firmware_required: { icon: ShieldAlert, tone: 'text-red-400' },
+  // The night patrol saw a person or an animal: a heads-up, not a fault. The
+  // title and text come from the server.
+  patrol_detection: { icon: ScanEye, tone: 'text-amber-400' },
+  patrol_failed: { icon: OctagonX, tone: 'text-red-400' },
 };
 
 function relative(ts: number, t: TFunction): string {

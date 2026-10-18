@@ -5,6 +5,7 @@ import { MowerMap } from '../components/map/MowerMap';
 import { AutoMapPanel } from '../components/map/AutoMapPanel';
 import { MapPullBanner } from '../components/map/MapPullBanner';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
+import type { PatrolOverlay } from '../utils/patrolPlan';
 
 type OtaProgressEntry = { status: string; percentage: number | null; timestamp: number; session?: unknown };
 
@@ -28,9 +29,11 @@ interface Props {
   onPreviewLoading?: (loading: boolean) => void;
   /** Work area chosen in the Start sheet: drawn highlighted, like a clicked one. */
   highlightMapId?: string | null;
+  /** The night patrol's route and checkpoints, set by the patrol panel in the control bar. */
+  patrolOverlay?: PatrolOverlay | null;
 }
 
-export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRequest, patternPlacement, onMapClickForPattern, controlsSlot, progressSuppressed, onPreviewLoading, highlightMapId }: Props) {
+export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRequest, patternPlacement, onMapClickForPattern, controlsSlot, progressSuppressed, onPreviewLoading, highlightMapId, patrolOverlay }: Props) {
   const { t } = useTranslation();
   if (!mower) {
     return <div className="p-8 text-zinc-500">{t('pages.selectMowerForMap')}</div>;
@@ -82,6 +85,7 @@ export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRe
         progressSuppressed={progressSuppressed}
         onPreviewLoading={onPreviewLoading}
         highlightMapId={highlightMapId}
+        patrolOverlay={patrolOverlay}
       />
       <AutoMapPanel sn={mower.sn} sensors={mower.sensors} />
     </div>

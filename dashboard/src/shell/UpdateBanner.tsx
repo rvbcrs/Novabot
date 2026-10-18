@@ -7,15 +7,21 @@ import { useDialog } from '../components/common/Dialog';
 const POLL_MS = 10 * 60 * 1000; // match the admin panel; server caches 5 min
 const DISMISS_KEY = 'novabot.update.dismissed';
 
+// channel and latestBuiltAt come from the server for a :beta install; ServerUpdateInfo
+// (api/client.ts) does not list them yet.
+type BannerInfo = ServerUpdateInfo & { channel?: 'beta' | 'release'; latestBuiltAt?: string | null };
+
 /**
  * Mirrors the admin panel's "Server update available" banner: polls Docker Hub
  * (via the server) for a newer rvbcrs/opennova image and shows a dismissible
  * heads-up with the update command. Dismiss is remembered per version, so a
  * NEWER release shows the banner again. Stays silent on any fetch error.
+ * On the :beta channel the version number stays the same between builds, so the
+ * line names the build date of the newer beta, and dismiss follows its label.
  */
 export function UpdateBanner() {
   const { t } = useTranslation();
-  const [info, setInfo] = useState<ServerUpdateInfo | null>(null);
+  const [info, setInfo] = useState<BannerInfo | null>(null);
   const [dismissed, setDismissed] = useState<string>(() => {
     try { return localStorage.getItem(DISMISS_KEY) || ''; } catch { return ''; }
   });
@@ -57,10 +63,12 @@ export function UpdateBanner() {
   if (!info || !info.updateAvailable || !info.latest) return null;
   if (info.latest === dismissed) return null;
 
+  const beta = info.channel === 'beta';
+
   const updateNow = async () => {
     const mowing = info.mowing ?? [];
     const ok = await dialog.confirm({
-      title: t('update.confirmTitle', { latest: info.latest }),
+      title: t(beta ? 'update.confirmTitleBeta' : 'update.confirmTitle', { latest: info.latest }),
       message: mowing.length
         ? `${t('update.confirmMowing', { count: mowing.length })}\n\n${t('update.confirmBody')}`
         : t('update.confirmBody'),
@@ -83,7 +91,12 @@ export function UpdateBanner() {
   const pushed = info.lastUpdatedAt
     ? t('update.pushed', { when: new Date(info.lastUpdatedAt).toLocaleString() })
     : '';
-  const detail = t('update.detail', { current: info.current, latest: info.latest }) + pushed;
+  const built = info.latestBuiltAt
+    ? t('update.betaBuilt', { when: new Date(info.latestBuiltAt).toLocaleString() })
+    : '';
+  const detail = beta
+    ? t('update.betaDetail') + built
+    : t('update.detail', { current: info.current, latest: info.latest }) + pushed;
 
   return (
     <div className="px-4 py-2 bg-violet-900/40 border-b border-violet-700/60 text-violet-100 text-sm">
@@ -100,12 +113,15 @@ export function UpdateBanner() {
               {t('update.updateNow')}
             </button>
           )}
-          <button
-            onClick={() => setShowHow(v => !v)}
-            className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium transition-colors"
-          >
-            {t('update.howTo')}
-          </button>
+          {/* The terminal route only where the button cannot do it. */}
+          {!info.selfUpdate?.available && (
+            <button
+              onClick={() => setShowHow(v => !v)}
+              className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium transition-colors"
+            >
+              {t('update.howTo')}
+            </button>
+          )}
           <button
             onClick={dismiss}
             title={t('update.dismiss')}

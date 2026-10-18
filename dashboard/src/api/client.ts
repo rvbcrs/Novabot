@@ -1,6 +1,7 @@
 import type { DeviceState, SensorDef, MapData, MapsResponse, TrailPoint, MapCalibration, Schedule, WorkRecord, SignalHistoryPoint, LocalPoint, MowerEvent } from '../types';
 import { selfIntersects } from '../utils/editGeometry';
 import { makeValidPolygon } from '../utils/brushPaint';
+import { normalizePlan, type PatrolPlanZones } from '../utils/patrolPlan';
 import i18n from '../i18n';
 
 const BASE = '/api/dashboard';
@@ -120,8 +121,8 @@ export function logout(): void {
   handleUnauthorized();
 }
 
-async function get(url: string): Promise<Response> {
-  const res = await apiFetch(url);
+async function get(url: string, init?: RequestInit): Promise<Response> {
+  const res = await apiFetch(url, init);
   if (!res.ok) {
     const data = await res.json().catch(() => ({})) as { error?: string };
     throw new Error(data.error || `${res.status} ${res.statusText}`);
@@ -750,12 +751,85 @@ export async function stopNavigation(sn: string): Promise<CommandResult> {
   return (await post(`${BASE}/stop-navigation/${encodeURIComponent(sn)}`)).json();
 }
 
-export async function startPatrol(sn: string): Promise<CommandResult> {
-  return (await post(`${BASE}/patrol/${encodeURIComponent(sn)}`)).json();
+// ── Night patrol (OpenNova) ─────────────────────────────────────
+
+/** One checkpoint of a patrol run, as GET /patrol/:sn/runs lists it. */
+export interface PatrolFrameDto {
+  seq: number; x: number; y: number; person: number; animal: number; frames: number;
+  /** A photo exists (GET /patrol/:sn/runs/:run/:seq.jpg). */
+  image: boolean; ts: number;
+  /** null: no camera data (fewer than two detection readings); []: nothing; else the classes seen. */
+  seen: Array<'person' | 'animal'> | null;
+}
+export interface PatrolRunDto {
+  run: string; startedAt: number; frames: PatrolFrameDto[];
+  // The fields below come from a newer server; each may be missing, and the dashboard copes.
+  /** The route this run was planned with, checkpoints in driving order; null for a run without one. */
+  plan?: PatrolPlanZones | null;
+  /** How the run ended; null while it is still out. */
+  endedPhase?: 'done' | 'error' | 'stopped' | null;
+  error?: string | null;
+  /** When the mower, sent home after the patrol, did not end on the dock (ISO). */
+  dockFailedAt?: string | null;
 }
 
-export async function stopPatrol(sn: string): Promise<CommandResult> {
+/** Start a night patrol. A refusal (409) comes back as `{ ok: false, error }` in the reader's language. */
+export async function startPatrol(sn: string): Promise<{ ok: boolean; run?: string; error?: string }> {
+  const res = await apiFetch(`${BASE}/patrol/${encodeURIComponent(sn)}`, { method: 'POST' });
+  return res.json().catch(() => ({ ok: false }));
+}
+
+export async function stopPatrol(sn: string): Promise<{ ok: boolean }> {
   return (await post(`${BASE}/stop-patrol/${encodeURIComponent(sn)}`)).json();
+}
+
+/** The kept patrol runs of this mower, newest first. */
+export async function fetchPatrolRuns(sn: string): Promise<PatrolRunDto[]> {
+  const data = await (await get(`${BASE}/patrol/${encodeURIComponent(sn)}/runs`)).json();
+  const runs: PatrolRunDto[] = data.runs ?? [];
+  // A plan that is not a list of zones is no plan (and the numbering must not trust it).
+  return runs.map(r => ({ ...r, frames: r.frames ?? [], plan: normalizePlan(r.plan) }));
+}
+
+/**
+ * The route a patrol started now would drive: the checkpoints in driving order,
+ * local map metres. null when the server has no such route (an older server
+ * answers 404) or it has no checkpoints.
+ */
+export async function fetchPatrolPlan(sn: string): Promise<PatrolPlanZones | null> {
+  const res = await apiFetch(`${BASE}/patrol/${encodeURIComponent(sn)}/plan`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const data = await res.json().catch(() => null) as { zones?: unknown } | null;
+  return normalizePlan(data?.zones);
+}
+
+/**
+ * Blob URL of one checkpoint photo (fetched with the bearer token); revoke it when done.
+ * Low priority: photos come in by the dozen, and a Stop or a save must not wait behind them.
+ */
+export async function fetchPatrolPhoto(sn: string, run: string, seq: number): Promise<string> {
+  const res = await get(`${BASE}/patrol/${encodeURIComponent(sn)}/runs/${encodeURIComponent(run)}/${seq}.jpg`, { priority: 'low' });
+  return URL.createObjectURL(await res.blob());
+}
+
+/** The one patrol schedule of this mower, or null. */
+export async function fetchPatrolSchedule(sn: string): Promise<Schedule | null> {
+  const data = await (await get(`${BASE}/schedules/${encodeURIComponent(sn)}?kind=patrol`)).json();
+  return (data.schedules ?? [])[0] ?? null;
+}
+
+/**
+ * Create the patrol schedule (every day) or change its time and switch. The
+ * server keeps the time with the switch off. Resolves with the saved schedule,
+ * so a first save yields the id the next one needs.
+ */
+export async function savePatrolSchedule(sn: string, startTime: string, enabled: boolean, existingId: string | null): Promise<Schedule> {
+  if (existingId) return updateSchedule(sn, existingId, { startTime, enabled });
+  const data = await (await post(`${BASE}/schedules/${encodeURIComponent(sn)}`, {
+    kind: 'patrol', startTime, enabled, weekdays: [0, 1, 2, 3, 4, 5, 6], timezone: browserTimezone(),
+  })).json();
+  return data.schedule;
 }
 
 export async function setChargeThreshold(sn: string, threshold: number): Promise<CommandResult> {

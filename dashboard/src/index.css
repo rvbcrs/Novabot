@@ -97,3 +97,32 @@ body {
   white-space: nowrap;
 }
 .leaflet-tooltip.draw-measure::before { display: none; }
+
+/* Night patrol checkpoints on the map (PatrolOverlayLayer): numbered circles.
+   Pending grey, current blue and pulsing, done green, skipped red with a cross. */
+.patrol-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font: 600 10px/1 ui-sans-serif, system-ui, sans-serif;
+}
+.patrol-mark--pending { background: #6b7280; }
+.patrol-mark--done { background: #16a34a; }
+.patrol-mark--skipped { background: #dc2626; font-size: 15px; }
+.patrol-mark--current {
+  background: #2563eb;
+  animation: patrol-pulse 1.4s ease-out infinite;
+}
+@keyframes patrol-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.75); }
+  70%  { box-shadow: 0 0 0 11px rgba(37, 99, 235, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .patrol-mark--current { animation: none; }
+}

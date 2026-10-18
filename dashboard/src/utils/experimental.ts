@@ -6,7 +6,9 @@
 // per-browser preference and the app's lives in expo-secure-store on the phone,
 // so there is nothing to sync between them.
 //
-// Gates: the Terrain tab.
+// Gates: the Terrain tab, and the night patrol button and panel in the control
+// bar (MowerControls). Patrol notifications and the server's patrol schedules do
+// not depend on it.
 
 import { useEffect, useState } from 'react';
 
