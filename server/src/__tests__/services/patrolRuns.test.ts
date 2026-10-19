@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { patrolRunsRepo } from '../../db/repositories/index.js';
 import {
-  isOlderPatrolRun, isLivePatrolRun, patrolReport, extHelloReport, isPatrolDriving, markPatrolDocking, patrolDockingUnderWay,
+  isOlderPatrolRun, isLivePatrolRun, patrolReport, extHelloReport, isPatrolDriving, markPatrolDocking, patrolDockingUnderWay, patrolDockedRecently, PATROL_DOCKED_GRACE_MS,
   patrolDockingFailed, DOCK_FAILED_ERROR_CODES, PATROL_RUN_TTL_MS, PATROL_DOCKING_MAX_MS, EXT_COMMANDS_KEY, _resetPatrolDocking,
   patrolRunOutcome, withPatrolOutcome,
 } from '../../services/patrolRuns.js';
@@ -455,5 +455,37 @@ describe('withPatrolOutcome', () => {
     expect(withPatrolOutcome([], undefined)).toEqual([]);
     started('2000');
     expect(withPatrolOutcome([onDisk('2000', 1)], patrolRunsRepo.get(SN))).toHaveLength(1);
+  });
+});
+
+// The docked event after a patrol's go home is no news (review I-1, 2026-10-19):
+// a window of rounds would ring the phone every half hour.
+describe('patrolDockedRecently', () => {
+  it('is true from the first docked report of a go home for ten minutes, and nothing before or after', () => {
+    expect(patrolDockedRecently(SN, 0)).toBe(false);
+    markPatrolDocking(SN, 0);
+    expect(patrolDockedRecently(SN, 1_000)).toBe(false);                  // still on its way
+    expect(patrolDockingUnderWay(SN, true, 2_000)).toBe(true);           // arriving on the dock
+    expect(patrolDockedRecently(SN, 2_000)).toBe(true);
+    expect(patrolDockedRecently(SN, 2_000 + PATROL_DOCKED_GRACE_MS)).toBe(true);
+    expect(patrolDockedRecently(SN, 2_001 + PATROL_DOCKED_GRACE_MS)).toBe(false);
+    // a later departure is its own, also inside the grace
+    expect(patrolDockingUnderWay(SN, false, 3_000)).toBe(false);
+    expect(patrolDockedRecently(SN, 3_000)).toBe(true);
+  });
+
+  it('a go home that ended on the dock is no failed docking any more', () => {
+    started('2000');
+    markPatrolDocking(SN, 0);
+    expect(patrolDockingUnderWay(SN, true, 1_000)).toBe(true);
+    expect(patrolDockingFailed(SN, false, 2_000)).toBeNull();
+    expect(patrolRunsRepo.get(SN)?.dock_failed_at ?? null).toBeNull();
+  });
+
+  it('ends with the docking entry after the grace', () => {
+    markPatrolDocking(SN, 0);
+    patrolDockingUnderWay(SN, true, 1_000);
+    expect(patrolDockingUnderWay(SN, false, 1_001 + PATROL_DOCKED_GRACE_MS)).toBe(false);
+    expect(patrolDockedRecently(SN, 1_002 + PATROL_DOCKED_GRACE_MS)).toBe(false);
   });
 });

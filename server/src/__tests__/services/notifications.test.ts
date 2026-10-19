@@ -451,3 +451,61 @@ describe('dashboard fan-out', () => {
     })).not.toThrow();
   });
 });
+
+// Review I-1 (2026-10-19): with a window of rounds (23:00 until 06:00, every 30
+// min) a "Mower docked" push after each round would ring the phone up to 14
+// times a night. The docking after a patrol raises no docked event; a docking
+// that is not a patrol's still does.
+describe('no docked event for the docking after a patrol', () => {
+  // The dispatcher's ring buffer keeps the events of earlier tests: one mower per test.
+  let DSN = '';
+  let n = 0;
+  const at = (over: Record<string, string>) => snap({
+    error_status: '0', msg: 'Mode:COVERAGE Work:MOVING', battery_power: '80', recharge_status: '50', battery_state: 'DISCHARGING', patrol_phase: 'done', ...over,
+  });
+  const dockedEvents = () => getRecentEvents(DSN, 50).filter(e => e.type === 'docked');
+
+  beforeEach(() => {
+    DSN = `LFIN22307002${String(n++).padStart(2, '0')}`;
+    resetEventState(DSN);
+    _resetPatrolDocking();
+  });
+
+  it('not when recharge_status 9 comes with the first docked report', () => {
+    detectAndDispatch(DSN, at({}));
+    markPatrolDocking(DSN);
+    detectAndDispatch(DSN, at({ recharge_status: '193' }));
+    detectAndDispatch(DSN, at({ msg: 'Mode:COVERAGE Work:WAIT', recharge_status: '9', battery_state: 'CHARGING' }));
+    expect(dockedEvents()).toEqual([]);
+  });
+
+  it('nor when the battery reported charging a tick before the 9', () => {
+    detectAndDispatch(DSN, at({}));
+    markPatrolDocking(DSN);
+    detectAndDispatch(DSN, at({ recharge_status: '193', battery_state: 'CHARGING' }));   // the first docked report ends the docking
+    detectAndDispatch(DSN, at({ msg: 'Mode:COVERAGE Work:WAIT', recharge_status: '9', battery_state: 'CHARGING' }));
+    expect(dockedEvents()).toEqual([]);
+  });
+
+  it('a docking that is not a patrol\'s is still reported', () => {
+    detectAndDispatch(DSN, at({ patrol_phase: '' }));
+    detectAndDispatch(DSN, at({ patrol_phase: '', recharge_status: '193', battery_state: 'CHARGING' }));
+    detectAndDispatch(DSN, at({ patrol_phase: '', msg: 'Mode:COVERAGE Work:WAIT', recharge_status: '9', battery_state: 'CHARGING' }));
+    expect(dockedEvents().map(e => e.type)).toEqual(['docked']);
+  });
+
+  it('a docking well after the patrol\'s (the grace over) is reported again', () => {
+    detectAndDispatch(DSN, at({}));
+    markPatrolDocking(DSN, Date.now() - PATROL_DOCKING_MAX_MS + 60_000);
+    detectAndDispatch(DSN, at({ recharge_status: '9', battery_state: 'CHARGING' }));          // the patrol's docking, no event
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 11 * 60_000);
+      detectAndDispatch(DSN, at({ patrol_phase: '', recharge_status: '0', battery_state: 'DISCHARGING' }));   // off again
+      detectAndDispatch(DSN, at({ patrol_phase: '', recharge_status: '9', battery_state: 'CHARGING' }));       // and back: news
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(dockedEvents().map(e => e.type)).toEqual(['docked']);
+  });
+});

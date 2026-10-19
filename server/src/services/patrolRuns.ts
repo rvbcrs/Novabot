@@ -53,6 +53,13 @@ export function isPatrolDriving(sn: string, cachedPhase: string | undefined, now
 /** How long the drive home after a patrol counts as the patrol's at most. */
 export const PATROL_DOCKING_MAX_MS = 15 * 60_000;
 
+/**
+ * After the first docked report of a patrol's go home, the recharge_status 9
+ * that follows (and the docked event the detector would raise on it) is still
+ * that docking, for this long.
+ */
+export const PATROL_DOCKED_GRACE_MS = 10 * 60_000;
+
 interface PatrolDocking {
   /** When the server sent the mower home. */
   since: number;
@@ -60,6 +67,8 @@ interface PatrolDocking {
   run: string | null;
   /** The failure of this go home was reported (patrolDockingFailed). */
   failureReported: boolean;
+  /** When the mower first reported docked or charging on this go home; unset while on its way. */
+  dockedAt?: number;
 }
 // The server's go home after a patrol, per mower. In memory: a restart inside the
 // 15 minutes loses it, and the generic detectors take over.
@@ -80,12 +89,29 @@ export function markPatrolDocking(sn: string, now = Date.now()): void {
 export function patrolDockingUnderWay(sn: string, docked: boolean, now = Date.now()): boolean {
   const d = docking.get(sn);
   if (d === undefined) return false;
+  if (d.dockedAt !== undefined) {
+    // Docked: the go home is over (a later departure is a mow again); the entry
+    // stays a while for patrolDockedRecently.
+    if (now - d.dockedAt > PATROL_DOCKED_GRACE_MS) docking.delete(sn);
+    return false;
+  }
   if (now - d.since > PATROL_DOCKING_MAX_MS) {
     docking.delete(sn);
     return false;
   }
-  if (docked) docking.delete(sn);
+  if (docked) d.dockedAt = now;
   return true;
+}
+
+/**
+ * The mower docked after a patrol's go home within PATROL_DOCKED_GRACE_MS. The
+ * recharge_status 9 that comes a moment after the first docked report belongs
+ * to that docking: no "Mower docked" for a patrol round, or a window of rounds
+ * would ring the phone every half hour.
+ */
+export function patrolDockedRecently(sn: string, now = Date.now()): boolean {
+  const d = docking.get(sn);
+  return d?.dockedAt !== undefined && now - d.dockedAt <= PATROL_DOCKED_GRACE_MS;
 }
 
 /**
@@ -112,13 +138,14 @@ export interface PatrolDockingFailure {
  * patrol, within PATROL_DOCKING_MAX_MS: the first time per go home it records the
  * failure on the run (patrol_runs.dock_failed_at) and says `first`, so the caller
  * raises ONE dock_failed with the patrol's context; after that `first` is false.
- * Null when it is not that: no go home, 15 minutes gone, the mower charging, or a
- * patrol that started since (it owns the mower now). The caller then leaves the
+ * Null when it is not that: no go home, 15 minutes gone, the mower charging, a go
+ * home that already ended on the dock, or a patrol that started since (it owns
+ * the mower now). The caller then leaves the
  * failure to the generic dock_failed detector, unchanged.
  */
 export function patrolDockingFailed(sn: string, docked: boolean, now = Date.now()): PatrolDockingFailure | null {
   const d = docking.get(sn);
-  if (d === undefined || docked || now - d.since > PATROL_DOCKING_MAX_MS) return null;
+  if (d === undefined || docked || d.dockedAt !== undefined || now - d.since > PATROL_DOCKING_MAX_MS) return null;
   if (d.run !== (patrolRunsRepo.get(sn)?.run ?? null)) return null;
   if (d.failureReported) return { run: d.run, first: false };
   d.failureReported = true;

@@ -117,7 +117,10 @@ So there is nothing to finish. We build it from parts that do work:
    garden."), whichever signal comes first, and the run records the time
    (`patrol_runs.dock_failed_at`). Error 113 ("no aruco code find") raises
    nothing by itself: it comes up while the firmware retries the alignment at
-   the dock and goes away again.
+   the dock and goes away again. The docking after a patrol raises no `docked`
+   event either (within ten minutes of its first docked report): the run says
+   how it went, and a window of rounds would otherwise ring the phone every
+   half hour.
 9. **Starting.** Dashboard and app button, and patrol schedules
    (`dashboard_schedules.kind = 'patrol'`). Patrol schedules are run by the server
    only: never sent to the mower as `timer_task` (the firmware would mow), never

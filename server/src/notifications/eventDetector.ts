@@ -9,7 +9,7 @@
 import { dispatchEvent } from './dispatcher.js';
 import { lookupError } from './errorMap.js';
 import { MowerEvent, EventType } from './types.js';
-import { isPatrolDriving, patrolDockingUnderWay, patrolDockingFailed, DOCK_FAILED_ERROR_CODES } from '../services/patrolRuns.js';
+import { isPatrolDriving, patrolDockingUnderWay, patrolDockedRecently, patrolDockingFailed, DOCK_FAILED_ERROR_CODES } from '../services/patrolRuns.js';
 
 const LOW_BATTERY_THRESHOLD = parseInt(process.env.LOW_BATTERY_THRESHOLD ?? '20', 10);
 
@@ -192,7 +192,11 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
   }
 
   // ── Docked ──────────────────────────────────────────────────
-  if (prev.rechargeStatus !== next.rechargeStatus && next.rechargeStatus === '9') {
+  // Not for the docking after a night patrol: its run says how it went
+  // (patrol_failed, dock_failed), and a window of rounds would otherwise ring
+  // the phone every half hour. The 9 can come a tick after the first docked
+  // report, which already ended the docking: patrolDockedRecently covers that.
+  if (prev.rechargeStatus !== next.rechargeStatus && next.rechargeStatus === '9' && !patrolMoves && !patrolDockedRecently(sn)) {
     dispatchEvent(makeEvent(
       sn,
       'docked',
