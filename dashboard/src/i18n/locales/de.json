@@ -1365,7 +1365,7 @@
       "nightlyUntilTitle": "Ende des Patrouillefensters",
       "nightlyEveryTitle": "Minuten zwischen zwei Runden",
       "nightlyOnce": "einmalig",
-      "nightlyEveryMinutes": "alle {{n}} min",
+      "nightlyEveryMinutes": "alle {{n}} Min.",
       "nightlyOn": "Nächtliche Patrouille ein",
       "lastRun": "Letzte Patrouille ({{date}})",
       "noRuns": "Noch keine Patrouille.",

@@ -458,8 +458,8 @@ answer is 409. A patrol schedule follows its own rules:
   the end of the window and `intervalMin` the minutes between two rounds (`0`,
   or 15 to 240). With an interval, the server starts a round at `startTime`
   and then every `intervalMin` minutes while the round's start lies before
-  `endTime` (an `endTime` at or before `startTime` means the next morning). No
-  interval (`intervalMin: 0`) and no `endTime` is once: a single round at
+  `endTime` (an `endTime` at or before `startTime` means the next morning).
+  `intervalMin: 0` is once, whatever `endTime` holds: a single round at
   `startTime`; an interval without an `endTime` is a 400. So is an interval
   outside 0 and 15 to 240, or an `endTime` that is not `HH:MM`. PATCH takes
   the same fields (`"endTime": null` clears the end), and every schedule in
