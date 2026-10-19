@@ -9,8 +9,8 @@ export type Load = 'loading' | 'ready' | 'failed';
 
 const NO_REPORTS: PatrolReports = { run: null, skipped: [], skippedPoints: [], reached: [], checkpoints: 0 };
 const NO_RUNS: PatrolRunDto[] = [];
-/** The panel lists, and the report offers, the last ten patrols. */
-const MAX_RUNS = 10;
+/** The panel lists, and the report offers, the last 30 patrols: what the server keeps (PATROL_KEEP_RUNS). */
+const MAX_RUNS = 30;
 const reasonOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 interface Options {
@@ -24,7 +24,7 @@ interface Options {
 }
 
 export interface PatrolView {
-  /** The kept runs, newest first (the last 10). */
+  /** The kept runs, newest first (the last 30). */
   runs: PatrolRunDto[];
   runsLoad: Load;
   runsError: string | null;

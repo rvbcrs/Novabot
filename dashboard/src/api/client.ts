@@ -820,14 +820,21 @@ export async function fetchPatrolSchedule(sn: string): Promise<Schedule | null> 
 }
 
 /**
- * Create the patrol schedule (every day) or change its time and switch. The
- * server keeps the time with the switch off. Resolves with the saved schedule,
- * so a first save yields the id the next one needs.
+ * The nightly patrol as the server holds it: a round at `startTime`, then one
+ * every `intervalMin` minutes while the round's start lies before `endTime`.
+ * `intervalMin` 0 with `endTime` null is once, a single round at `startTime`.
  */
-export async function savePatrolSchedule(sn: string, startTime: string, enabled: boolean, existingId: string | null): Promise<Schedule> {
-  if (existingId) return updateSchedule(sn, existingId, { startTime, enabled });
+export interface PatrolWindow { startTime: string; endTime: string | null; intervalMin: number; enabled: boolean }
+
+/**
+ * Create the patrol schedule (every day) or change its window and switch. The
+ * server keeps the window with the switch off. Resolves with the saved
+ * schedule, so a first save yields the id the next one needs.
+ */
+export async function savePatrolSchedule(sn: string, patrolWindow: PatrolWindow, existingId: string | null): Promise<Schedule> {
+  if (existingId) return updateSchedule(sn, existingId, patrolWindow);
   const data = await (await post(`${BASE}/schedules/${encodeURIComponent(sn)}`, {
-    kind: 'patrol', startTime, enabled, weekdays: [0, 1, 2, 3, 4, 5, 6], timezone: browserTimezone(),
+    kind: 'patrol', ...patrolWindow, weekdays: [0, 1, 2, 3, 4, 5, 6], timezone: browserTimezone(),
   })).json();
   return data.schedule;
 }

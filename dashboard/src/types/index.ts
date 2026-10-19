@@ -93,6 +93,8 @@ export interface Schedule {
   scheduleName: string | null;
   startTime: string;
   endTime: string | null;
+  /** Patrol only: minutes between two rounds of the window startTime..endTime; 0 = once. */
+  intervalMin?: number;
   weekdays: number[];
   enabled: boolean;
   mapId: string | null;

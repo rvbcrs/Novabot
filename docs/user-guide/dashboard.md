@@ -276,21 +276,29 @@ others.
   dock marker is never overexposed by the patrol light. The mower
   switches it off itself at the end of a patrol too, also when the server
   misses that end.
-- **Every night at HH:MM.** One patrol schedule per mower: a time and an on/off
-  switch. The server starts it by itself, so it does not depend on an app
-  being open. It does not appear in the Schedule tab or in the stock app's
-  plans. *No mowing after dark* does not hold it back, since a patrol is meant
-  for the night; *No mowing in frost* does (Settings → Weather & time). Rain
-  does not pause it.
+- **Every night from HH:MM until HH:MM, every N min.** One patrol schedule per
+  mower: a window, an interval and an on/off switch. *Once* is a single round
+  at the start time. With an interval the server starts a round at the start
+  time and then every N minutes while the round's start lies before the end
+  time (an end at or before the start means the next morning). The server
+  starts them by itself, so no app needs to be open. A later round is skipped,
+  and the schedule says why, when the previous round is still out, the mower is
+  not charging on the dock, or its battery is under 50 %. After a round that
+  failed, was stopped, or did not dock, the night stops: the mower is not sent
+  out again until the next window. Patrol schedules do not appear in the
+  Schedule tab or in the stock app's plans. *No mowing after dark* does not
+  hold them back; *No mowing in frost* does (Settings → Weather & time). Rain
+  does not pause them.
 - **Last patrol.** The latest patrol, with the photo of each checkpoint (a
   checkpoint can lack a photo), labelled *person*, *animal*, *nothing* or
   *no camera data*. The **Report** button beside it opens the full report of
   that patrol.
-- **Last patrols.** One line for each of the last 10 patrols: when it
-  started, how many checkpoints it reached (out of how many were planned), how
-  many it skipped, how many checkpoints showed a person and how many an
-  animal, and how it ended: done, stopped, failed or still running. A click on
-  a line opens the report of that patrol.
+- **Last patrols.** One line for each of the last 30 patrols, grouped per
+  night (a night runs from one noon to the next): when it started, how many
+  checkpoints it reached (out of how many were planned), how many it skipped,
+  how many checkpoints showed a person and how many an animal, and how it
+  ended: done, stopped, failed or still running. A click on a line opens the
+  report of that patrol.
 
 *No camera data* means the camera gave nothing usable at that checkpoint
 (fewer than two detection readings), so nobody knows what was there. It does
@@ -363,7 +371,7 @@ closes the report. A strip of thumbnails under the photo lists every
 checkpoint of the route. Its border shows what was seen: red for a person,
 amber for an animal, green for nothing and grey for no camera data. A
 checkpoint the mower skipped has a red cross, and one it never got to has a
-dashed outline. The menu at the top picks another of the last 10 patrols, and
+dashed outline. The menu at the top picks another of the last 30 patrols, and
 the map follows the choice.
 
 A server that does not record the route yet still gives the panel and the
@@ -371,7 +379,7 @@ report, but without the circles on the map, without the *out of* and *skipped*
 counts, without how a patrol ended, and with only the checkpoints that left a
 photo or a result in the strip.
 
-The photos and results of the last 10 patrols are kept on your own server;
+The photos and results of the last 30 patrols are kept on your own server;
 older ones are deleted. A notification is text only, the photo is in the panel
 and the report.
 A person or an animal gives a *Patrol alert* (at most one per kind every two

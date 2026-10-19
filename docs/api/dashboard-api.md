@@ -453,11 +453,27 @@ answer is 409. A patrol schedule follows its own rules:
 - It never gets a rain pause.
 - The night guard ("No mowing after dark") does not apply to it, the frost
   guard does.
+- It is a window with an interval. `startTime` is the first round, `endTime`
+  the end of the window and `intervalMin` the minutes between two rounds (`0`,
+  or 15 to 240). With an interval, the server starts a round at `startTime`
+  and then every `intervalMin` minutes while the round's start lies before
+  `endTime` (an `endTime` at or before `startTime` means the next morning).
+  `intervalMin: 0` or no `endTime` is once: a single round at `startTime`. An
+  interval outside 0 and 15 to 240, an interval without an `endTime`, or an
+  `endTime` that is not `HH:MM` is answered with 400. PATCH takes the same
+  fields (`"endTime": null` clears the end), and every schedule in the list
+  carries `intervalMin` (always `0` for a mowing schedule).
+- A later round of the night is skipped, and the schedule says why, when the
+  previous round is still out, the mower is not charging on the dock, or its
+  battery is under 50 %. After a round that failed, was stopped, or did not
+  dock, the night stops until the next window.
 
 ```json title="Request (night patrol schedule)"
 {
   "kind": "patrol",
-  "startTime": "23:30",
+  "startTime": "23:00",
+  "endTime": "06:00",
+  "intervalMin": 30,
   "weekdays": [0, 1, 2, 3, 4, 5, 6],
   "enabled": true,
   "timezone": "Europe/Amsterdam"
@@ -530,7 +546,7 @@ comes from the dashboard, the OpenNova app, the stock app or the server.
 
 ### GET `/api/dashboard/patrol/:sn/runs`
 
-The last 10 patrols, newest first, with one entry per checkpoint. `seen` says what
+The last 30 patrols, newest first, with one entry per checkpoint. `seen` says what
 the camera found: `null` means no data (fewer than two detection readings), `[]` means
 nothing, otherwise the classes (`"person"`, `"animal"`) whose score reached
 `patrol_min_points`.
@@ -559,7 +575,7 @@ nothing, otherwise the classes (`"person"`, `"animal"`) whose score reached
 ### GET `/api/dashboard/patrol/:sn/runs/:run/:seq.jpg`
 
 The photo of one checkpoint (`image/jpeg`). 404 when the checkpoint has no photo.
-The server keeps the last 10 runs per mower under `STORAGE_PATH/patrol/<SN>/<run>/`.
+The server keeps the last 30 runs per mower under `STORAGE_PATH/patrol/<SN>/<run>/`.
 
 ---
 
