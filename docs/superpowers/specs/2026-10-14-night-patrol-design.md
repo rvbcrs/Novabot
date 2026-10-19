@@ -123,6 +123,22 @@ So there is nothing to finish. We build it from parts that do work:
    only: never sent to the mower as `timer_task` (the firmware would mow), never
    mirrored into the stock app's plans, not listed among mow schedules, they ignore
    the night guard and keep the frost guard. No rain pause for patrol.
+   A patrol schedule is a **window with an interval** (added 2026-10-19): it
+   starts a round at `start_time`, then one every `interval_min` minutes while
+   the round's slot (`start_time + k * interval_min`) lies before `end_time`
+   (`end_time` at or before `start_time` means the next day). `interval_min = 0`
+   or no `end_time` is "once", the behaviour before this change. Each round is a
+   normal patrol run. The weekday rule applies to the day the window starts.
+   A later slot of the night is **skipped** (logged on the schedule, never an
+   error) when: the previous round of this schedule tonight is still out; the
+   mower is not charging on the dock; the battery is below the patrol minimum
+   (50 %); or **the night has stopped**: a round of this schedule tonight ended
+   in `error`, was `stopped`, or did not dock (`patrol_runs.dock_failed_at`).
+   The night stops for good then: a stranded mower is not sent out again, and
+   the notification of that round already went out. A new window is a clean
+   slate. The first slot of a window keeps today's rules (the start guards
+   only). A slot missed because the server was down is logged `missed` once,
+   like a single start.
 10. **Guards before a start:** online, OpenNova firmware whose
     `extended_commands` announces `patrol` (it publishes `ext_hello` with its
     command list after every connect; the server caches it per mower) or, when no
