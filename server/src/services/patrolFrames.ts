@@ -7,7 +7,8 @@ import fs from 'fs';
 import path from 'path';
 
 const PATROL_DIR = path.resolve(process.env.STORAGE_PATH ?? './storage', 'patrol');
-export const PATROL_KEEP_RUNS = 10;
+// A night of half-hour rounds (23:00 until 06:00) is 14 runs: 30 keep the last two nights.
+export const PATROL_KEEP_RUNS = 30;
 
 export interface PatrolFrameMeta {
   seq: number; x: number; y: number; person: number; animal: number; frames: number; image: boolean; ts: number;

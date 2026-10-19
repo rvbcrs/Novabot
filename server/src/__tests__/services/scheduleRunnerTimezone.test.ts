@@ -19,7 +19,7 @@ function row(overrides: Partial<ScheduleRow>): ScheduleRow {
     edge_offset: 0, rain_pause: 0, rain_threshold_mm: 0.5,
     rain_threshold_probability: 50, rain_check_hours: 2,
     alternate_direction: 0, alternate_step: 90, last_triggered_at: null,
-    interval_days: 0, interval_anchor_date: null, timezone: null,
+    interval_days: 0, interval_anchor_date: null, timezone: null, interval_min: 0,
     trigger_count: 0, skip_date: null, edge_days: null, created_at: '', updated_at: '',
     ...overrides,
   };

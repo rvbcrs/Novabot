@@ -16,21 +16,27 @@ vi.mock('../../services/mowingService.js', () => ({
   EDGE_ALWAYS_KEY: 'edge_always',
   edgeAlways: vi.fn(() => false),
 }));
-vi.mock('../../services/patrolService.js', () => ({ startPatrol: vi.fn(() => ({ ok: true, run: '1' })) }));
+vi.mock('../../services/patrolService.js', () => ({ startPatrol: vi.fn(() => ({ ok: true, run: '1' })), PATROL_MIN_BATTERY: 50 }));
 vi.mock('../../services/weatherService.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/weatherService.js')>()),
   getWeatherForecast: vi.fn(),
 }));
+vi.mock('../../mqtt/sensorData.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../mqtt/sensorData.js')>()),
+  getDeviceSnapshot: vi.fn(() => null),
+}));
 
 import {
   startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch, isScheduleWarning,
+  renderScheduleReason,
 } from '../../services/scheduleRunner.js';
-import { emitScheduleEvent } from '../../dashboard/socketHandler.js';
-import { scheduleRepo, rainSettingsRepo, mapRepo } from '../../db/repositories/index.js';
+import { emitScheduleEvent, pushMqttLog } from '../../dashboard/socketHandler.js';
+import { scheduleRepo, rainSettingsRepo, mapRepo, patrolRunsRepo } from '../../db/repositories/index.js';
 import { db } from '../../db/database.js';
 import { startMowing } from '../../services/mowingService.js';
 import { startPatrol } from '../../services/patrolService.js';
 import { getWeatherForecast } from '../../services/weatherService.js';
+import { getDeviceSnapshot, deviceCache } from '../../mqtt/sensorData.js';
 
 const NOW = new Date('2026-08-05T23:00:30');
 const SN = 'LFIN1231000211';
@@ -51,6 +57,34 @@ function due(id: string, kind: 'mow' | 'patrol') {
   });
 }
 
+/** A windowed patrol schedule: 23:00 until 06:00, every 30 min. */
+function windowed(id: string) {
+  scheduleRepo.create({
+    schedule_id: id, mower_sn: SN, start_time: '23:00', end_time: '06:00', interval_min: 30, kind: 'patrol',
+    weekdays: JSON.stringify([NOW.getDay()]), enabled: 1, rain_pause: 0,
+  });
+}
+/** What the mower reports: charging on the dock with this battery. */
+function dockedAt(battery: number, charging = true) {
+  vi.mocked(getDeviceSnapshot).mockReturnValue({ battery_state: charging ? 'CHARGING' : 'DISCHARGING', charging: charging ? '1' : '0', battery_power: String(battery) });
+}
+/** The run the server holds for the mower. */
+function lastRun(over: Partial<{ schedule_id: string | null; started_at: number; ended_phase: string | null; dock_failed_at: number | null }>) {
+  vi.mocked(patrolRunsRepo.get).mockReturnValue({ mower_sn: SN, run: 'r1', token: 't', started_at: NOW.getTime(), schedule_id: 'w-23', ended_phase: 'done', dock_failed_at: null, ...over } as never);
+}
+/**
+ * The decision the runner took for a slot, as updateLastTriggered writes it:
+ * SQLite's UTC text without a zone marker. scheduleRepo.update cannot set it.
+ */
+function decidedAt(id: string, at: Date) {
+  db.prepare('UPDATE dashboard_schedules SET last_triggered_at = ? WHERE schedule_id = ?')
+    .run(at.toISOString().slice(0, 19).replace('T', ' '), id);
+}
+// The 23:00 slot was decided ten seconds after NOW (23:00:40 local).
+const FIRST_SLOT_DECIDED = new Date(NOW.getTime() + 10_000);
+// The 23:30 slot, decided ten seconds in.
+const SECOND_SLOT_DECIDED = new Date('2026-08-05T23:30:40');
+
 describe('patrol schedules', () => {
   beforeEach(() => {
     db.prepare('DELETE FROM dashboard_schedules').run();
@@ -59,6 +93,8 @@ describe('patrol schedules', () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     vi.spyOn(mapRepo, 'getChargerGps').mockReturnValue({ lat: 52, lng: 6 });
+    vi.spyOn(patrolRunsRepo, 'get').mockReturnValue(undefined);   // no round of tonight, unless a test says so
+    vi.mocked(getDeviceSnapshot).mockReturnValue(null);
     vi.mocked(getWeatherForecast).mockResolvedValue({
       hourly: [], sunriseMs: NOW.getTime() - 16 * 3_600_000, sunsetMs: NOW.getTime() - 4 * 3_600_000, cachedAt: 0,
     });
@@ -66,6 +102,7 @@ describe('patrol schedules', () => {
   afterEach(() => {
     stopScheduleRunner();
     disarmEdgeWatch(SN, 'test cleanup');   // module state: do not leak an armed watcher into the next test
+    deviceCache.delete(SN);
     rainSettingsRepo.set(SN, { frostGuard: false });
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -176,5 +213,177 @@ describe('patrol schedules', () => {
     expect(startPatrol).toHaveBeenCalledTimes(2);
     expect(startMowing).toHaveBeenCalledTimes(1);   // neither patrol was started as a mow
     expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+  });
+
+  // ── Windows: a round per slot (spec 9) ───────────────────────────────────
+
+  it('a windowed schedule starts its first round at the start like a single one', async () => {
+    windowed('w-23');
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).toHaveBeenCalledWith(SN, NOW.getTime(), 'w-23');
+  });
+
+  // A new window is a clean slate: last night's failed round and a mower that is
+  // off the dock are for the start guards (startPatrol) to judge, as for a single start.
+  it('the first round of a window keeps the start guards only: not the dock, not the last run', async () => {
+    windowed('w-23');
+    lastRun({ ended_phase: 'error', started_at: NOW.getTime() - 86_400_000 });
+    dockedAt(30, false);
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).toHaveBeenCalledWith(SN, NOW.getTime(), 'w-23');
+  });
+
+  it('a later slot starts the next round when the previous one is done and the mower charges', async () => {
+    windowed('w-23');
+    decidedAt('w-23', FIRST_SLOT_DECIDED);
+    lastRun({ ended_phase: 'done' });
+    dockedAt(80);
+    vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).toHaveBeenCalledTimes(1);
+    expect(startPatrol).toHaveBeenCalledWith(SN, new Date('2026-08-05T23:30:30').getTime(), 'w-23');
+  });
+
+  it('a slot is skipped, once, while the previous round is still out', async () => {
+    windowed('w-23');
+    decidedAt('w-23', FIRST_SLOT_DECIDED);
+    lastRun({ ended_phase: null });
+    dockedAt(80, false);
+    vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+    startScheduleRunner();
+    await flush();
+    vi.advanceTimersByTime(90_000);   // three more ticks inside the 5-minute window
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+    const row = scheduleRepo.findById('w-23')!;
+    expect(row.last_result).toBe('skipped');
+    expect(renderScheduleReason('en', row.last_result_reason)).toBe('the round of 23:00 is still out');
+    // One decision for the slot, not one per tick, and no notification: a skip is a line on the schedule.
+    expect(pushMqttLog).toHaveBeenCalledTimes(1);
+    expect(emitScheduleEvent).not.toHaveBeenCalled();
+    // The skip also stamps the slot as decided. Without it the 5-minute window
+    // decides the same slot again on every tick (the dedupe above would hide that).
+    const stamped = Date.parse(row.last_triggered_at!.replace(' ', 'T') + 'Z');
+    expect(stamped).toBeGreaterThanOrEqual(new Date('2026-08-05T23:30:00').getTime());
+  });
+
+  it('a slot is skipped when the mower is not charging on the dock, or its battery is below the patrol minimum', async () => {
+    windowed('w-23');
+    decidedAt('w-23', FIRST_SLOT_DECIDED);
+    lastRun({ ended_phase: 'done' });
+    dockedAt(80, false);
+    vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+    let row = scheduleRepo.findById('w-23')!;
+    expect(row.last_result).toBe('skipped');
+    expect(renderScheduleReason('en', row.last_result_reason)).toBe('the mower is not charging on the dock');
+    stopScheduleRunner();
+    decidedAt('w-23', SECOND_SLOT_DECIDED);
+    scheduleRepo.update('w-23', { last_result: null });
+    dockedAt(40);
+    vi.setSystemTime(new Date('2026-08-06T00:00:30'));
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+    row = scheduleRepo.findById('w-23')!;
+    expect(row.last_result).toBe('skipped');
+    expect(renderScheduleReason('en', row.last_result_reason)).toBe('battery 40 %, still charging (at least 50 %)');
+  });
+
+  // getDeviceSnapshot translates what the mower reports (CHARGING reads
+  // "Charging", FULL reads "Full"), and a full battery on the dock is still on the
+  // dock. The other tests feed the guard the raw spelling; this one the real snapshot.
+  it('reads the dock as the real snapshot has it: charging or full counts, anything else does not', async () => {
+    const real = await vi.importActual<typeof import('../../mqtt/sensorData.js')>('../../mqtt/sensorData.js');
+    vi.mocked(getDeviceSnapshot).mockImplementation(real.getDeviceSnapshot);
+    for (const [state, starts] of [
+      ['CHARGING', true], ['FULL', true], ['DISCHARGING', false], ['NOT_CHARGING', false], ['DISCHARGED', false],
+    ] as const) {
+      db.prepare('DELETE FROM dashboard_schedules').run();
+      vi.clearAllMocks();
+      deviceCache.set(SN, new Map([['battery_state', state], ['battery_power', '80']]));
+      windowed('w-23');
+      decidedAt('w-23', FIRST_SLOT_DECIDED);
+      lastRun({ ended_phase: 'done' });
+      vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+      startScheduleRunner();
+      await flush();
+      stopScheduleRunner();
+      expect(startPatrol, state).toHaveBeenCalledTimes(starts ? 1 : 0);
+    }
+  });
+
+  it('the night stops after a round that failed, was stopped or did not dock; another schedule or an older night does not count', async () => {
+    const cases: Array<[Parameters<typeof lastRun>[0], string | null]> = [
+      [{ ended_phase: 'error' }, 'the round of 23:00 failed'],
+      [{ ended_phase: 'stopped' }, 'the round of 23:00 was stopped'],
+      [{ ended_phase: 'done', dock_failed_at: NOW.getTime() + 1 }, 'the round of 23:00 could not dock'],
+      [{ ended_phase: 'error', schedule_id: 'other' }, null],
+      [{ ended_phase: 'error', started_at: NOW.getTime() - 86_400_000 }, null],
+    ];
+    for (const [over, stopped] of cases) {
+      db.prepare('DELETE FROM dashboard_schedules').run();
+      vi.clearAllMocks();
+      windowed('w-23');
+      decidedAt('w-23', FIRST_SLOT_DECIDED);
+      lastRun(over);
+      dockedAt(80);
+      vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+      startScheduleRunner();
+      await flush();
+      stopScheduleRunner();
+      expect(startPatrol, JSON.stringify(over)).toHaveBeenCalledTimes(stopped ? 0 : 1);
+      if (stopped) {
+        const row = scheduleRepo.findById('w-23')!;
+        expect(row.last_result).toBe('skipped');
+        expect(renderScheduleReason('en', row.last_result_reason)).toBe(`rest of the night skipped: ${stopped}`);
+      }
+    }
+  });
+
+  // Without its own check, the single-start rule (five minutes after the start) would still
+  // fire for a window that has ended within those five minutes.
+  it('nothing starts once the window has ended, however short the window', async () => {
+    scheduleRepo.create({
+      schedule_id: 'w-short', mower_sn: SN, start_time: '23:00', end_time: '23:02', interval_min: 15, kind: 'patrol',
+      weekdays: JSON.stringify([NOW.getDay()]), enabled: 1, rain_pause: 0,
+    });
+    vi.setSystemTime(new Date('2026-08-05T23:03:30'));
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+  });
+
+  it('a slot the server slept through is missed, once, and names the slot', () => {
+    windowed('w-23');
+    db.prepare("UPDATE dashboard_schedules SET created_at = '2026-08-01 08:00:00' WHERE schedule_id = ?").run('w-23');
+    decidedAt('w-23', FIRST_SLOT_DECIDED);
+    vi.setSystemTime(new Date('2026-08-05T23:40:30'));   // the 23:30 slot's five minutes are over
+    startScheduleRunner();
+    const row = scheduleRepo.findById('w-23')!;
+    expect(row.last_result).toBe('missed');
+    expect(renderScheduleReason('en', row.last_result_reason)).toBe('server was not running at 23:30');
+    expect(startPatrol).not.toHaveBeenCalled();
+  });
+
+  it('a once schedule (interval 0) and a mow schedule are untouched by the window code', async () => {
+    // Make a slot at 23:30 start if the window code were to apply: the night guard off (else
+    // a mow is skipped at night) and a mower that charges (else the round guards skip it).
+    rainSettingsRepo.set(SN, { nightGuard: false });
+    dockedAt(80);
+    due('p-once', 'patrol');
+    scheduleRepo.update('p-once', { end_time: '06:00', interval_min: 0 });
+    due('m-23', 'mow');
+    scheduleRepo.update('m-23', { end_time: '06:00', interval_min: 30 });
+    vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+    startScheduleRunner();
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();    // 23:30 is outside the 5-minute window of a 23:00 single start
+    expect(startMowing).not.toHaveBeenCalled();
   });
 });

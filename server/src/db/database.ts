@@ -855,6 +855,15 @@ export function initDb(): void {
     // Kolom bestaat al
   }
 
+  // Night patrol window: a round every interval_min minutes from start_time
+  // while the slot lies before end_time (plan 2026-10-19). 0 = once.
+  try {
+    db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN interval_min INTEGER NOT NULL DEFAULT 0`);
+    console.log('[DB] Migrated: added dashboard_schedules.interval_min');
+  } catch {
+    // Kolom bestaat al
+  }
+
   // Night patrol: the run the server started last per mower, its upload token
   // and start time, the schedule that started it, and the end that was handled.
   // On disk so a server restart in the middle of a patrol keeps taking that

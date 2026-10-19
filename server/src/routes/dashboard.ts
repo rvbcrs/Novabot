@@ -3944,6 +3944,7 @@ interface ScheduleRow {
   last_result_reason?: string | null;
   edge_days: string | null;
   kind?: string;
+  interval_min?: number;
   created_at: string;
   updated_at: string;
 }
@@ -3956,6 +3957,8 @@ function scheduleRowToDto(r: ScheduleRow, lang: Lang) {
     scheduleName: r.schedule_name,
     startTime: r.start_time,
     endTime: r.end_time,
+    // Patrol only: minutes between two rounds of the window up to endTime; 0 = once.
+    intervalMin: r.interval_min ?? 0,
     weekdays: JSON.parse(r.weekdays),
     enabled: r.enabled === 1,
     mapId: r.map_id,
@@ -4051,6 +4054,23 @@ dashboardRouter.get('/schedules/:sn', (req: Request, res: Response) => {
   res.json({ schedules: enriched });
 });
 
+/**
+ * A patrol window's interval and end time as they will be stored: null when
+ * the window can run, else the 400 sentence. An interval of 0 is "once".
+ */
+function patrolWindowError(T: Translate, intervalMin: unknown, endTime: unknown): string | null {
+  if (intervalMin !== undefined) {
+    const ok = typeof intervalMin === 'number' && Number.isInteger(intervalMin)
+      && (intervalMin === 0 || (intervalMin >= 15 && intervalMin <= 240));
+    if (!ok) return T`intervalMin moet 0 of 15 tot en met 240 minuten zijn`;
+  }
+  if (endTime !== undefined && endTime !== null && !(typeof endTime === 'string' && /^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(endTime))) {
+    return T`endTime moet HH:MM zijn`;
+  }
+  if (typeof intervalMin === 'number' && intervalMin > 0 && !endTime) return T`endTime is vereist bij een interval`;
+  return null;
+}
+
 // POST /api/dashboard/schedules/:sn — nieuw schedule aanmaken
 dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   const T = reqT(req);
@@ -4058,7 +4078,7 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   const body = req.body as {
     scheduleName?: string;
     startTime: string;
-    endTime?: string;
+    endTime?: string | null;
     weekdays?: number[];
     mapId?: string;
     mapName?: string;
@@ -4088,6 +4108,9 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     edgeDays?: number[] | null;
     // 'patrol' = nachtpatrouille, alleen door de server gedraaid. Default 'mow'.
     kind?: 'mow' | 'patrol';
+    // Alleen voor een patrouille: minuten tussen twee rondes van het venster
+    // startTime..endTime. 0 of weglaten = eenmalig.
+    intervalMin?: number;
     // Alleen voor een patrouille: false maakt het schema uitgeschakeld (de
     // patrouillekaart bewaart de tijd ook met de nachtschakelaar uit).
     enabled?: boolean;
@@ -4100,6 +4123,13 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   if (!body.startTime) {
     res.status(400).json({ error: T`startTime is vereist` });
     return;
+  }
+  if (isPatrol) {
+    const windowError = patrolWindowError(T, body.intervalMin, body.endTime);
+    if (windowError) {
+      res.status(400).json({ error: windowError });
+      return;
+    }
   }
 
   const scheduleId = uuidv4();
@@ -4130,6 +4160,8 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     timezone: body.timezone ?? null,
     edge_days: serializeEdgeDays(body.edgeDays) ?? null,
     kind: isPatrol ? 'patrol' : 'mow',
+    // A mow schedule has no window: its interval is not read.
+    interval_min: isPatrol ? (body.intervalMin ?? 0) : 0,
   });
 
   // Stuur timer_task naar maaier als die online is — maar NIET als rain_pause
@@ -4179,11 +4211,23 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
   }
   if (Array.isArray(body.edgeDays) && (body.edgeDays as unknown[]).length > 0
     && rejectUnlessOpenNova(sn, req, res, M`Randmaaien op schemadagen`)) return;
+  // A patrol window must be able to run once saved: what is sent is checked
+  // together with what is kept (an interval needs an end time, either way round).
+  if (existing.kind === 'patrol' && (body.intervalMin !== undefined || body.endTime !== undefined)) {
+    const windowError = patrolWindowError(T,
+      body.intervalMin !== undefined ? body.intervalMin : existing.interval_min,
+      body.endTime !== undefined ? body.endTime : existing.end_time);
+    if (windowError) {
+      res.status(400).json({ error: windowError });
+      return;
+    }
+  }
 
   scheduleRepo.updateByIdAndMower(scheduleId, sn, {
     schedule_name: body.scheduleName as string | undefined,
     start_time: body.startTime as string | undefined,
-    end_time: body.endTime as string | undefined,
+    end_time: body.endTime as string | null | undefined,   // null clears it
+    interval_min: existing.kind === 'patrol' ? (body.intervalMin as number | undefined) : undefined,
     weekdays: body.weekdays ? JSON.stringify(body.weekdays as number[]) : undefined,
     enabled: body.enabled !== undefined ? ((body.enabled as boolean) ? 1 : 0) : undefined,
     map_id: body.mapId as string | undefined,

@@ -6,14 +6,15 @@
  * controleert het weer via Open-Meteo, en stuurt start_run als het droog is.
  */
 
-import { scheduleRepo, mapRepo, rainSettingsRepo, deviceSettingsRepo } from '../db/repositories/index.js';
+import { scheduleRepo, mapRepo, rainSettingsRepo, deviceSettingsRepo, patrolRunsRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice } from '../mqtt/mapSync.js';
-import { deviceCache } from '../mqtt/sensorData.js';
+import { deviceCache, getDeviceSnapshot } from '../mqtt/sensorData.js';
 import {
   startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut, EDGE_ALWAYS_KEY, edgeAlways,
 } from './mowingService.js';
-import { startPatrol } from './patrolService.js';
+import { startPatrol, PATROL_MIN_BATTERY } from './patrolService.js';
+import { isWindowed, patrolSlot, type PatrolSlot } from './patrolWindow.js';
 import { PATROL_DRIVE_PHASES } from './edgeCutGuard.js';
 import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
@@ -349,6 +350,12 @@ export function scheduleDayKey(row: ScheduleRow, now: Date): string {
   return `${wc.year}-${String(wc.month).padStart(2, '0')}-${String(wc.day).padStart(2, '0')}`;
 }
 
+/** HH:MM of a moment in the schedule's zone. */
+function wallTime(row: ScheduleRow, at: Date): string {
+  const wc = wallClock(at, row.timezone ?? null);
+  return `${String(Math.floor(wc.minutesIntoDay / 60)).padStart(2, '0')}:${String(wc.minutesIntoDay % 60).padStart(2, '0')}`;
+}
+
 export function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null {
   const wc = wallClock(now, row.timezone ?? null);
 
@@ -456,7 +463,11 @@ function checkSchedules() {
   }
 
   for (const row of rows) {
-    const scheduledAt = getScheduleOccurrence(row, now);
+    // A patrol window runs a round per slot: the slot is the occurrence.
+    const windowed = row.kind === 'patrol' && isWindowed(row);
+    const slot = windowed ? patrolSlot(row, now) : null;
+    if (windowed && !slot) continue;   // outside the window, or not a day it starts
+    const scheduledAt = slot ? slot.slotAt : getScheduleOccurrence(row, now);
     if (!scheduledAt) {
       // Niet vandaag
       continue;
@@ -475,7 +486,7 @@ function checkSchedules() {
           || (Number.isFinite(lastTriggered) && lastTriggered >= scheduledAt.getTime());
         const existedThen = !Number.isFinite(createdAt) || createdAt <= scheduledAt.getTime();
         if (!decided && existedThen) {
-          logScheduleDecision(row, false, 'MISSED', M`de server draaide niet om ${row.start_time}`);
+          logScheduleDecision(row, false, 'MISSED', M`de server draaide niet om ${slot ? wallTime(row, slot.slotAt) : row.start_time}`);
         }
       }
       continue;
@@ -509,6 +520,18 @@ function checkSchedules() {
       }
       if (row.skip_date < todayKey) {
         scheduleRepo.update(row.schedule_id, { skip_date: null });
+      }
+    }
+
+    // Rounds after the first of a patrol window: the night's own guards. The first
+    // round keeps today's rules (the start guards in startPatrol). A skip stamps
+    // the slot as decided, or the 5-minute window decides it again every tick.
+    if (slot && slot.index > 0) {
+      const why = roundSkipReason(row, slot);
+      if (why) {
+        scheduleRepo.updateLastTriggered(row.schedule_id);
+        logScheduleDecision(row, false, 'SKIPPED', why);
+        continue;
       }
     }
 
@@ -718,6 +741,32 @@ function triggerSchedule(row: ScheduleRow, warning?: Msg) {
     mowerSn: row.mower_sn,
     effectiveDirection,
   });
+}
+
+/**
+ * Why a later round of a patrol window is not started now, or null. The night
+ * stops after a round of this schedule tonight that failed, was stopped or did
+ * not dock; a round still out, a mower not charging on the dock, or a battery
+ * under the patrol minimum skip this slot only. (spec 9)
+ */
+function roundSkipReason(row: ScheduleRow, slot: PatrolSlot): Msg | null {
+  const last = patrolRunsRepo.get(row.mower_sn);
+  if (last && last.schedule_id === row.schedule_id && last.started_at >= slot.windowStart.getTime()) {
+    const at = wallTime(row, new Date(last.started_at));
+    if (last.dock_failed_at != null) return M`rest van de nacht overgeslagen: de ronde van ${at} kon niet docken`;
+    if (last.ended_phase === 'error') return M`rest van de nacht overgeslagen: de ronde van ${at} is mislukt`;
+    if (last.ended_phase === 'stopped') return M`rest van de nacht overgeslagen: de ronde van ${at} is gestopt`;
+    if (last.ended_phase === null) return M`de ronde van ${at} is nog onderweg`;
+  }
+  const snap = getDeviceSnapshot(row.mower_sn);
+  // The snapshot is the translated one ("Charging", "Full"); the cache has CHARGING and
+  // FULL. A full battery on the dock is on the dock, like everywhere else in the server.
+  const state = (snap?.battery_state ?? '').toUpperCase();
+  const docked = state === 'CHARGING' || state === 'FULL' || snap?.charging === '1';
+  if (!docked) return M`de maaier staat niet aan het laden op het dock`;
+  const battery = parseInt(snap?.battery_power ?? '', 10);
+  if (Number.isFinite(battery) && battery < PATROL_MIN_BATTERY) return M`accu ${battery} %, laadt nog op (minimaal ${PATROL_MIN_BATTERY} %)`;
+  return null;
 }
 
 /** A patrol schedule: start the patrol; the frost guard applies, the night guard not. */

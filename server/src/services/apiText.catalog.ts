@@ -1165,6 +1165,38 @@ export const CATALOG: Catalog = {
     fr: "une patrouille de nuit est en cours ; arrêtez-la d'abord",
     de: "eine Nachtpatrouille läuft; stoppen Sie sie zuerst",
   },
+  // A round of a patrol window that is not started (scheduleRunner.roundSkipReason). The first
+  // three end the night: a stranded mower is not sent out again.
+  "rest van de nacht overgeslagen: de ronde van {0} kon niet docken": {
+    en: "rest of the night skipped: the round of {0} could not dock",
+    fr: "reste de la nuit ignoré : la ronde de {0} n'a pas pu rejoindre le dock",
+    de: "Rest der Nacht übersprungen: die Runde von {0} konnte nicht andocken",
+  },
+  "rest van de nacht overgeslagen: de ronde van {0} is mislukt": {
+    en: "rest of the night skipped: the round of {0} failed",
+    fr: "reste de la nuit ignoré : la ronde de {0} a échoué",
+    de: "Rest der Nacht übersprungen: die Runde von {0} ist fehlgeschlagen",
+  },
+  "rest van de nacht overgeslagen: de ronde van {0} is gestopt": {
+    en: "rest of the night skipped: the round of {0} was stopped",
+    fr: "reste de la nuit ignoré : la ronde de {0} a été arrêtée",
+    de: "Rest der Nacht übersprungen: die Runde von {0} wurde gestoppt",
+  },
+  "de ronde van {0} is nog onderweg": {
+    en: "the round of {0} is still out",
+    fr: "la ronde de {0} est encore en cours",
+    de: "die Runde von {0} ist noch unterwegs",
+  },
+  "de maaier staat niet aan het laden op het dock": {
+    en: "the mower is not charging on the dock",
+    fr: "la tondeuse n'est pas en charge sur le dock",
+    de: "der Mäher lädt nicht auf dem Dock",
+  },
+  "accu {0} %, laadt nog op (minimaal {1} %)": {
+    en: "battery {0} %, still charging (at least {1} %)",
+    fr: "batterie à {0} %, encore en charge (au moins {1} %)",
+    de: "Akku {0} %, lädt noch (mindestens {1} %)",
+  },
   "maaier offline": {
     en: "mower offline",
     fr: "tondeuse hors ligne",
@@ -1279,6 +1311,22 @@ export const CATALOG: Catalog = {
     en: "startTime is required",
     fr: "startTime est requis",
     de: "startTime ist erforderlich",
+  },
+  // A patrol schedule's window (POST and PATCH /schedules, dashboard.ts patrolWindowError).
+  "intervalMin moet 0 of 15 tot en met 240 minuten zijn": {
+    en: "intervalMin must be 0, or between 15 and 240 minutes",
+    fr: "intervalMin doit valoir 0 ou être compris entre 15 et 240 minutes",
+    de: "intervalMin muss 0 oder zwischen 15 und 240 Minuten liegen",
+  },
+  "endTime moet HH:MM zijn": {
+    en: "endTime must be HH:MM",
+    fr: "endTime doit être au format HH:MM",
+    de: "endTime muss das Format HH:MM haben",
+  },
+  "endTime is vereist bij een interval": {
+    en: "endTime is required with an interval",
+    fr: "endTime est requis avec un intervalle",
+    de: "endTime ist bei einem Intervall erforderlich",
   },
   "stuur de afbeelding als ruwe request-body": {
     en: "send the image as the raw request body",
