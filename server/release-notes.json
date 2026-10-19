@@ -1,6 +1,65 @@
 {
   "releases": [
     {
+      "version": "2026.1019.2356",
+      "date": "2026-10-19",
+      "sections": {
+        "dashboard": [
+          "German minute unit for the patrol interval; once is once whatever the end time holds (API doc)",
+          "The patrol interval reads \"every 30 min\" or \"once\"; stable keys for the nights; API doc wording",
+          "The patrol schedule is a window with an interval; the run list is grouped per night",
+          "The patrol route stays inside the zone, crosses along the recorded channel and leaves hollow obstacles; the driven track splits at dropouts",
+          "Night patrol in the control bar, patrol report and map overlay, beta channel in the update banner"
+        ],
+        "firmware": [
+          "Patrol settle legs and obstacle clearance; dock measurement allows one late localisation message",
+          "Keep an unanswered nav send for the exit cancel; a checkpoint retry never loses clearance (Novabot-9ukw)",
+          "A patrol's end leaves the docking light 0 to put back; ignore the blade relay's status copies (Novabot-cwr4)",
+          "Cancel a nav goal that outlives its wait; step off the nearest border; one action client per action (Novabot-9ukw)",
+          "Headlight 1 while a recharge runs, the user's headlight back after it (Novabot-cwr4)",
+          "A recharge runs from recharge_status 50 up; a failed one is not broken off (Novabot-cwr4)",
+          "A refused patrol checkpoint is retried 0.6 m inward, then skipped; five in a row end the run (Novabot-9ukw)",
+          "On the dock means charging per RobotStatus, not a position",
+          "Extended_commands announces its commands on connect",
+          "A task that shows up right after a stop that found nothing gets its own stop",
+          "Stop a departure task that shows up late; refuse a handover on the pile; patrol and return keep where they drove",
+          "Hold only an on-pile departure to the distance; clock-proof fresh poses",
+          "A mow from a dock beside the lawn is the firmware's; no handover without a departure; fresh poses",
+          "Keep the first kill time, refuse a patrol beside an edge cut, tighten the drive's exit",
+          "Patrol drives clean up their departure, obey STOP and keep their end",
+          "Dashboard stops end a running drive, patrol reports starting",
+          "Patrol uploads need their run's token",
+          "A patrol taken over by a newer drive reports stopped",
+          "A stopped patrol drive also releases its nav goal",
+          "Patrol keeps the deck up and stays supervised",
+          "… plus 5 kleinere wijzigingen"
+        ],
+        "server": [
+          "No 'Mowing finished' when a patrol's go home reports FINISHED a tick after it docked; the notifications guide names the patrol exceptions",
+          "No \"Mower docked\" push for the docking after a night patrol",
+          "An offline mower skips every slot of a patrol window without a false missed; a charged mower on the dock counts as docked",
+          "A patrol window survives a server restart and the DST nights",
+          "A patrol schedule is a nightly window with an interval; a round per slot, skipped while the mower is not ready, and the night stops after a failed round",
+          "Patrol checkpoints clear of obstacles, readable stop reasons, and the plan and outcome of a run for the dashboard",
+          "A stop during a dock measurement reads as plain words with a next step",
+          "The update banner follows the beta channel",
+          "Error 113 no longer counts as a failed docking after a patrol (Novabot-bqzs)",
+          "Report a failed docking after a patrol go home (Novabot-bqzs)",
+          "Patrol checkpoints lie 1.0 m inside the border",
+          "A patrol is allowed when the mower announces the command",
+          "A patrol choice of only deleted zones falls back to the dock zone",
+          "No patrol start during a zone drive",
+          "Drop the departure hold; keep live patrol runs; patrols only through POST /patrol",
+          "Hold Home and Start for a departing drive's release; flagged stops reach the owner",
+          "Patrol and edge cut exclude each other; patrol end survives restarts",
+          "Patrol schedules keep their enabled flag and skip rain and night checks",
+          "Patrol schedules, server-run and allowed at night",
+          "Every stop reaches a running patrol",
+          "… plus 8 kleinere wijzigingen"
+        ]
+      }
+    },
+    {
       "version": "2026.1013.2326",
       "date": "2026-10-13",
       "sections": {
@@ -229,22 +288,6 @@
           "Angled 3D render from a known camera, with the mower drawn on it",
           "Credit tokens so a render works without your own OpenAI key",
           "Validate the serial number before it reaches the filesystem"
-        ]
-      }
-    },
-    {
-      "version": "2026.0921.0922",
-      "date": "2026-09-21",
-      "sections": {
-        "dashboard": [
-          "Copy a drone photo from the other mower"
-        ],
-        "app": [
-          "Mowing history shows server timestamps in the phone's timezone"
-        ],
-        "server": [
-          "Finished_area is one text sensor, not a measurement",
-          "An obstacle keeps its name when the mower re-uploads"
         ]
       }
     }
