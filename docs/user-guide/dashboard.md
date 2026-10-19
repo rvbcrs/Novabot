@@ -248,7 +248,9 @@ others.
   charger* for that. The normal stop and go-to-charger buttons, in the apps
   too, end a patrol as well. So do the STOP button on the mower and lifting or
   tilting it: the patrol then ends where the mower stands, and you get a
-  *Patrol stopped* notification. While a patrol drives, the button's tooltip
+  *Patrol stopped* notification. The docking at the end of a round raises no *Mower
+  docked* notification: with a window of rounds that would ring every half
+  hour. While a patrol drives, the button's tooltip
   says what it is doing.
 - **Greyed out.** While an edge cut or a drive to a zone holds the wheels, the
   button is greyed out, and its tooltip and an amber line in the panel say why.

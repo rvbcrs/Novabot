@@ -86,7 +86,7 @@ So there is nothing to finish. We build it from parts that do work:
    (`photo_topic`, default `front`).
 8. **Reporting.** The mower POSTs every checkpoint (photo or empty body, scores,
    frame count, pose) to `/api/nova-file-server/patrol/uploadFrame`. The server
-   keeps the last 10 runs under `STORAGE_PATH/patrol/<sn>/<run>/`. A score at or
+   keeps the last 30 runs (two nights of half-hour rounds) under `STORAGE_PATH/patrol/<sn>/<run>/`. A score at or
    above `patrol_min_points` (default 40) raises `patrol_detection` (category
    `patrol`), at most once per class per run per 2 minutes. A checkpoint with fewer
    than 2 perception frames is "no data": never an alert, never shown as all clear.
