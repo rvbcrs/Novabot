@@ -30,6 +30,7 @@ import {
   startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch, isScheduleWarning,
   renderScheduleReason,
 } from '../../services/scheduleRunner.js';
+import { isDeviceOnline } from '../../mqtt/broker.js';
 import { emitScheduleEvent, pushMqttLog } from '../../dashboard/socketHandler.js';
 import { scheduleRepo, rainSettingsRepo, mapRepo, patrolRunsRepo } from '../../db/repositories/index.js';
 import { db } from '../../db/database.js';
@@ -66,7 +67,7 @@ function windowed(id: string) {
 }
 /** What the mower reports: charging on the dock with this battery. */
 function dockedAt(battery: number, charging = true) {
-  vi.mocked(getDeviceSnapshot).mockReturnValue({ battery_state: charging ? 'CHARGING' : 'DISCHARGING', charging: charging ? '1' : '0', battery_power: String(battery) });
+  vi.mocked(getDeviceSnapshot).mockReturnValue({ battery_state: charging ? 'CHARGING' : 'DISCHARGING', battery_power: String(battery) });
 }
 /** The run the server holds for the mower. */
 function lastRun(over: Partial<{ schedule_id: string | null; started_at: number; ended_phase: string | null; dock_failed_at: number | null }>) {
@@ -95,6 +96,7 @@ describe('patrol schedules', () => {
     vi.spyOn(mapRepo, 'getChargerGps').mockReturnValue({ lat: 52, lng: 6 });
     vi.spyOn(patrolRunsRepo, 'get').mockReturnValue(undefined);   // no round of tonight, unless a test says so
     vi.mocked(getDeviceSnapshot).mockReturnValue(null);
+    vi.mocked(isDeviceOnline).mockReturnValue(true);
     vi.mocked(getWeatherForecast).mockResolvedValue({
       hourly: [], sunriseMs: NOW.getTime() - 16 * 3_600_000, sunsetMs: NOW.getTime() - 4 * 3_600_000, cachedAt: 0,
     });
@@ -293,6 +295,65 @@ describe('patrol schedules', () => {
     row = scheduleRepo.findById('w-23')!;
     expect(row.last_result).toBe('skipped');
     expect(renderScheduleReason('en', row.last_result_reason)).toBe('battery 40 %, still charging (at least 50 %)');
+  });
+
+  // A container restart in the middle of a night leaves the snapshot cache empty until the mower
+  // reports again, a few seconds later. That is "not known yet", not "not on the dock": the slot
+  // is neither skipped nor stamped, and the next tick looks again.
+  it('a later slot whose mower state is not known yet waits for the next tick', async () => {
+    windowed('w-23');
+    decidedAt('w-23', FIRST_SLOT_DECIDED);
+    lastRun({ ended_phase: 'done' });
+    vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+    const stamp = scheduleRepo.findById('w-23')!.last_triggered_at;
+    startScheduleRunner();   // the cache is empty: getDeviceSnapshot gives null
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+    expect(scheduleRepo.findById('w-23')).toMatchObject({ last_triggered_at: stamp, last_result: null });   // not stamped, nothing recorded
+    expect(pushMqttLog).not.toHaveBeenCalled();
+
+    // Only the position stream has reported so far: still nothing about the battery or the dock.
+    vi.mocked(getDeviceSnapshot).mockReturnValue({ patrol_phase: 'idle', rain_paused: '0' });
+    vi.advanceTimersByTime(30_000);
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+    expect(scheduleRepo.findById('w-23')).toMatchObject({ last_triggered_at: stamp, last_result: null });
+    expect(pushMqttLog).not.toHaveBeenCalled();
+
+    // The first battery report arrives: the next tick starts the round, inside the slot's five minutes.
+    dockedAt(80);
+    vi.advanceTimersByTime(30_000);
+    await flush();
+    expect(startPatrol).toHaveBeenCalledTimes(1);
+    expect(startPatrol).toHaveBeenCalledWith(SN, new Date('2026-08-05T23:31:30').getTime(), 'w-23');
+  });
+
+  // The online check comes before the round guards: an offline mower has no snapshot, which would
+  // read as "not on the dock", skip the slot and stamp it, with no retry.
+  it('an offline mower is logged as offline at a later slot too, and the slot is kept for when it is back', async () => {
+    windowed('w-23');
+    decidedAt('w-23', FIRST_SLOT_DECIDED);
+    lastRun({ ended_phase: 'done' });
+    vi.mocked(isDeviceOnline).mockReturnValue(false);   // its snapshot is gone as well (beforeEach: null)
+    vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+    const stamp = scheduleRepo.findById('w-23')!.last_triggered_at;
+    startScheduleRunner();
+    await flush();
+    vi.advanceTimersByTime(60_000);   // two more ticks, still offline
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+    const row = scheduleRepo.findById('w-23')!;
+    expect(row.last_result).toBe('skipped');
+    expect(renderScheduleReason('en', row.last_result_reason)).toBe('mower offline');
+    expect(pushMqttLog).toHaveBeenCalledTimes(1);   // one decision recorded, not one per tick
+    expect(row.last_triggered_at).toBe(stamp);      // and the slot is not used up
+
+    vi.mocked(isDeviceOnline).mockReturnValue(true);
+    dockedAt(80);
+    vi.advanceTimersByTime(30_000);
+    await flush();
+    expect(startPatrol).toHaveBeenCalledTimes(1);
+    expect(startPatrol).toHaveBeenCalledWith(SN, new Date('2026-08-05T23:32:00').getTime(), 'w-23');
   });
 
   // getDeviceSnapshot translates what the mower reports (CHARGING reads

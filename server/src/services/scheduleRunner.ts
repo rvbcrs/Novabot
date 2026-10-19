@@ -523,22 +523,27 @@ function checkSchedules() {
       }
     }
 
+    // Check of maaier online is
+    if (!isDeviceOnline(row.mower_sn)) {
+      logScheduleDecision(row, false, 'SKIPPED', M`maaier offline`);
+      continue;
+    }
+
     // Rounds after the first of a patrol window: the night's own guards. The first
     // round keeps today's rules (the start guards in startPatrol). A skip stamps
     // the slot as decided, or the 5-minute window decides it again every tick.
+    // After the online check: an offline mower has no snapshot and would read as
+    // "not on the dock", which uses the slot up where "offline" lets it retry.
     if (slot && slot.index > 0) {
       const why = roundSkipReason(row, slot);
+      // The mower is online but has not told the server its battery yet (the cache
+      // is empty after a server start): no decision, the next tick looks again.
+      if (why === 'unknown') continue;
       if (why) {
         scheduleRepo.updateLastTriggered(row.schedule_id);
         logScheduleDecision(row, false, 'SKIPPED', why);
         continue;
       }
-    }
-
-    // Check of maaier online is
-    if (!isDeviceOnline(row.mower_sn)) {
-      logScheduleDecision(row, false, 'SKIPPED', M`maaier offline`);
-      continue;
     }
 
     // Weercheck als regen (per schema), nacht of vorst (per maaier) aan staat;
@@ -748,8 +753,10 @@ function triggerSchedule(row: ScheduleRow, warning?: Msg) {
  * stops after a round of this schedule tonight that failed, was stopped or did
  * not dock; a round still out, a mower not charging on the dock, or a battery
  * under the patrol minimum skip this slot only. (spec 9)
+ * 'unknown': the mower's battery state has not reached the server yet, so the
+ * slot is neither skipped nor started and waits for the next tick.
  */
-function roundSkipReason(row: ScheduleRow, slot: PatrolSlot): Msg | null {
+function roundSkipReason(row: ScheduleRow, slot: PatrolSlot): Msg | 'unknown' | null {
   const last = patrolRunsRepo.get(row.mower_sn);
   if (last && last.schedule_id === row.schedule_id && last.started_at >= slot.windowStart.getTime()) {
     const at = wallTime(row, new Date(last.started_at));
@@ -759,12 +766,14 @@ function roundSkipReason(row: ScheduleRow, slot: PatrolSlot): Msg | null {
     if (last.ended_phase === null) return M`de ronde van ${at} is nog onderweg`;
   }
   const snap = getDeviceSnapshot(row.mower_sn);
+  // No snapshot at all (empty cache after a server start), or one with the position stream
+  // but no battery report yet: nothing is known about the dock, which is not "not on the dock".
+  if (snap?.battery_state === undefined) return 'unknown';
   // The snapshot is the translated one ("Charging", "Full"); the cache has CHARGING and
   // FULL. A full battery on the dock is on the dock, like everywhere else in the server.
-  const state = (snap?.battery_state ?? '').toUpperCase();
-  const docked = state === 'CHARGING' || state === 'FULL' || snap?.charging === '1';
-  if (!docked) return M`de maaier staat niet aan het laden op het dock`;
-  const battery = parseInt(snap?.battery_power ?? '', 10);
+  const state = snap.battery_state.toUpperCase();
+  if (state !== 'CHARGING' && state !== 'FULL') return M`de maaier staat niet aan het laden op het dock`;
+  const battery = parseInt(snap.battery_power ?? '', 10);
   if (Number.isFinite(battery) && battery < PATROL_MIN_BATTERY) return M`accu ${battery} %, laadt nog op (minimaal ${PATROL_MIN_BATTERY} %)`;
   return null;
 }

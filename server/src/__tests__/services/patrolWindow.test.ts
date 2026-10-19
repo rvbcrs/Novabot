@@ -65,3 +65,60 @@ describe('patrolSlot', () => {
     expect(s.index).toBe(0);
   });
 });
+
+// The clocks change in the middle of a night window: forward at 02:00 on 2026-03-29 and back at
+// 03:00 on 2026-10-25 in Amsterdam. Instants below are written in UTC.
+describe('patrolSlot across a clock change', () => {
+  it('finds yesterday\'s window on the night after the clocks went forward', () => {
+    // Sunday 2026-03-29 has 23 hours: Monday 00:10 CEST minus 24 h is Saturday 23:10 CET.
+    const s = patrolSlot(row(), new Date('2026-03-29T22:10:00Z'))!;   // Monday 00:10 CEST
+    expect(s).not.toBeNull();
+    expect(s.index).toBe(2);
+    expect(s.windowStart.toISOString()).toBe('2026-03-29T21:00:00.000Z');   // Sunday 23:00 CEST
+    expect(s.slotAt.toISOString()).toBe('2026-03-29T22:00:00.000Z');         // Monday 00:00 CEST
+    expect(s.windowEnd.toISOString()).toBe('2026-03-30T04:00:00.000Z');      // Monday 06:00 CEST
+    // The 00:30 round is the one that was lost with it.
+    expect(patrolSlot(row(), new Date('2026-03-29T22:40:00Z'))!.index).toBe(3);
+    expect(patrolSlot(row(), new Date('2026-03-30T04:00:00Z'))).toBeNull();
+  });
+  it('a window over the change forward ends at 06:00 on the wall clock, not an hour later', () => {
+    // Saturday 2026-03-28 23:00 CET to Sunday 06:00 CEST: six hours elapsed, seven on the clock.
+    const s = patrolSlot(row(), new Date('2026-03-29T03:50:00Z'))!;   // 05:50 CEST
+    expect(s).not.toBeNull();
+    expect(s.index).toBe(11);
+    expect(s.slotAt.toISOString()).toBe('2026-03-29T03:30:00.000Z');
+    expect(s.windowStart.toISOString()).toBe('2026-03-28T22:00:00.000Z');
+    expect(s.windowEnd.toISOString()).toBe('2026-03-29T04:00:00.000Z');
+    expect(patrolSlot(row(), new Date('2026-03-29T04:10:00Z'))).toBeNull();   // 06:10 CEST
+  });
+  it('a window over the change back runs until 06:00 on the wall clock, not an hour less', () => {
+    // Saturday 2026-10-24 23:00 CEST to Sunday 06:00 CET: eight hours elapsed, seven on the clock.
+    const s = patrolSlot(row(), new Date('2026-10-25T04:50:00Z'))!;   // 05:50 CET
+    expect(s).not.toBeNull();
+    expect(s.index).toBe(15);
+    expect(s.slotAt.toISOString()).toBe('2026-10-25T04:30:00.000Z');
+    expect(s.windowStart.toISOString()).toBe('2026-10-24T21:00:00.000Z');
+    expect(s.windowEnd.toISOString()).toBe('2026-10-25T05:00:00.000Z');
+    expect(patrolSlot(row(), new Date('2026-10-25T05:00:00Z'))).toBeNull();   // 06:00 CET
+  });
+  it('the weekday of the start holds on the night after the change too', () => {
+    // Monday 00:10 CEST still belongs to Sunday\'s window, and Monday\'s own starts at 23:00.
+    expect(patrolSlot(row({ weekdays: JSON.stringify([0]) }), new Date('2026-03-29T22:10:00Z'))!.index).toBe(2);
+    expect(patrolSlot(row({ weekdays: JSON.stringify([1]) }), new Date('2026-03-29T22:10:00Z'))).toBeNull();
+  });
+});
+
+describe('patrolSlot times', () => {
+  it('are whole seconds, whatever the milliseconds of now', () => {
+    // getScheduleOccurrence keeps the milliseconds of its argument; a round that started
+    // in the same second as the window must not count as before it.
+    const today = patrolSlot(row(), new Date('2026-08-05T21:30:00.800Z'))!;   // 23:30:00.800 CEST
+    expect(today.index).toBe(1);
+    expect(today.windowStart.toISOString()).toBe('2026-08-05T21:00:00.000Z');
+    expect(today.slotAt.toISOString()).toBe('2026-08-05T21:30:00.000Z');
+    const overMidnight = patrolSlot(row(), new Date('2026-08-05T22:10:00.800Z'))!;   // 00:10:00.800 CEST
+    expect(overMidnight.windowStart.toISOString()).toBe('2026-08-05T21:00:00.000Z');
+    expect(overMidnight.slotAt.toISOString()).toBe('2026-08-05T22:00:00.000Z');
+    expect(overMidnight.windowEnd.getTime() % 1000).toBe(0);
+  });
+});
