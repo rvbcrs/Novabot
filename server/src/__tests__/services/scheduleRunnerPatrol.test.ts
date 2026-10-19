@@ -356,14 +356,60 @@ describe('patrol schedules', () => {
     expect(startPatrol).toHaveBeenCalledWith(SN, new Date('2026-08-05T23:32:00').getTime(), 'w-23');
   });
 
+  // The decision log is deduped per slot. If it were per day, the offline decision of 00:00 would
+  // count as the one already logged for 23:30: last_result_at would stay at 23:30, and the 00:00
+  // slot, deliberately not stamped so it can retry, would read as undecided and be logged "missed".
+  it('an offline mower skips each later slot once, and no slot of the night reads as missed', async () => {
+    windowed('w-23');
+    // Created before the night: a slot of a newer schedule is never "missed", which would hide the bug.
+    db.prepare("UPDATE dashboard_schedules SET created_at = '2026-08-01 08:00:00' WHERE schedule_id = ?").run('w-23');
+    decidedAt('w-23', FIRST_SLOT_DECIDED);
+    lastRun({ ended_phase: 'done' });
+    vi.mocked(isDeviceOnline).mockReturnValue(false);
+    vi.setSystemTime(new Date('2026-08-05T23:30:30'));
+    const stamp = scheduleRepo.findById('w-23')!.last_triggered_at;
+    startScheduleRunner();
+    await flush();
+    vi.advanceTimersByTime(36 * 60_000);   // to 00:06:30: the five minutes of the 23:30 and of the 00:00 slot are over
+    await flush();
+    expect(startPatrol).not.toHaveBeenCalled();
+    const row = scheduleRepo.findById('w-23')!;
+    expect(row.last_result).toBe('skipped');
+    expect(renderScheduleReason('en', row.last_result_reason)).toBe('mower offline');
+    expect(Date.parse(row.last_result_at!)).toBeGreaterThanOrEqual(new Date('2026-08-06T00:00:00').getTime());   // the 00:00 slot refreshed it
+    expect(row.last_triggered_at).toBe(stamp);   // and neither slot was used up: an offline slot stays open for a retry
+    // One decision per slot, both the same, and nothing in between: no "missed".
+    const logged = vi.mocked(pushMqttLog).mock.calls.map(([entry]) => entry.payload);
+    expect(logged).toHaveLength(2);
+    for (const line of logged) expect(line).toMatch(/^SKIPPED .* mower offline$/);
+  });
+
+  // setInterval ticks drift by a few milliseconds, and getScheduleOccurrence keeps the milliseconds
+  // of the tick it is given: the occurrence in the log's dedupe key must not carry them, or a
+  // single start (a mow, a once patrol) would log its decision again on every tick of its window.
+  it('a single start logs its decision once, however much the ticks drift', async () => {
+    vi.mocked(isDeviceOnline).mockReturnValue(false);
+    due('p-once', 'patrol');
+    for (const at of ['23:00:30.100', '23:01:00.157', '23:01:30.231', '23:02:00.998']) {
+      stopScheduleRunner();
+      vi.setSystemTime(new Date(`2026-08-05T${at}`));
+      startScheduleRunner();
+      await flush();
+    }
+    expect(pushMqttLog).toHaveBeenCalledTimes(1);   // "mower offline", once
+    expect(scheduleRepo.findById('p-once')!.last_result).toBe('skipped');
+  });
+
   // getDeviceSnapshot translates what the mower reports (CHARGING reads
   // "Charging", FULL reads "Full"), and a full battery on the dock is still on the
-  // dock. The other tests feed the guard the raw spelling; this one the real snapshot.
+  // dock: the stock mqtt_node reports it as CHARGED (pipe_charge_status 3), and the server also knows FULL.
+  // The other tests feed the guard the raw spelling; this one the real snapshot.
   it('reads the dock as the real snapshot has it: charging or full counts, anything else does not', async () => {
     const real = await vi.importActual<typeof import('../../mqtt/sensorData.js')>('../../mqtt/sensorData.js');
     vi.mocked(getDeviceSnapshot).mockImplementation(real.getDeviceSnapshot);
     for (const [state, starts] of [
-      ['CHARGING', true], ['FULL', true], ['DISCHARGING', false], ['NOT_CHARGING', false], ['DISCHARGED', false],
+      ['CHARGING', true], ['FULL', true], ['CHARGED', true],
+      ['DISCHARGING', false], ['NOT_CHARGING', false], ['DISCHARGED', false], ['CHARGERROR', false],
     ] as const) {
       db.prepare('DELETE FROM dashboard_schedules').run();
       vi.clearAllMocks();

@@ -150,9 +150,16 @@ const DEFAULT_CUTTING_HEIGHT_CM = 5;
 // Visible per-schedule decision log: writes to the console (→ proxy log file +
 // stdout) AND the dashboard MQTT-log stream (pushMqttLog), so you can actually
 // SEE whether a scheduled run started and, if not, exactly why (offline / rain /
-// mower busy / start error). Deduped per (day, outcome) so the 30s retry ticks
-// inside the 5-minute window log each distinct outcome ONCE, not every tick.
+// mower busy / start error). Deduped per (occurrence, outcome) so the 30s retry ticks
+// inside the 5-minute window log each distinct outcome ONCE, not every tick. The
+// occurrence is the start time of a single schedule and the slot of a patrol
+// window: every slot logs its own decision and refreshes last_result_at, or a later
+// slot with the same outcome would read as undecided (and as "missed") to checkSchedules.
 const lastLoggedDecision = new Map<string, string>();
+// The occurrence the loop in checkSchedules is deciding for, per row object of that tick, in
+// whole seconds: getScheduleOccurrence keeps the milliseconds of the tick it was given, and
+// those drift from tick to tick.
+const occurrenceOfRow = new WeakMap<ScheduleRow, number>();
 const RESULT_FOR_OUTCOME: Record<string, string> = {
   'STARTED': 'started', 'SKIPPED': 'skipped', 'NOT STARTED': 'failed', 'MISSED': 'missed',
 };
@@ -199,8 +206,8 @@ export function isScheduleWarning(result: string | null | undefined, stored: str
 function logScheduleDecision(row: ScheduleRow, ok: boolean, outcome: string, reason?: string | Msg): void {
   const detail = reason === undefined ? undefined : isMsg(reason) ? renderNested('en', reason) : reason;
   const stored = reason === undefined ? null : isMsg(reason) ? JSON.stringify(reason) : reason;
-  const dayKey = new Date().toISOString().slice(0, 10);
-  const dedupeKey = `${dayKey}:${outcome}:${detail ?? ''}`;
+  const scope = occurrenceOfRow.get(row) ?? new Date().toISOString().slice(0, 10);
+  const dedupeKey = `${scope}:${outcome}:${detail ?? ''}`;
   if (lastLoggedDecision.get(row.schedule_id) === dedupeKey) return;
   lastLoggedDecision.set(row.schedule_id, dedupeKey);
   const text = `${outcome}${detail ? ` — ${detail}` : ''}`;
@@ -472,6 +479,7 @@ function checkSchedules() {
       // Niet vandaag
       continue;
     }
+    occurrenceOfRow.set(row, Math.floor(scheduledAt.getTime() / 1000));
     const sinceScheduledMs = now.getTime() - scheduledAt.getTime();
     if (sinceScheduledMs < 0 || sinceScheduledMs > TRIGGER_WINDOW_MS) {
       // Buiten trigger window. Is het venster voorbij zonder dat er ooit een
@@ -770,9 +778,10 @@ function roundSkipReason(row: ScheduleRow, slot: PatrolSlot): Msg | 'unknown' | 
   // but no battery report yet: nothing is known about the dock, which is not "not on the dock".
   if (snap?.battery_state === undefined) return 'unknown';
   // The snapshot is the translated one ("Charging", "Full"); the cache has CHARGING and
-  // FULL. A full battery on the dock is on the dock, like everywhere else in the server.
+  // FULL. A full battery on the dock is on the dock: the stock mqtt_node reports it as CHARGED
+  // (pipe_charge_status 3), and the server also knows FULL. DISCHARGED and CHARGERROR are not.
   const state = snap.battery_state.toUpperCase();
-  if (state !== 'CHARGING' && state !== 'FULL') return M`de maaier staat niet aan het laden op het dock`;
+  if (state !== 'CHARGING' && state !== 'CHARGED' && state !== 'FULL') return M`de maaier staat niet aan het laden op het dock`;
   const battery = parseInt(snap.battery_power ?? '', 10);
   if (Number.isFinite(battery) && battery < PATROL_MIN_BATTERY) return M`accu ${battery} %, laadt nog op (minimaal ${PATROL_MIN_BATTERY} %)`;
   return null;

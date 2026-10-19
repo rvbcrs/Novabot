@@ -64,11 +64,17 @@ export function patrolSlot(row: WindowRow, now: Date): PatrolSlot | null {
   // not from `now` minus 24 h: on the night after the clocks went forward Sunday has 23 hours,
   // so that is two days back. From noon, getScheduleOccurrence counts the hours to an evening
   // or night start with no clock change in between, as on any other day.
-  // Not covered: a window that starts in the small hours BEFORE the change (after 00:00, before
-  // 02:00 or 03:00) is read an hour off once the clocks have changed, on that one night.
-  // getScheduleOccurrence counts elapsed hours from the instant it is given, and has the same
-  // caveat for a single start. Windows that start in the evening, at night or after the change
-  // are exact.
+  // Known limits, on the night the clocks change only:
+  // - A window that starts in the small hours BEFORE the change (after 00:00, before 02:00 or
+  //   03:00) is read an hour off once the clocks have changed.
+  // - Where the clocks change around midnight (Beirut, Santiago, Cairo) the hour before midnight
+  //   happens twice, and during the repeated hour the start of an evening window is read an hour
+  //   late. The window end stays right, and so do the slot times for intervals that divide 60
+  //   minutes; other intervals can shift or lose a round in that hour.
+  // Both come from getScheduleOccurrence, which counts elapsed hours from the instant it is given
+  // and has the same caveat for a single start. Evening and night starts and starts after the
+  // change were exact on every minute around the change in the other zones tried (Amsterdam,
+  // London, Toronto, Los Angeles, Sydney, Auckland, Lord Howe, Kolkata).
   const midnight = getScheduleOccurrence({ ...full, start_time: '00:00', weekdays: EVERY_DAY, interval_days: 0 }, now);
   const yesterdayNoon = new Date((midnight ?? now).getTime() - 12 * HOUR_MS);
   for (const from of [now, yesterdayNoon]) {
