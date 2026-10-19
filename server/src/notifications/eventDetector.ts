@@ -180,7 +180,9 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
         `Started mowing — battery ${next.batteryPower}%.`,
         { msg: next.msg, battery_power: next.batteryPower },
       ));
-    } else if (wasMowing && !nowMowing && isFinished(next.msg) && next.errorStatus === '0') {
+    // The go home after a patrol reports Work:MOVING and docks with Work:FINISHED,
+    // which can come a tick after the first docked report that ended the docking.
+    } else if (wasMowing && !nowMowing && isFinished(next.msg) && next.errorStatus === '0' && !patrolDockedRecently(sn)) {
       dispatchEvent(makeEvent(
         sn,
         'mowing_finished',

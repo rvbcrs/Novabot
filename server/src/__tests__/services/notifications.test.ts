@@ -487,6 +487,14 @@ describe('no docked event for the docking after a patrol', () => {
     expect(dockedEvents()).toEqual([]);
   });
 
+  it("no 'Mowing finished' either when the go home's FINISHED comes a tick after the first docked report", () => {
+    detectAndDispatch(DSN, at({}));
+    markPatrolDocking(DSN);
+    detectAndDispatch(DSN, at({ recharge_status: '193', battery_state: 'CHARGING' }));
+    detectAndDispatch(DSN, at({ msg: 'Mode:COVERAGE Work:FINISHED Prev work:MOVING Recharge: FINISHED', recharge_status: '9', battery_state: 'CHARGING' }));
+    expect(getRecentEvents(DSN, 50).filter(e => e.type === 'mowing_finished' || e.type === 'docked')).toEqual([]);
+  });
+
   it('a docking that is not a patrol\'s is still reported', () => {
     detectAndDispatch(DSN, at({ patrol_phase: '' }));
     detectAndDispatch(DSN, at({ patrol_phase: '', recharge_status: '193', battery_state: 'CHARGING' }));

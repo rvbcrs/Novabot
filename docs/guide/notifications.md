@@ -9,8 +9,8 @@ The notification dispatcher watches your mower's MQTT reports and emits a typed 
 | Event | Trigger | Default body |
 |---|---|---|
 | `mowing_started` | `msg` enters `Work:RUNNING` / `COVERING` / `NAVIGATING` / `BOUNDARY_COVERING` / `AVOIDING` | full `msg` field |
-| `mowing_finished` | was-mowing → `Work:FINISHED` with `error_status=0` | full `msg` field |
-| `docked` | `recharge_status` reaches 9 | battery + recharge_status |
+| `mowing_finished` | was-mowing → `Work:FINISHED` with `error_status=0` (not for a night patrol or its drive home) | full `msg` field |
+| `docked` | `recharge_status` reaches 9 (not for the docking after a night patrol) | battery + recharge_status |
 | `low_battery` | `battery_power` crosses below `LOW_BATTERY_THRESHOLD` (one-shot per dip) | "Battery dropped below 20%" |
 | `error` | unmapped non-zero `error_status` | firmware `error_msg` verbatim |
 | `error_cleared` | non-zero `error_status` → 0 | "Previous error_status=X now 0" |
