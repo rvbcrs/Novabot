@@ -243,7 +243,7 @@ function RunList({ runs, out, onOpen }: { runs: PatrolRunDto[]; out: boolean; on
     <div className="mt-3">
       <div className="text-[11px] text-gray-400 mb-0.5">{t('drawer.patrol.history')}</div>
       {groupByNight(runs).map(group => (
-        <div key={group.runs[0].run}>
+        <div key={group.night}>
           <div className="text-[10px] text-gray-400 mt-1.5 mb-0.5">
             {t('drawer.patrol.night', {
               date: nightDate(group.night).toLocaleDateString(i18n.language, { day: 'numeric', month: 'short' }),
@@ -427,7 +427,7 @@ function NightlySchedule({ sn, onMessage }: { sn: string; onMessage: (message: s
   );
   return (
     <div className="flex items-start justify-between gap-2 text-[11px] text-gray-300 mb-3">
-      {/* The sentence wraps on a narrow panel, "until" and "every" staying with their control; the switch keeps the top right. */}
+      {/* The sentence wraps on a narrow panel, "until" staying with its time; the switch keeps the top right. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span>{t('drawer.patrol.nightly')}</span>
         {load === 'loading' ? (
@@ -441,23 +441,20 @@ function NightlySchedule({ sn, onMessage }: { sn: string; onMessage: (message: s
                 {timeInput('until', t('drawer.patrol.nightlyUntilTitle'))}
               </span>
             )}
-            <span className="inline-flex items-center gap-2 whitespace-nowrap">
-              {t('drawer.patrol.nightlyEvery')}
-              <select
-                value={ready ? fields.every : 0}
-                disabled={!ready}
-                onChange={e => onEvery(e.target.value)}
-                aria-label={t('drawer.patrol.nightlyEveryTitle')}
-                title={t('drawer.patrol.nightlyEveryTitle')}
-                className={CONTROL}
-              >
-                {choices.map(n => (
-                  <option key={n} value={n}>
-                    {n === 0 ? t('drawer.patrol.nightlyOnce') : t('drawer.patrol.nightlyMinutes', { n })}
-                  </option>
-                ))}
-              </select>
-            </span>
+            <select
+              value={ready ? fields.every : 0}
+              disabled={!ready}
+              onChange={e => onEvery(e.target.value)}
+              aria-label={t('drawer.patrol.nightlyEveryTitle')}
+              title={t('drawer.patrol.nightlyEveryTitle')}
+              className={CONTROL}
+            >
+              {choices.map(n => (
+                <option key={n} value={n}>
+                  {n === 0 ? t('drawer.patrol.nightlyOnce') : t('drawer.patrol.nightlyEveryMinutes', { n })}
+                </option>
+              ))}
+            </select>
           </>
         )}
       </div>

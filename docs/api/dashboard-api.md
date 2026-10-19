@@ -406,6 +406,7 @@ Get all dashboard schedules for a mower. The list holds mowing schedules only
       "scheduleName": "Morning Mow",
       "startTime": "08:00",
       "endTime": "12:00",
+      "intervalMin": 0,
       "weekdays": [1, 3, 5],
       "enabled": true,
       "mapId": "map0",
@@ -457,12 +458,12 @@ answer is 409. A patrol schedule follows its own rules:
   the end of the window and `intervalMin` the minutes between two rounds (`0`,
   or 15 to 240). With an interval, the server starts a round at `startTime`
   and then every `intervalMin` minutes while the round's start lies before
-  `endTime` (an `endTime` at or before `startTime` means the next morning).
-  `intervalMin: 0` or no `endTime` is once: a single round at `startTime`. An
-  interval outside 0 and 15 to 240, an interval without an `endTime`, or an
-  `endTime` that is not `HH:MM` is answered with 400. PATCH takes the same
-  fields (`"endTime": null` clears the end), and every schedule in the list
-  carries `intervalMin` (always `0` for a mowing schedule).
+  `endTime` (an `endTime` at or before `startTime` means the next morning). No
+  interval (`intervalMin: 0`) and no `endTime` is once: a single round at
+  `startTime`; an interval without an `endTime` is a 400. So is an interval
+  outside 0 and 15 to 240, or an `endTime` that is not `HH:MM`. PATCH takes
+  the same fields (`"endTime": null` clears the end), and every schedule in
+  the list carries `intervalMin` (always `0` for a mowing schedule).
 - A later round of the night is skipped, and the schedule says why, when the
   previous round is still out, the mower is not charging on the dock, or its
   battery is under 50 %. After a round that failed, was stopped, or did not
