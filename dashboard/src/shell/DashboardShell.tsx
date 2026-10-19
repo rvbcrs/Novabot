@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { useToast } from '../components/common/Toast';
 import { useTranslation } from 'react-i18next';
 import { Mountain, Map as MapIcon, CalendarClock, ClipboardList, Settings as SettingsIcon } from 'lucide-react';
@@ -8,6 +8,7 @@ import { DeviceChips } from './DeviceChips';
 import { useDevices } from '../hooks/useDevices';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { usePatrolReports } from '../hooks/usePatrolReports';
+import { usePatrolTrack } from '../hooks/usePatrolTrack';
 import { deriveMowerActivity } from '../utils/mowerActivity';
 import { ActiveMowerProvider } from '../contexts/ActiveMowerContext';
 import { MapTab } from '../pages/MapTab';
@@ -20,7 +21,8 @@ import { DockDriftCard } from '../components/drawer/DockDriftCard';
 import { ServerLogTail, FloatingServerLog } from '../components/drawer/ServerLogTail';
 import { MowerControls } from '../components/dashboard/MowerControls';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
-import type { PatrolOverlay } from '../utils/patrolPlan';
+import type { PatrolMapView } from '../utils/patrolPlan';
+import { trackForView } from '../utils/patrolTrack';
 import { LongPauseBanner } from './LongPauseBanner';
 import { MdnsConflictBanner } from './MdnsConflictBanner';
 import { UpdateBanner } from './UpdateBanner';
@@ -86,7 +88,11 @@ function ShellInner() {
   const [zoneHighlight, setZoneHighlight] = useState<string | null>(null);
   // The night patrol's route and checkpoints on the map: set by the patrol panel in
   // the control bar (MowerControls), drawn by the map. Same bridge as the highlight.
-  const [patrolOverlay, setPatrolOverlay] = useState<PatrolOverlay | null>(null);
+  const [patrolView, setPatrolView] = useState<PatrolMapView | null>(null);
+  // Where the mower drove during a patrol, from its live map position. Recorded here,
+  // not in the panel, so it goes on with the panel closed or another tab open.
+  const patrolTracks = usePatrolTrack(activeMowerSn, activeMower?.sensors, experimental, patrolReports.run);
+  const patrolTrack = useMemo(() => trackForView(patrolTracks, patrolView), [patrolTracks, patrolView]);
   const [previewRequest, setPreviewRequest] = useState<{ nonce: number; covDirection: number; canonicals: string[]; polygonArea?: Array<{ latitude: number; longitude: number }> } | null>(null);
   // Pattern placement bridge: the Start-sheet Pattern tab (header MowerControls)
   // and the MowerMap (MapTab) are far apart in the tree. patternMode tells the
@@ -189,7 +195,7 @@ function ShellInner() {
       previewLoading={previewLoading}
       onZoneHighlight={setZoneHighlight}
       patrolReports={patrolReports}
-      onPatrolOverlay={setPatrolOverlay}
+      onPatrolView={setPatrolView}
     />
   ) : null;
 
@@ -291,7 +297,8 @@ function ShellInner() {
             progressSuppressed={freshSession}
             onPreviewLoading={setPreviewLoading}
             highlightMapId={zoneHighlight}
-            patrolOverlay={patrolOverlay}
+            patrolView={patrolView}
+            patrolTrack={patrolTrack}
           />
         )}
         {tab === 'schedule' && <SchedulePage mower={activeMower} />}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchPatrolPlan, fetchPatrolRuns, type PatrolRunDto } from '../api/client';
-import { buildOverlay, pickOutRun, type PatrolOverlay, type PatrolPlanZones } from '../utils/patrolPlan';
+import { buildOverlay, pickOutRun, type PatrolMapView, type PatrolPlanZones } from '../utils/patrolPlan';
 import { patrolStatus } from '../utils/patrolStatus';
 import type { PatrolReports } from './usePatrolReports';
 
@@ -30,8 +30,8 @@ export interface PatrolView {
   runsError: string | null;
   /** The plan changed (a zone was ticked): fetch it again. */
   reloadPlan: () => void;
-  /** What the map draws, or null for nothing. */
-  overlay: PatrolOverlay | null;
+  /** What the map shows of the patrol (the route, and which driven track goes with it), or null for nothing. */
+  view: PatrolMapView | null;
   /** The run the report dialog shows; null while it is closed. */
   reportRun: string | null;
   openReport: (run: string) => void;
@@ -41,7 +41,8 @@ export interface PatrolView {
 /**
  * What the patrol panel, the report dialog and the map overlay share: the runs
  * the server kept, the plan a start would drive, which run the report shows,
- * and from those the checkpoints the map draws.
+ * and from those what the map draws (`view`: the checkpoints, and the mode, so
+ * the shell can pick the driven track that goes with it).
  *
  * The map shows the patrol while the panel is open or a patrol is out:
  * - a report is open: that run, as it ended (done / skipped from its photos and plan);
@@ -99,26 +100,34 @@ export function usePatrolView({ sn, sensors, enabled, panelOpen, reports = NO_RE
   }, [sn, wantPlan, planNonce]);
   const currentPlan = planState?.sn === sn ? planState.plan : null;
 
-  const overlay = useMemo<PatrolOverlay | null>(() => {
+  const view = useMemo<PatrolMapView | null>(() => {
     if (!enabled) return null;
     if (reportRun !== null) {
       const run = runs.find(r => r.run === reportRun);
-      return run?.plan
-        ? buildOverlay(run.plan, { mode: 'finished', reached: run.frames.map(f => f.seq), endedPhase: run.endedPhase })
-        : null;
+      return {
+        mode: 'finished',
+        run: reportRun,
+        overlay: run?.plan
+          ? buildOverlay(run.plan, { mode: 'finished', reached: run.frames.map(f => f.seq), endedPhase: run.endedPhase })
+          : null,
+      };
     }
     if (active) {
       // The run the server says is out; the live reports only count when they are of that run.
       const { run: out, reportsApply } = pickOutRun(runs, reports.run);
-      return buildOverlay(out?.plan ?? currentPlan, {
+      return {
         mode: 'live',
-        phase,
-        reached: [...(reportsApply ? reports.reached : []), ...(out?.frames.map(f => f.seq) ?? [])],
-        skippedSeqs: reportsApply ? reports.skippedPoints.map(p => p.seq) : [],
-        skippedZones: reportsApply ? reports.skipped.map(s => s.zone) : [],
-      });
+        run: null,
+        overlay: buildOverlay(out?.plan ?? currentPlan, {
+          mode: 'live',
+          phase,
+          reached: [...(reportsApply ? reports.reached : []), ...(out?.frames.map(f => f.seq) ?? [])],
+          skippedSeqs: reportsApply ? reports.skippedPoints.map(p => p.seq) : [],
+          skippedZones: reportsApply ? reports.skipped.map(s => s.zone) : [],
+        }),
+      };
     }
-    return panelOpen ? buildOverlay(currentPlan, { mode: 'plan' }) : null;
+    return panelOpen ? { mode: 'plan', run: null, overlay: buildOverlay(currentPlan, { mode: 'plan' }) } : null;
   }, [enabled, reportRun, runs, active, phase, reports, currentPlan, panelOpen]);
 
   const openReport = useCallback((run: string) => setReportRun(run), []);
@@ -128,6 +137,6 @@ export function usePatrolView({ sn, sensors, enabled, panelOpen, reports = NO_RE
     runs,
     runsLoad: mineRuns?.load ?? 'loading',
     runsError: mineRuns?.error ?? null,
-    reloadPlan, overlay, reportRun, openReport, closeReport,
+    reloadPlan, view, reportRun, openReport, closeReport,
   };
 }

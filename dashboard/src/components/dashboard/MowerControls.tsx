@@ -45,7 +45,7 @@ import { PatrolPanel } from './PatrolPanel';
 import { PatrolReport } from './PatrolReport';
 import type { PatrolReports } from '../../hooks/usePatrolReports';
 import { usePatrolView } from '../../hooks/usePatrolView';
-import type { PatrolOverlay } from '../../utils/patrolPlan';
+import type { PatrolMapView } from '../../utils/patrolPlan';
 import { patrolStatus } from '../../utils/patrolStatus';
 import { useExperimental } from '../../utils/experimental';
 
@@ -80,15 +80,15 @@ interface Props {
   /** What the mower reported during a night patrol that no sensor carries (usePatrolReports,
    *  kept in the shell so it is not lost while another tab is open). For the patrol panel. */
   patrolReports?: PatrolReports;
-  /** The night patrol's route for the map (checkpoints with their state), or null for nothing.
-   *  Pushed up like onZoneHighlight; null again when these controls go. */
-  onPatrolOverlay?: (overlay: PatrolOverlay | null) => void;
+  /** What the map shows of the night patrol (the route with its checkpoints, and which driven track
+   *  goes with it), or null for nothing. Pushed up like onZoneHighlight; null again when these controls go. */
+  onPatrolView?: (view: PatrolMapView | null) => void;
 }
 
 export function MowerControls({
   sn, online, sensors, onPathDirectionChange, pendingPolygon, onStarted,
   onPatternPlacementChange, onPatternModeChange, onOffsetPreviewChange, patternCenter, onPreview,
-  previewLoading, onZoneHighlight, patrolReports, onPatrolOverlay,
+  previewLoading, onZoneHighlight, patrolReports, onPatrolView,
 }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -108,12 +108,12 @@ export function MowerControls({
     if (!experimental) setPatrolExpanded(false);
   }
   const [maps, setMaps] = useState<MapData[]>([]);
-  // The patrol's data: the runs, the plan, the report dialog, and from those the
-  // checkpoints the map draws while the panel is open or a patrol is out.
+  // The patrol's data: the runs, the plan, the report dialog, and from those what
+  // the map draws while the panel is open or a patrol is out.
   const patrol = usePatrolView({ sn, sensors, enabled: experimental, panelOpen: patrolExpanded, reports: patrolReports });
-  const patrolOverlay = patrol.overlay;
-  useEffect(() => { onPatrolOverlay?.(patrolOverlay); }, [patrolOverlay, onPatrolOverlay]);
-  useEffect(() => () => onPatrolOverlay?.(null), [onPatrolOverlay]);
+  const patrolView = patrol.view;
+  useEffect(() => { onPatrolView?.(patrolView); }, [patrolView, onPatrolView]);
+  useEffect(() => () => onPatrolView?.(null), [onPatrolView]);
   const patrolZoneName = useCallback(
     (slot: string) => maps.find(m => m.canonicalName === slot)?.mapName || slot,
     [maps],

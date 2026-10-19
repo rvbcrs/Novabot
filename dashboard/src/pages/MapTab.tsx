@@ -5,7 +5,8 @@ import { MowerMap } from '../components/map/MowerMap';
 import { AutoMapPanel } from '../components/map/AutoMapPanel';
 import { MapPullBanner } from '../components/map/MapPullBanner';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
-import type { PatrolOverlay } from '../utils/patrolPlan';
+import type { PatrolMapView } from '../utils/patrolPlan';
+import type { PatrolTrackView } from '../utils/patrolTrack';
 
 type OtaProgressEntry = { status: string; percentage: number | null; timestamp: number; session?: unknown };
 
@@ -29,11 +30,13 @@ interface Props {
   onPreviewLoading?: (loading: boolean) => void;
   /** Work area chosen in the Start sheet: drawn highlighted, like a clicked one. */
   highlightMapId?: string | null;
-  /** The night patrol's route and checkpoints, set by the patrol panel in the control bar. */
-  patrolOverlay?: PatrolOverlay | null;
+  /** What the map shows of the night patrol (route and checkpoints), set by the patrol panel in the control bar. */
+  patrolView?: PatrolMapView | null;
+  /** Where the mower drove during the patrol shown, from the shell. */
+  patrolTrack?: PatrolTrackView | null;
 }
 
-export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRequest, patternPlacement, onMapClickForPattern, controlsSlot, progressSuppressed, onPreviewLoading, highlightMapId, patrolOverlay }: Props) {
+export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRequest, patternPlacement, onMapClickForPattern, controlsSlot, progressSuppressed, onPreviewLoading, highlightMapId, patrolView, patrolTrack }: Props) {
   const { t } = useTranslation();
   if (!mower) {
     return <div className="p-8 text-zinc-500">{t('pages.selectMowerForMap')}</div>;
@@ -85,7 +88,8 @@ export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRe
         progressSuppressed={progressSuppressed}
         onPreviewLoading={onPreviewLoading}
         highlightMapId={highlightMapId}
-        patrolOverlay={patrolOverlay}
+        patrolView={patrolView}
+        patrolTrack={patrolTrack}
       />
       <AutoMapPanel sn={mower.sn} sensors={mower.sensors} />
     </div>

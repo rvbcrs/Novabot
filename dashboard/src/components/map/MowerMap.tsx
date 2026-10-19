@@ -50,8 +50,9 @@ import { coverageLaneStrokes, type LaneStroke } from '../../utils/coverageStyle'
 import { mapApplyView } from '../../utils/mapApply';
 import { PatternOverlay, type PatternPlacement } from '../patterns/PatternOverlay';
 import { CameraTile } from './CameraTile';
-import { PatrolOverlayLayer } from './PatrolOverlayLayer';
-import type { PatrolOverlay } from '../../utils/patrolPlan';
+import { PatrolOverlayLayer, type PatrolChannel } from './PatrolOverlayLayer';
+import type { PatrolMapView } from '../../utils/patrolPlan';
+import type { PatrolTrackView } from '../../utils/patrolTrack';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { readMowDefaults } from '../../utils/mowDefaults';
 import { activeWorkSlots, previewMapIdsFromCanonicals, workMapSlotIndex } from '../../utils/mqtt';
@@ -265,9 +266,11 @@ interface Props {
   onPreviewLoading?: (loading: boolean) => void;
   /** Work area chosen in the Start sheet: drawn highlighted, like a clicked one. */
   highlightMapId?: string | null;
-  /** The night patrol's checkpoints and route (checkpoint states included), from the patrol
-   *  panel / report in the control bar; null or absent draws nothing. */
-  patrolOverlay?: PatrolOverlay | null;
+  /** What the map shows of the night patrol: the checkpoints and route (checkpoint states
+   *  included), from the patrol panel / report in the control bar; null or absent draws nothing. */
+  patrolView?: PatrolMapView | null;
+  /** Where the mower drove during that patrol (recorded in the shell), drawn above the route. */
+  patrolTrack?: PatrolTrackView | null;
 }
 
 function locColor(quality: number): string {
@@ -1154,7 +1157,7 @@ function CelebrationOverlay({ area, onDismiss }: { area: number; onDismiss: () =
   );
 }
 
-export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, progressSuppressed, sensors, signals, mowing, pathDirectionPreview, previewRequest, onMapSaved: _onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes, controlsSlot, onPreviewLoading, highlightMapId, patrolOverlay }: Props) {
+export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, progressSuppressed, sensors, signals, mowing, pathDirectionPreview, previewRequest, onMapSaved: _onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes, controlsSlot, onPreviewLoading, highlightMapId, patrolView, patrolTrack }: Props) {
   const dialog = useDialog();
   const { t } = useTranslation();
   const mowingSensors = sensors ?? {};
@@ -1883,6 +1886,31 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     );
     return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? [g.lat, g.lng] : null;
   }, [chargerGps, chargingPose, displayCal, polyCenter, geometryOffset]);
+  // The driven track is the mower's own position (telemetry, as the mower marker has it),
+  // so it goes through displayFromMower: no geometry offset.
+  const patrolTrackToLatLng = useCallback((p: LocalPoint): [number, number] | null => {
+    const g = displayFromMower(p);
+    return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? [g.lat, g.lng] : null;
+  }, [displayFromMower]);
+  // The recorded obstacles (the red polygons), in the frame of the zone polygons: the
+  // patrol's dashed line is drawn around them.
+  const patrolObstacles = useMemo(
+    () => maps.filter(m => m.mapType === 'obstacle' && m.mapArea.length >= 3).map(m => m.mapArea),
+    [maps],
+  );
+  // The work areas by zone name and the channels recorded between two zones, same
+  // frame: the dashed line stays inside the zones and crosses between them along a channel.
+  const patrolZones = useMemo(() => {
+    const zones = new Map<string, LocalPoint[]>();
+    for (const m of maps) {
+      if (m.mapType === 'work' && m.canonicalName && /^map\d+$/.test(m.canonicalName) && m.mapArea.length >= 3 && !zones.has(m.canonicalName)) zones.set(m.canonicalName, m.mapArea);
+    }
+    return zones;
+  }, [maps]);
+  const patrolChannels = useMemo(() => maps.flatMap((m): PatrolChannel[] => {
+    const between = m.canonicalName?.match(/^(map\d+)to(map\d+)(?:_\d+)?_unicom$/);
+    return between && m.mapArea.length >= 2 ? [{ zones: [between[1], between[2]], points: m.mapArea }] : [];
+  }), [maps]);
 
   // Area type labels (translated)
   const AREA_TYPE_META: Record<AreaType, { color: string; label: string }> = useMemo(() => ({
@@ -4092,7 +4120,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             </Fragment>
           ))}
           {/* Night patrol: the route and its checkpoints (control bar → patrol panel). */}
-          {patrolOverlay && <PatrolOverlayLayer overlay={patrolOverlay} toLatLng={patrolToLatLng} />}
+          {(patrolView?.overlay || patrolTrack) && (
+            <PatrolOverlayLayer
+              overlay={patrolView?.overlay ?? null}
+              track={patrolTrack ?? null}
+              obstacles={patrolObstacles}
+              zones={patrolZones}
+              channels={patrolChannels}
+              toLatLng={patrolToLatLng}
+              trackToLatLng={patrolTrackToLatLng}
+            />
+          )}
           {/* Push/pull brush (R3): live in-progress stroke + pointer handler. */}
           {brushMode && brushOverlayGps && brushOverlayGps.length >= 3 && (
             <Polygon

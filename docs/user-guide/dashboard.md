@@ -302,7 +302,8 @@ and is never counted as all clear.
 While the patrol panel is open, and while a patrol is out, the map shows the
 route as numbered circles in driving order, with a dashed line through the
 checkpoints of each work area. A second dashed line joins the last checkpoint
-of one area to the first of the next. The colour says where the patrol is:
+of one area to the first of the next, along the channel recorded between them.
+The colour says where the patrol is:
 
 - grey: not visited yet
 - blue and pulsing: the checkpoint the mower is heading for (none while it is
@@ -310,6 +311,24 @@ of one area to the first of the next. The colour says where the patrol is:
 - green: reached
 - red with a cross: skipped, because the mower could not reach it or left its
   whole area out
+
+The dashed line is the order in which the mower visits the checkpoints. It
+stays inside the work area and is drawn around the recorded obstacles (the red
+areas, by their outline with a margin), because the mower plans in the mapped
+area and around them, but it is not the exact path the mower's navigation
+takes. Between two work areas it follows the channel recorded between them;
+two areas that touch need none. Without a channel or a shared border the
+dashboard draws no line between the two areas, and a checkpoint it cannot
+place inside its area (an older report of an area that has since changed, or
+an area that no longer exists) gets no line either; the numbers still give the
+order. The solid cyan line is where the mower actually drove. The dashboard draws it
+while a patrol is out, ending at the mower, and leaves a gap where the position
+jumps by more than 5 m between two reports (a dropout), instead of a straight
+line across it. It can only
+draw what it sees while the page is open: it keeps the lines of the last 6
+patrols of the mower you have selected, and the report of a patrol shows its
+line only if that patrol's checkpoint reports reached the page. A reload clears
+them.
 
 With the panel open and no patrol out, the circles show the route a patrol
 started now would drive, all grey. They change when you tick or clear a zone.
