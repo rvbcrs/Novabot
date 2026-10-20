@@ -267,6 +267,7 @@ function ShellInner() {
       <UpdateBanner />
       <FirmwareRequiredBanner
         sn={activeMowerSn}
+        version={activeMower?.sensors?.sw_version}
         charging={String(activeMower?.sensors?.recharge_status ?? '') === '1' || /charging/i.test(String(activeMower?.sensors?.battery_state ?? ''))}
         otaProgress={activeMowerSn ? otaProgress.get(activeMowerSn) : undefined}
       />

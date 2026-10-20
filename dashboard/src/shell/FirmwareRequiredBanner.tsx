@@ -26,8 +26,10 @@ function dismissedVersion(sn: string): string {
  * dismissible notice (per version). Its build is fetched into this server
  * only when the user starts the update.
  */
-export function FirmwareRequiredBanner({ sn, charging, otaProgress }: {
+export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
   sn: string | null;
+  /** The firmware the mower reports now: the advice is about it, so a new version asks again. */
+  version: string | undefined;
   charging: boolean;
   otaProgress: OtaProgress | undefined;
 }) {
@@ -49,7 +51,9 @@ export function FirmwareRequiredBanner({ sn, charging, otaProgress }: {
     load();
     const id = setInterval(load, POLL_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [sn]);
+    // A finished update changes the version: ask at once, not at the next poll
+    // (the banner kept offering the build the mower had just installed).
+  }, [sn, version]);
   useEffect(() => { setState('idle'); setError(null); }, [sn]);
   const session = otaProgress?.session;
   const phaseLabel = useOtaPhaseLabel(session);
