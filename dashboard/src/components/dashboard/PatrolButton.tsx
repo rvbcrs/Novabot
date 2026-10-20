@@ -95,7 +95,7 @@ export function PatrolButton({ sn, sensors, disabled, offline, expanded, onToggl
         }`}
       >
         {active ? <Square className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-        <span className="hidden sm:inline text-xs whitespace-nowrap">{active ? t('controls.stopPatrol') : t('controls.patrol')}</span>
+        <span className="hidden @min-[1040px]:inline text-xs whitespace-nowrap">{active ? t('controls.stopPatrol') : t('controls.patrol')}</span>
       </button>
       <button
         onClick={onToggleExpanded}

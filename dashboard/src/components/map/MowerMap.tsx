@@ -3935,7 +3935,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
         </div>
       </div>
-      <div className="relative flex-1 min-h-0">
+      {/* @container: the floating tool-bar drops its labels when the map, not the screen, is narrow. */}
+      <div className="@container relative flex-1 min-h-0">
         {renderBusy && (
           <div className="absolute inset-0 z-[1000] bg-gray-950/70 backdrop-blur-sm flex items-center justify-center">
             <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl px-6 py-5 w-[min(92%,26rem)] text-center">
@@ -4606,9 +4607,15 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         {/* ── Floating tool-bar — grouped map tools as a horizontal pill at the
             top of the map (replaces the old cramped top toolbar). Centered so it
             clears the Leaflet zoom control (left) and the camera tile (right).
-            Hidden while calibrating (that panel owns top-left). */}
+            Hidden while calibrating (that panel owns top-left). Centred with
+            inset-x-0 + mx-auto + w-fit, not left-1/2: an absolute box at left 50%
+            sizes itself within half the map, so the bar wrapped (one button on a
+            second row) with room to spare. Below a 1040 px wide map the buttons
+            show their icon only (their title says the rest): with labels the bar
+            is 745 to 845 px wide by language, plus the margin, and wrapping left
+            one button alone on a second row. */}
         {!calibrating && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[900] flex flex-row flex-wrap justify-center items-center gap-1 max-w-[calc(100%-1.5rem)] bg-gray-900/85 backdrop-blur border border-gray-700 rounded-2xl p-1.5 shadow-xl">
+          <div className="absolute top-3 inset-x-0 mx-auto w-fit z-[900] flex flex-row flex-wrap justify-center items-center gap-1 max-w-[calc(100%-7rem)] bg-gray-900/85 backdrop-blur border border-gray-700 rounded-2xl p-1.5 shadow-xl">
             {/* Mower controls (start/pause/stop/…) supplied by the shell. */}
             {controlsSlot && (
               <>
@@ -4696,7 +4703,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 title={t('map.toolView', 'Weergave')}
               >
                 <Eye className="w-4 h-4" />
-                <span className="hidden sm:inline">{t('map.toolView', 'Weergave')}</span>
+                <span className="hidden @min-[1040px]:inline">{t('map.toolView', 'Weergave')}</span>
                 <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${railFlyout === 'view' ? 'rotate-180' : ''}`} />
                 {(showTrail || showHeatmap || showCamera) && railDot}
               </button>
@@ -4791,7 +4798,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                     title={t('map.toolEdit', 'Bewerken')}
                   >
                     <Pencil className="w-4 h-4" />
-                    <span className="hidden sm:inline">{t('map.toolEdit', 'Bewerken')}</span>
+                    <span className="hidden @min-[1040px]:inline">{t('map.toolEdit', 'Bewerken')}</span>
                     <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${railFlyout === 'edit' ? 'rotate-180' : ''}`} />
                     {(navigateMode || wallDrawMode) && railDot}
                   </button>
@@ -4870,7 +4877,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                     title={t('map.toolCoverage', 'Coverage')}
                   >
                     {coverageLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Spline className="w-4 h-4" />}
-                    <span className="hidden sm:inline">{t('map.toolCoverage', 'Coverage')}</span>
+                    <span className="hidden @min-[1040px]:inline">{t('map.toolCoverage', 'Coverage')}</span>
                     <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${railFlyout === 'coverage' ? 'rotate-180' : ''}`} />
                     {showCoverage && (
                       <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-gray-900 ${coverageLive ? 'animate-pulse' : ''}`} />
@@ -4938,7 +4945,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                     title={t('map.toolDock', 'Dock')}
                   >
                     <MapPin className="w-4 h-4" />
-                    <span className="hidden sm:inline">{t('map.toolDock', 'Dock')}</span>
+                    <span className="hidden @min-[1040px]:inline">{t('map.toolDock', 'Dock')}</span>
                     <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${railFlyout === 'dock' ? 'rotate-180' : ''}`} />
                     {placingCharger && railDot}
                   </button>
