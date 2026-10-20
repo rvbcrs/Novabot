@@ -113,6 +113,12 @@ export function MowerControls({
   const patrol = usePatrolView({ sn, sensors, enabled: experimental, panelOpen: patrolExpanded, reports: patrolReports });
   const patrolView = patrol.view;
   useEffect(() => { onPatrolView?.(patrolView); }, [patrolView, onPatrolView]);
+  // "Try it" on the patrol in What's new (DashboardShell) opens the panel.
+  useEffect(() => {
+    const open = () => { setPatrolExpanded(true); setExpanded(false); setMappingExpanded(false); };
+    window.addEventListener('opennova:open-patrol', open);
+    return () => window.removeEventListener('opennova:open-patrol', open);
+  }, []);
   useEffect(() => () => onPatrolView?.(null), [onPatrolView]);
   const patrolZoneName = useCallback(
     (slot: string) => maps.find(m => m.canonicalName === slot)?.mapName || slot,

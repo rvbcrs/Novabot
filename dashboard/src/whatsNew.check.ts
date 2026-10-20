@@ -19,3 +19,9 @@ test('skips what this browser has seen', () => {
 test('keeps old news away from newcomers', () => {
   assert.deepEqual(unseenWhatsNew([entry('old', '2026-06-01'), entry('new', '2026-09-30')], [], now).map(e => e.id), ['new']);
 });
+
+test('a new entry pops up even when an earlier one was clicked away', () => {
+  // "seen" is per entry: closing the 3D card never hides what comes after it.
+  const entries = [entry('patrol', '2026-10-20'), entry('render3d', '2026-09-23')];
+  assert.deepEqual(unseenWhatsNew(entries, ['render3d'], Date.parse('2026-10-20')).map(e => e.id), ['patrol']);
+});

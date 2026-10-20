@@ -1955,6 +1955,10 @@
     "tryIt": "Probeer het",
     "next": "Volgende",
     "done": "Klaar",
+    "patrol": {
+      "title": "Nachtpatrouille",
+      "body": "'s Nachts rijdt de maaier met de messen uit en de koplamp aan een ronde door je tuin, en kijkt hij bij elk controlepunt met zijn camera of er mensen of dieren zijn. Kies de zones, een venster zoals 23:00 tot 06:00 met elk half uur een ronde, en hoe vaak je een melding wilt. Elke ronde krijgt een rapport met de foto's, en de kaart toont de route en waar de maaier al geweest is. Experimenteel, en het vereist custom firmware 50 of nieuwer; Probeer het zet de experimentele functies aan."
+    },
     "render3d": {
       "title": "Je tuin als 3D AI-render",
       "body": "Maak van je tuin een 3D-render, van bovenaf of schuin, bij dag of bij avond. Je zones, obstakels en de maaier staan er live op. Kies hem onder Ondergrond in de kaartbalk. Let op: de render wordt door AI getekend op basis van de luchtfoto, dus hij lijkt op je tuin maar klopt niet tot in elk detail met de werkelijkheid."

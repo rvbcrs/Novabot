@@ -1955,6 +1955,10 @@
     "tryIt": "Ausprobieren",
     "next": "Weiter",
     "done": "Fertig",
+    "patrol": {
+      "title": "Nachtpatrouille",
+      "body": "Nachts fährt der Mäher mit ausgeschalteten Messern und eingeschaltetem Scheinwerfer eine Runde durch Ihren Garten und prüft an jedem Kontrollpunkt mit seiner Kamera, ob Personen oder Tiere da sind. Wählen Sie die Zonen, ein Zeitfenster wie 23:00 bis 06:00 mit einer Runde alle 30 Minuten und wie oft Sie benachrichtigt werden möchten. Jede Runde bekommt einen Bericht mit ihren Fotos, und die Karte zeigt die Route und wo der Mäher schon war. Experimentell, und es braucht Custom-Firmware 50 oder neuer; Ausprobieren schaltet die experimentellen Funktionen ein."
+    },
     "render3d": {
       "title": "Ihr Garten als 3D-KI-Render",
       "body": "Verwandeln Sie Ihren Garten in einen 3D-Render, von oben oder schräg, bei Tag oder am Abend. Ihre Zonen, Hindernisse und der Mäher erscheinen live darauf. Wählen Sie ihn unter Hintergrund in der Kartenleiste. Hinweis: Der Render wird von einer KI anhand des Luftbilds gezeichnet. Er ähnelt Ihrem Garten, stimmt aber nicht in jedem Detail mit der Wirklichkeit überein."

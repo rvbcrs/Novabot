@@ -1955,6 +1955,10 @@
     "tryIt": "Essayer",
     "next": "Suivant",
     "done": "Terminé",
+    "patrol": {
+      "title": "Patrouille de nuit",
+      "body": "La nuit, la tondeuse fait une ronde dans votre jardin, lames arrêtées et phare allumé, et vérifie avec sa caméra à chaque point de contrôle s'il y a des personnes ou des animaux. Choisissez les zones, une plage horaire comme 23:00 à 06:00 avec une ronde toutes les 30 minutes, et la fréquence des notifications. Chaque ronde a son rapport avec ses photos, et la carte montre le trajet et les endroits déjà visités. Fonction expérimentale, qui demande le firmware custom 50 ou plus récent ; Essayer active les fonctions expérimentales."
+    },
     "render3d": {
       "title": "Votre jardin en rendu 3D par IA",
       "body": "Transformez votre jardin en rendu 3D, vu de dessus ou en perspective, de jour comme en soirée. Vos zones, obstacles et la tondeuse y apparaissent en direct. Choisissez-le sous Fond de carte dans la barre de la carte. Remarque : le rendu est dessiné par une IA à partir de la photo aérienne. Il ressemble à votre jardin, mais ne correspond pas à la réalité dans chaque détail."

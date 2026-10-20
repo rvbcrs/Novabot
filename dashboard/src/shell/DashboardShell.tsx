@@ -28,7 +28,7 @@ import { MdnsConflictBanner } from './MdnsConflictBanner';
 import { UpdateBanner } from './UpdateBanner';
 import { FirmwareRequiredBanner } from './FirmwareRequiredBanner';
 import { ErrorDisplay } from '../components/status/ErrorDisplay';
-import { useExperimental } from '../utils/experimental';
+import { useExperimental, writeExperimental } from '../utils/experimental';
 import { WhatsNewModal } from '../components/common/WhatsNewModal';
 import { WHATS_NEW, pendingWhatsNew, markWhatsNewSeen, type WhatsNewAction } from '../whatsNew';
 
@@ -77,6 +77,12 @@ function ShellInner() {
       setTab('map');
       // The map may mount on this same render; let it attach its listener first.
       setTimeout(() => window.dispatchEvent(new CustomEvent('opennova:open-render', { detail: { framing: 'iso' } })), 50);
+    }
+    if (action === 'patrol') {
+      // The patrol lives behind Experimental: "Try it" turns that on and opens the panel.
+      writeExperimental(true);
+      setTab('map');
+      setTimeout(() => window.dispatchEvent(new CustomEvent('opennova:open-patrol')), 50);
     }
   };
   // The enlarged server-log lives here (not in the drawer) so it stays open

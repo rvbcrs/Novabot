@@ -8,7 +8,7 @@
  */
 
 /** Where "Try it" takes you. The shell turns it into a tab and an event. */
-export type WhatsNewAction = 'angled-render';
+export type WhatsNewAction = 'angled-render' | 'patrol';
 
 export interface WhatsNewEntry {
   id: string;
@@ -20,6 +20,13 @@ export interface WhatsNewEntry {
 }
 
 export const WHATS_NEW: WhatsNewEntry[] = [
+  {
+    id: 'patrol',
+    date: '2026-10-20',
+    video: '/whats-new/patrol.mp4',
+    poster: '/whats-new/patrol-poster.webp',
+    action: 'patrol',
+  },
   {
     id: 'render3d',
     date: '2026-09-23',
