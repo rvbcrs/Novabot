@@ -3251,7 +3251,16 @@ async function checkDns() {
       html += '</div>';
     } else if (d.domains && d.domains.length > 0) {
       html += '<div style="margin-top:8px;padding:8px 12px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:6px;font-size:11px;color:#86efac">';
-      html += '<b>DNS is redirected!</b> All domains resolve to local IPs. The Novabot app and mower will connect locally.';
+      html += '<b>This server finds *.lfibot.com at a local address.</b> That only tests the server itself. Your mower and charger use the DNS server your router gives them.';
+      html += '</div>';
+    }
+    // The lookup above ran on this server. Whether the mower got here shows in
+    // the broker, so with nothing connected say what to try next.
+    if (d.devicesOnline === 0) {
+      var addr = 'http://' + d.serverIp + (location.port ? ':' + location.port : '') + '/admin';
+      html += '<div style="margin-top:8px;padding:8px 12px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:6px;font-size:11px;color:#fcd34d;line-height:1.5">';
+      html += '<b>No mower or charger is connected to this server.</b> ';
+      html += escHtml(__t("On your phone, on the mower's Wi-Fi with mobile data off, open {addr}. If it does not open, this computer blocks connections from your network: on Windows, set the network profile to Private and allow Docker Desktop through the firewall. If it opens, check that the mower and charger are on the same router as this computer and that this router hands out {ip} as its DNS server. Then switch both off and on.", { addr: addr, ip: d.serverIp }));
       html += '</div>';
     }
     el.innerHTML = html;

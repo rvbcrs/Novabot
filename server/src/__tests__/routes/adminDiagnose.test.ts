@@ -64,6 +64,38 @@ describe('the beta firmware warning speaks the panel language', () => {
   });
 });
 
+describe('the DNS check says what it checked', () => {
+  // The check resolves *.lfibot.com on the server itself, yet it said "The
+  // Novabot app and mower will connect locally". A user had that green check
+  // and "0 / 0 online" for 30 hours (Facebook, 2026-10-20).
+  const page = adminPageHtml();
+  const SENTENCES = [
+    'This server finds *.lfibot.com at a local address.',
+    'That only tests the server itself. Your mower and charger use the DNS server your router gives them.',
+    'No mower or charger is connected to this server.',
+    "On your phone, on the mower's Wi-Fi with mobile data off, open {addr}. If it does not open, this computer blocks connections from your network: on Windows, set the network profile to Private and allow Docker Desktop through the firewall. If it opens, check that the mower and charger are on the same router as this computer and that this router hands out {ip} as its DNS server. Then switch both off and on.",
+  ];
+
+  it('no longer promises that the mower will connect', () => {
+    expect(page).not.toContain('The Novabot app and mower will connect locally');
+  });
+
+  it('says it only tested the server, and gives a next step while no device is connected', () => {
+    expect(SENTENCES.filter(s => !page.includes(s))).toEqual([]);
+    expect(page).toContain('d.devicesOnline === 0');
+  });
+
+  it('has every sentence in the dictionary, in every language', () => {
+    const missing: string[] = [];
+    for (const s of SENTENCES) {
+      for (const lang of ['nl', 'fr', 'de'] as const) {
+        if (!ADMIN_I18N[s]?.[lang]) missing.push(`${lang}: ${s}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+});
+
 describe('the admin panel names its steps', () => {
   // Het paneel drukte de ruwe stap-id af ("charger_crypto", "ble_mac"), wat als
   // logregels las terwijl het dashboard er nette namen voor had (2026-09-15).

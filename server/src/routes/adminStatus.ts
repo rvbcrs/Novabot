@@ -615,7 +615,14 @@ adminStatusRouter.get('/dns-check', async (_req: AuthRequest, res: Response) => 
     })
   ));
 
-  res.json({ serverIp, domains: results });
+  // This lookup runs on the server; the mower gets its DNS from the router. So
+  // also say how many mowers and chargers reached the broker, for the panel to
+  // give a next step when none did.
+  const devicesOnline = new Set(deviceRepo.listAll()
+    .map(d => d.sn)
+    .filter((sn): sn is string => !!sn && sn.startsWith('LFI') && isDeviceOnline(sn))).size;
+
+  res.json({ serverIp, domains: results, devicesOnline });
 });
 
 // While this file exists the entrypoint's dnsmasq watchdog leaves dnsmasq
