@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs';
 import { equipmentRepo, userRepo, deviceRepo } from '../../db/repositories/index.js';
 import {
   resolveMowerIp,
@@ -6,6 +7,8 @@ import {
   isDiscoveredIpFresh,
   DISCOVERED_FRESHNESS_MS,
   stopMowerIpDiscovery,
+  rememberReportedLanIp,
+  containerGatewayFromRoutes,
 } from '../../services/mowerIpDiscovery.js';
 import { db } from '../../db/database.js';
 
@@ -90,6 +93,83 @@ describe('mowerIpDiscovery', () => {
       const ip = await resolveMowerIp(sn, { triggerIfMissing: false });
       expect(ip).toBeNull();
       expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
+  // Docker Desktop (Windows, macOS) NATs published ports: the broker sees every
+  // mower connection come from the container's own gateway (172.18.0.1), and
+  // the app tried to open the camera there (Facebook, Oct 2026).
+  describe('behind Docker Desktop NAT', () => {
+    const ROUTES = [
+      'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT',
+      'eth0\t00000000\t010012AC\t0003\t0\t0\t0\t00000000\t0\t0\t0',
+      'eth0\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0',
+    ].join('\n');
+
+    afterEach(() => vi.restoreAllMocks());
+
+    function routeTable(text: string) {
+      const real = fs.readFileSync;
+      vi.spyOn(fs, 'readFileSync').mockImplementation(((p: fs.PathOrFileDescriptor, o?: unknown) =>
+        p === '/proc/net/route' ? text : real(p, o as never)) as typeof fs.readFileSync);
+    }
+
+    it('reads the default gateway from /proc/net/route', () => {
+      expect(containerGatewayFromRoutes(ROUTES)).toBe('172.18.0.1');
+    });
+
+    it('has no gateway without a default route', () => {
+      const [header, , subnet] = ROUTES.split('\n');
+      expect(containerGatewayFromRoutes([header, subnet].join('\n'))).toBeNull();
+      expect(containerGatewayFromRoutes('')).toBeNull();
+    });
+
+    it('never hands out the container gateway as the mower address', async () => {
+      routeTable(ROUTES);
+      deviceRepo.upsertDevice('mower-client-nat', sn, null);
+      deviceRepo.updateIpBySn(sn, '172.18.0.1');
+
+      expect(await resolveMowerIp(sn, { triggerIfMissing: false })).toBeNull();
+    });
+
+    it('still hands out a detected address that is not the gateway', async () => {
+      routeTable(ROUTES);
+      deviceRepo.upsertDevice('mower-client-lan', sn, null);
+      deviceRepo.updateIpBySn(sn, '192.168.0.50');
+
+      expect(await resolveMowerIp(sn, { triggerIfMissing: false })).toBe('192.168.0.50');
+    });
+
+    it('prefers the address the mower reported over its link (ext_hello lan_ip)', async () => {
+      deviceRepo.upsertDevice('mower-client-nat', sn, null);
+      deviceRepo.updateIpBySn(sn, '172.18.0.1');
+      equipmentRepo.setDiscoveredIp(sn, '192.168.0.100');
+      rememberReportedLanIp(sn, '192.168.0.77');
+
+      expect(await resolveMowerIp(sn, { triggerIfMissing: false })).toBe('192.168.0.77');
+    });
+
+    it('keeps the manual mower_ip above a reported address', async () => {
+      equipmentRepo.create({
+        equipment_id: 'eq-pinned-nat', user_id: userId, mower_sn: 'LFIN9998', mower_ip: '10.0.0.5',
+      });
+      rememberReportedLanIp('LFIN9998', '192.168.0.77');
+
+      expect(await resolveMowerIp('LFIN9998', { triggerIfMissing: false })).toBe('10.0.0.5');
+    });
+
+    it('ignores a reported value that is not a private IPv4 address', async () => {
+      for (const value of ['8.8.8.8', '127.0.0.1', '192.168.0', 'novabot.local', 42, null, undefined, {}]) {
+        rememberReportedLanIp(sn, value);
+        expect(await resolveMowerIp(sn, { triggerIfMissing: false }), String(value)).toBeNull();
+      }
+    });
+
+    it('forgets the reported address when a later hello has none', async () => {
+      rememberReportedLanIp(sn, '192.168.0.77');
+      rememberReportedLanIp(sn, undefined);
+
+      expect(await resolveMowerIp(sn, { triggerIfMissing: false })).toBeNull();
     });
   });
 

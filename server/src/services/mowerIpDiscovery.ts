@@ -27,7 +27,9 @@
  * on the camera service's `/info` endpoint.
  */
 import dns from 'node:dns';
+import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import mdns from 'multicast-dns';
 import { equipmentRepo } from '../db/repositories/index.js';
 
@@ -69,6 +71,44 @@ function isPrivateIp(addr: string): boolean {
   return /^10\./.test(addr)
     || /^172\.(1[6-9]|2\d|3[01])\./.test(addr)
     || /^192\.168\./.test(addr);
+}
+
+/**
+ * LAN address each mower reported over its own link (ext_hello `lan_ip`, said
+ * on every connect by extended_commands.py). Behind Docker Desktop's NAT the
+ * broker sees every connection come from the container's gateway, so this is
+ * the only place the real address comes from there.
+ */
+const reportedLanIps = new Map<string, string>();
+
+/** Keep the `lan_ip` of an ext_hello; a hello without a valid one forgets the last. */
+export function rememberReportedLanIp(sn: string, value: unknown): void {
+  if (typeof value === 'string' && net.isIPv4(value) && isPrivateIp(value)) reportedLanIps.set(sn, value);
+  else reportedLanIps.delete(sn);
+}
+
+/** The default gateway in a /proc/net/route table (hex, little-endian), null without one. */
+export function containerGatewayFromRoutes(table: string): string | null {
+  for (const line of table.split('\n').slice(1)) {
+    const [, destination, gateway] = line.trim().split(/\s+/);
+    if (destination !== '00000000' || !/^[0-9A-Fa-f]{8}$/.test(gateway ?? '')) continue;
+    const n = parseInt(gateway, 16);
+    return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24].join('.');
+  }
+  return null;
+}
+
+/**
+ * This container's default gateway: the address Docker Desktop's NAT gives
+ * every incoming connection, never a mower's. On Linux and in host networking
+ * it is the router, which no mower has either. Null outside Linux.
+ */
+function containerGateway(): string | null {
+  try {
+    return containerGatewayFromRoutes(fs.readFileSync('/proc/net/route', 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 /** True iff `discovered_ip_at` is recent enough that we trust the cached IP. */
@@ -242,6 +282,7 @@ export function stopMowerIpDiscovery(): void {
   if (timer) { clearInterval(timer); timer = null; }
   inflight.clear();
   lastAttemptAt.clear();
+  reportedLanIps.clear();
 }
 
 /**
@@ -249,8 +290,10 @@ export function stopMowerIpDiscovery(): void {
  * background discovery if nothing usable is on file. Priority:
  *
  *   1. `equipment.mower_ip` (user-pinned manual override — always wins)
- *   2. `equipment.discovered_ip` if its `discovered_ip_at` is fresh
- *   3. `device_registry.ip_address` if it's a private IP
+ *   2. the `lan_ip` the mower reported in its last ext_hello
+ *   3. `equipment.discovered_ip` if its `discovered_ip_at` is fresh
+ *   4. `device_registry.ip_address` if it's a private IP and not this
+ *      container's gateway (Docker Desktop NAT)
  *
  * If nothing matches and `triggerIfMissing` is true (default), a
  * fire-and-forget `discoverIpForMower(sn)` is started — the next request
@@ -268,10 +311,14 @@ export async function resolveMowerIp(
 ): Promise<string | null> {
   const row = equipmentRepo.findResolvedMowerIp(sn);
   if (row?.mower_ip) return row.mower_ip;
+  const reported = reportedLanIps.get(sn);
+  if (reported) return reported;
   if (row?.discovered_ip && isDiscoveredIpFresh(row.discovered_ip_at)) {
     return row.discovered_ip;
   }
-  if (row?.detected_ip && isPrivateIp(row.detected_ip)) return row.detected_ip;
+  if (row?.detected_ip && isPrivateIp(row.detected_ip) && row.detected_ip !== containerGateway()) {
+    return row.detected_ip;
+  }
 
   if (opts.triggerIfMissing === false) return null;
   const discovery = discoverIpForMower(sn);

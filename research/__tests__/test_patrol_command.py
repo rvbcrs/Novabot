@@ -640,9 +640,13 @@ class FakeMQTT:
     order, for the checks of what comes after what. A publish whose payload holds
     `fail_publish_of` raises, as a dead link does."""
     published, connects, events, fail_publish_of = [], [0], [], None
+    lan_ip = "192.168.0.77"   # the address the link leaves from (local_address)
 
     def __init__(self, host, port, client_id, on_message=None):
         FakeMQTT.handler = on_message
+
+    def local_address(self):
+        return FakeMQTT.lan_ip
 
     def connect(self):
         FakeMQTT.connects[0] += 1
@@ -763,8 +767,10 @@ hello = said[0][1] if said else {}
 commands = hello.get("ext_hello", {}).get("commands")
 check("a connect says ext_hello once, on the response topic, after its subscribe",
       [topic for topic, _body in said] == [RESPONSE_TOPIC] and precedes(timeline(conns[0]), "subscribe", "ext_hello"))
-check("the hello is exactly {ext_hello: {commands: [...]}}",
-      list(hello) == ["ext_hello"] and list(hello["ext_hello"]) == ["commands"])
+check("the hello is exactly {ext_hello: {commands: [...], lan_ip: ...}}",
+      list(hello) == ["ext_hello"] and sorted(hello["ext_hello"]) == ["commands", "lan_ip"])
+check("its lan_ip is the address the MQTT link leaves from: behind Docker Desktop's NAT the "
+      "server only sees its own gateway", hello.get("ext_hello", {}).get("lan_ip") == "192.168.0.77")
 check("its commands are the keys of COMMANDS, sorted", commands == sorted(ec.COMMANDS))
 check("among them patrol, mow_zone and stop_mow_zone",
       all(name in (commands or []) for name in ("patrol", "mow_zone", "stop_mow_zone")))
@@ -773,6 +779,30 @@ check("after a reconnect it is said again, the same, after that connection's sub
       and precedes(timeline(conns[1]), "subscribe", "ext_hello"))
 check("on every connection the hello comes before the patrol status that goes out again",
       len(conns) == 2 and all(precedes(timeline(c), "ext_hello", "patrol_status") for c in conns))
+
+# A link whose own address cannot be read says the hello without lan_ip.
+FakeMQTT.lan_ip = None
+try:
+    start_up(patrolling_status_file())
+finally:
+    FakeMQTT.lan_ip = "192.168.0.77"
+said = hellos(connections(FakeMQTT.events)[0])
+check("without a known address the hello has no lan_ip",
+      said and list(said[0][1]["ext_hello"]) == ["commands"])
+
+# MiniMQTT.local_address: the source address of its own socket, None without one.
+listener = ec.socket.socket(ec.socket.AF_INET, ec.socket.SOCK_STREAM)
+listener.bind(("127.0.0.1", 0))
+listener.listen(1)
+link = ec.MiniMQTT("127.0.0.1", listener.getsockname()[1], "test")
+check("a MiniMQTT that never connected has no local address", link.local_address() is None)
+link._sock = ec.socket.create_connection(listener.getsockname())
+try:
+    check("a connected MiniMQTT reports the address its socket leaves from",
+          link.local_address() == "127.0.0.1")
+finally:
+    link._sock.close()
+    listener.close()
 
 # A hello that cannot be sent is logged and nothing more: the connection still re-announces the
 # patrol status and enters its loop, and the failure does not cost a reconnect.

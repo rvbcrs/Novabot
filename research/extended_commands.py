@@ -308,6 +308,15 @@ class MiniMQTT:
         for topic in self._subscriptions:
             self._do_subscribe(topic)
 
+    def local_address(self):
+        """The mower's own address on the link to the broker, None without a socket.
+        A server behind Docker Desktop's NAT sees every connection come from its own
+        gateway, so it can only learn the mower's LAN address from the mower."""
+        try:
+            return self._sock.getsockname()[0] if self._sock else None
+        except OSError:
+            return None
+
     def subscribe(self, topic):
         if topic not in self._subscriptions:
             self._subscriptions.append(topic)
@@ -8007,13 +8016,17 @@ def _ros_publish_blade_height_native(mm: int) -> bool:
         return False
 
 
-def announce_commands(respond):
+def announce_commands(respond, lan_ip=None):
     """After every MQTT (re)connect: tell the server which extended commands this
     script dispatches (ext_hello), so it need not infer them from the firmware
-    build. The server forgets a device when its link drops, so every connect says
-    it again. A send that fails is logged and never ends the session."""
+    build, and the address the link leaves from (lan_ip), which the server hands
+    out for the camera. The server forgets a device when its link drops, so every
+    connect says it again. A send that fails is logged and never ends the session."""
+    hello = {"commands": sorted(COMMANDS)}
+    if lan_ip:
+        hello["lan_ip"] = lan_ip
     try:
-        respond("ext_hello", {"commands": sorted(COMMANDS)})
+        respond("ext_hello", hello)
     except Exception as e:
         log(f"ext_hello not sent: {e}")
 
@@ -8138,7 +8151,7 @@ def main():
             mqtt.subscribe(cmd_topic)
             mqtt_ref[0] = mqtt
             # First what this script can do, then the news it may have missed.
-            announce_commands(respond)
+            announce_commands(respond, mqtt.local_address())
             # The end of a patrol may have gone out while the link was down.
             reannounce_patrol_status(respond)
             mqtt.loop_forever()
