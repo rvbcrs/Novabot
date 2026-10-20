@@ -38,9 +38,12 @@ export const PATROL_KEYS = {
   headlight: 'patrol_headlight',
   minPoints: 'patrol_min_points',
   photoTopic: 'patrol_photo_topic',
+  alertRepeat: 'patrol_alert_repeat',
 } as const;
 
 export type PatrolPhotoTopic = 'front' | 'front_hd' | 'tof_gray';
+/** round: every round that sees something pushes. night: a kind at a checkpoint pushes once a night. */
+export type PatrolAlertRepeat = 'round' | 'night';
 
 export interface PatrolSettings {
   zones: string[];
@@ -49,6 +52,7 @@ export interface PatrolSettings {
   headlight: number;
   minPoints: number;
   photoTopic: PatrolPhotoTopic;
+  alertRepeat: PatrolAlertRepeat;
 }
 
 function clamp(raw: string | undefined, min: number, max: number, dflt: number): number {
@@ -72,6 +76,7 @@ export function readPatrolSettings(sn: string): PatrolSettings {
     // Default from the Phase-0 night test (spec, "Phase 0 result").
     minPoints: Math.round(clamp(s.get(PATROL_KEYS.minPoints), 5, 2000, 40)),
     photoTopic: topic === 'front_hd' || topic === 'tof_gray' ? topic : 'front',
+    alertRepeat: s.get(PATROL_KEYS.alertRepeat) === 'night' ? 'night' : 'round',
   };
 }
 
@@ -314,17 +319,32 @@ export function alertKinds(f: { person: number; animal: number; frames: number }
 }
 
 export const PATROL_ALERT_GAP_MS = 120_000;
-// ponytail: grows by a few keys per patrol night; prune when patrols run hourly.
+/** With alert repeat `night`: a kind at a checkpoint pushes once in this long (a night). */
+export const PATROL_NIGHT_MS = 12 * 3_600_000;
+// Per mower, run and kind: the last push (pruned once the gap is over).
 const lastAlert = new Map<string, number>();
+// Per mower, checkpoint and kind: the last push, kept in every mode so a switch
+// to `night` counts the pushes of the night so far. At most 120 keys a mower.
+// ponytail: in memory; a server restart can push one alert twice.
+const lastAtCheckpoint = new Map<string, number>();
 
-/** A checkpoint report: an alert per class, at most once per class per run per gap. */
+/**
+ * A checkpoint report: an alert per class, at most once per class per run per
+ * gap; with alert repeat `night` also at most once per class per checkpoint per
+ * night (a statue or a cat that stays put pushes once, not every round).
+ */
 export function onPatrolFrame(sn: string, f: PatrolFrameReport, now = Date.now()): Array<'person' | 'animal'> {
-  const kinds = alertKinds(f, readPatrolSettings(sn).minPoints) ?? [];
+  const settings = readPatrolSettings(sn);
+  const kinds = alertKinds(f, settings.minPoints) ?? [];
+  for (const [key, at] of lastAlert) if (now - at >= PATROL_ALERT_GAP_MS) lastAlert.delete(key);
   const out: Array<'person' | 'animal'> = [];
   for (const kind of kinds) {
     const key = `${sn}:${f.run}:${kind}`;
+    const spot = `${sn}:${f.seq}:${kind}`;
     if (now - (lastAlert.get(key) ?? -Infinity) < PATROL_ALERT_GAP_MS) continue;
+    if (settings.alertRepeat === 'night' && now - (lastAtCheckpoint.get(spot) ?? -Infinity) < PATROL_NIGHT_MS) continue;
     lastAlert.set(key, now);
+    lastAtCheckpoint.set(spot, now);
     out.push(kind);
     dispatchPatrolDetectionEvent(sn, { run: f.run, seq: f.seq, kind, points: f[kind], image: f.image });
   }
@@ -337,6 +357,7 @@ export function _resetPatrolState(opts: { keepRuns?: boolean } = {}): void {
   _resetPatrolDocking();
   if (!opts.keepRuns) patrolRunsRepo.clearAll();
   lastAlert.clear();
+  lastAtCheckpoint.clear();
   for (const timer of pendingHome.values()) clearTimeout(timer);
   pendingHome.clear();
 }

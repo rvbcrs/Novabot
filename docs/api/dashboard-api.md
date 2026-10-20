@@ -628,6 +628,7 @@ and read with `GET /api/dashboard/device-settings/:sn`.
 | `patrol_headlight` | 0 to 100 | 100 | Headlight level during the patrol |
 | `patrol_min_points` | 5 to 2000 | 40 | Score at which a person or animal counts as seen |
 | `patrol_photo_topic` | `front`, `front_hd`, `tof_gray` | `front` | Camera used for the checkpoint photo |
+| `patrol_alert_repeat` | `round`, `night` | `round` | `round`: every round that sees something notifies. `night`: a kind at a checkpoint notifies once in 12 hours |
 
 The mower reports its progress in the device sensors `patrol_phase` (`starting`,
 `localizing`, `patrolling`, `returning`, `done`, `error`, `stopped`) and, after an

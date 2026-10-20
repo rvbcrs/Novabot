@@ -19,7 +19,7 @@ vi.mock('../../notifications/eventDetector.js', () => ({
 
 import {
   startPatrol, stopPatrol, onPatrolStatus, onPatrolFrame, onPatrolRefused, readPatrolSettings, alertKinds, _resetPatrolState,
-  isActivePatrolRun, PATROL_ALERT_GAP_MS, PATROL_HOME_DELAY_MS, PATROL_RUN_TTL_MS,
+  isActivePatrolRun, PATROL_ALERT_GAP_MS, PATROL_NIGHT_MS, PATROL_HOME_DELAY_MS, PATROL_RUN_TTL_MS,
 } from '../../services/patrolService.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
 import { publishToTopic, publishToDevice } from '../../mqtt/mapSync.js';
@@ -390,6 +390,38 @@ describe('patrol service', () => {
     expect(onPatrolFrame(SN, { ...f, run: '2' }, PATROL_ALERT_GAP_MS + 2)).toEqual(['person']);
     expect(dispatchPatrolDetectionEvent).toHaveBeenCalledTimes(3);
     expect(dispatchPatrolDetectionEvent).toHaveBeenCalledWith(SN, { run: '1', seq: 1, kind: 'person', points: 60, image: true });
+  });
+
+  it('every round that sees something pushes by default; an unknown choice is every round too', () => {
+    expect(readPatrolSettings(SN).alertRepeat).toBe('round');
+    deviceSettingsRepo.upsert(SN, 'patrol_alert_repeat', 'sometimes');
+    expect(readPatrolSettings(SN).alertRepeat).toBe('round');
+    const f = { run: '1', seq: 4, person: 0, animal: 60, frames: 3, image: true };
+    const halfHour = 30 * 60_000;
+    expect(onPatrolFrame(SN, f, 0)).toEqual(['animal']);
+    expect(onPatrolFrame(SN, { ...f, run: '2' }, halfHour)).toEqual(['animal']);
+    expect(onPatrolFrame(SN, { ...f, run: '3' }, 2 * halfHour)).toEqual(['animal']);
+  });
+
+  it('once a night: a kind at a checkpoint pushes once; another checkpoint or kind still does, and the next night again', () => {
+    deviceSettingsRepo.upsert(SN, 'patrol_alert_repeat', 'night');
+    expect(readPatrolSettings(SN).alertRepeat).toBe('night');
+    const cat = { run: '1', seq: 4, person: 0, animal: 60, frames: 3, image: true };
+    const halfHour = 30 * 60_000;
+    expect(onPatrolFrame(SN, cat, 0)).toEqual(['animal']);
+    expect(onPatrolFrame(SN, { ...cat, run: '2' }, halfHour)).toEqual([]);                      // the same cat at checkpoint 4
+    expect(onPatrolFrame(SN, { ...cat, run: '3' }, 2 * halfHour)).toEqual([]);
+    expect(onPatrolFrame(SN, { ...cat, run: '3', seq: 7 }, 2 * halfHour + PATROL_ALERT_GAP_MS)).toEqual(['animal']);   // another checkpoint
+    expect(onPatrolFrame(SN, { ...cat, run: '4', person: 60, animal: 0 }, 3 * halfHour)).toEqual(['person']);          // a person at 4
+    expect(onPatrolFrame(SN, { ...cat, run: '30' }, PATROL_NIGHT_MS)).toEqual(['animal']);       // the next night
+    expect(dispatchPatrolDetectionEvent).toHaveBeenCalledTimes(4);
+  });
+
+  it('a switch to once a night counts the pushes of the night so far', () => {
+    const cat = { run: '1', seq: 4, person: 0, animal: 60, frames: 3, image: true };
+    expect(onPatrolFrame(SN, cat, 0)).toEqual(['animal']);
+    deviceSettingsRepo.upsert(SN, 'patrol_alert_repeat', 'night');
+    expect(onPatrolFrame(SN, { ...cat, run: '2' }, 30 * 60_000)).toEqual([]);
   });
 
   it('accepts a patrol run only with the token the server issued for it, within the TTL', () => {

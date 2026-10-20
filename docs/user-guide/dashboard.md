@@ -278,6 +278,12 @@ others.
   dock marker is never overexposed by the patrol light. The mower
   switches it off itself at the end of a patrol too, also when the server
   misses that end.
+- **Detection alerts.** *Every round* (the default): every round that sees a
+  person or an animal sends a notification. *Once a night per checkpoint*: the
+  same kind at the same checkpoint is reported once a night (12 hours), so a
+  statue or a cat that stays put does not ring every round; another
+  checkpoint, or the other kind, is still reported. The report shows every
+  photo either way.
 - **Every night from HH:MM until HH:MM, every N min.** One patrol schedule per
   mower: a window, an interval and an on/off switch. *Once* is a single round
   at the start time. With an interval the server starts a round at the start

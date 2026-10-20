@@ -152,7 +152,9 @@ So there is nothing to finish. We build it from parts that do work:
     `POST /sensor-override/:sn`): `patrol_zones` (JSON array, empty = dock zone),
     `patrol_spacing_m` (3..15, 6), `patrol_dwell_s` (3..20, 6), `patrol_headlight`
     (0..100, 100), `patrol_min_points` (5..2000, 40), `patrol_photo_topic`
-    (`front` | `front_hd` | `tof_gray`, `front`).
+    (`front` | `front_hd` | `tof_gray`, `front`), `patrol_alert_repeat`
+    (`round` | `night`, `round`: with `night` a kind at a checkpoint raises
+    `patrol_detection` once in 12 hours, added 2026-10-20).
 
 ## Phase 0 gate: night test without driving
 

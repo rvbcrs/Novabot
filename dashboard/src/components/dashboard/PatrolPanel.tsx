@@ -83,6 +83,7 @@ export function PatrolPanel({ sn, sensors, reports = NO_REPORTS, runs, runsLoad,
   const [zones, setZones] = useState<Zone[]>([]);
   const [stored, setStored] = useState<string[]>([]);
   const [headlight, setHeadlight] = useState(true);
+  const [alertRepeat, setAlertRepeat] = useState<AlertRepeat>('round');
   const [settingsLoad, setSettingsLoad] = useState<Load>('loading');
   const [zonesLoad, setZonesLoad] = useState<Load>('loading');
   const [message, setMessage] = useState<string | null>(null);
@@ -96,6 +97,7 @@ export function PatrolPanel({ sn, sensors, reports = NO_REPORTS, runs, runsLoad,
         if (cancelled) return;
         setStored(storedZones(settings.patrol_zones));
         setHeadlight((settings.patrol_headlight ?? '100') !== '0');
+        setAlertRepeat(settings.patrol_alert_repeat === 'night' ? 'night' : 'round');
         setSettingsLoad('ready');
       })
       .catch(e => { if (!cancelled) { setSettingsLoad('failed'); setMessage(reasonOf(e)); } });
@@ -127,6 +129,11 @@ export function PatrolPanel({ sn, sensors, reports = NO_REPORTS, runs, runsLoad,
     const before = headlight;
     setHeadlight(!before);
     persist({ patrol_headlight: before ? '0' : '100' }, () => setHeadlight(before));
+  };
+  const chooseAlertRepeat = (next: AlertRepeat) => {
+    const before = alertRepeat;
+    setAlertRepeat(next);
+    persist({ patrol_alert_repeat: next }, () => setAlertRepeat(before));
   };
 
   const zoneName = (slot: string) => zones.find(z => z.slot === slot)?.name ?? slot;
@@ -196,6 +203,19 @@ export function PatrolPanel({ sn, sensors, reports = NO_REPORTS, runs, runsLoad,
           disabled={settingsLoad !== 'ready'}
           onChange={toggleHeadlight}
         />
+      </label>
+
+      <label className="flex items-center justify-between gap-2 text-[11px] text-gray-300 mb-2" title={t('drawer.patrol.alertRepeatTitle')}>
+        {t('drawer.patrol.alertRepeat')}
+        <select
+          value={alertRepeat}
+          disabled={settingsLoad !== 'ready'}
+          onChange={e => chooseAlertRepeat(e.target.value === 'night' ? 'night' : 'round')}
+          className={CONTROL}
+        >
+          <option value="round">{t('drawer.patrol.alertRepeatRound')}</option>
+          <option value="night">{t('drawer.patrol.alertRepeatNight')}</option>
+        </select>
       </label>
 
       <NightlySchedule sn={sn} onMessage={setMessage} />
@@ -314,6 +334,8 @@ const sameFields = (a: NightFields, b: NightFields) =>
   a.from === b.from && a.until === b.until && a.every === b.every && a.on === b.on;
 
 const CONTROL = 'bg-gray-900 border border-gray-700 rounded px-1 text-gray-200 disabled:opacity-50';
+/** How often a detection pushes (patrol_alert_repeat): every round, or a kind at a checkpoint once a night. */
+type AlertRepeat = 'round' | 'night';
 
 /**
  * The one nightly patrol schedule of the mower: a window (from, until), the
