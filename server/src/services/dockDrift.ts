@@ -18,10 +18,15 @@
  */
 import type { DockSampleRow } from '../db/repositories/dockSamples.js';
 
-/** From here it is worth a warning; the mower's own repeatability is ~2-3 cm. */
-export const DOCK_DRIFT_WARN_M = 0.05;
-/** From here the edges visibly move; treat as a fault to fix. */
-export const DOCK_DRIFT_FAIL_M = 0.15;
+/**
+ * From here the edges visibly move: worth a warning. Below it a station that
+ * did not move still varies (6 cm map, 7 cm RTK after a firmware update with
+ * nothing moved, LFIN2231200033 Oct 2026), and warning at 5 cm raised more
+ * questions than it answered.
+ */
+export const DOCK_DRIFT_WARN_M = 0.15;
+/** From here the zones lie clearly off; treat as a fault to fix. */
+export const DOCK_DRIFT_FAIL_M = 0.30;
 /** The reference is the median of this many first stints. */
 const REFERENCE_STINTS = 3;
 
