@@ -4,7 +4,10 @@ export default {
   reanchorConfirmOwnDock: "Ik sta bij de maaier op zijn eigen dock. Het dock is niet verplaatst sinds deze zones zijn opgenomen.",
   reanchorStop: "Stoppen",
   reanchorRetryHint: "Zet de maaier met de joystick terug op zijn eigen dock en start de volledige controle opnieuw.",
-  reanchorInstallPending: "Een kaartinstallatie is niet afgerond. Herstel of reconcilieer die installatie voordat je herankert.",
+  reanchorInstallPending: "Een kaartinstallatie is niet afgerond. Probeer die eerst opnieuw; daarna kan het herankeren beginnen.",
+  reanchorRetryInstall: "Installatie opnieuw proberen",
+  reanchorInstallFailed: "De installatie is opnieuw mislukt. Zorg dat de maaier op zijn dock staat en online is, en probeer het dan opnieuw.",
+  reanchorBannerInstallBody: "Een kaartinstallatie is niet afgerond. Go-home is geblokkeerd. Tik om die opnieuw te proberen.",
   reanchorPendingHint: "Een eerdere oorsprongwijziging moet nog worden gecontroleerd. Opnieuw starten leest eerst de opgeslagen uitkomst en herhaalt de dockrit.",
 
   // ── Beta firmware warning (OtaScreen) ─────────────────────────

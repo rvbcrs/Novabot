@@ -625,6 +625,10 @@ export default function HomeScreen() {
   // the re-anchor wizard until a successful dock clears the server-side flag.
   const frameUnvalidated =
     (devices.get(mower?.sn ?? '')?.sensors?.frame_unvalidated ?? '0') === '1';
+  // An unfinished map install also counts as unvalidated, but it needs the
+  // install retried (in the wizard), not a restore's "dock once".
+  const mapInstallPending =
+    (devices.get(mower?.sn ?? '')?.sensors?.map_install_pending ?? '0') === '1';
   // Re-anchor (and the other extended_commands flows) only exist on OpenNova
   // custom firmware; on stock the server answers 409 unsupported_firmware.
   const mowerStockFw = !isOpenNovaFirmware(mower?.firmwareVersion);
@@ -1992,7 +1996,7 @@ export default function HomeScreen() {
                 {t('reanchorBannerTitle')}
               </Text>
               <Text style={{ color: colors.textDim, fontSize: 12 }}>
-                {t('reanchorBannerBody')}
+                {t(mapInstallPending ? 'reanchorBannerInstallBody' : 'reanchorBannerBody')}
               </Text>
             </View>
             <Text style={{ color: '#f59e0b', fontWeight: '700', fontSize: 13 }}>{t('reanchorBannerCta')}</Text>

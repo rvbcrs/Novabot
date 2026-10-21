@@ -8,12 +8,16 @@ import { useI18n } from '../i18n';
 
 interface Props { visible: boolean; sn: string; sensors: Record<string, string> | undefined; onClose: () => void; }
 
-export default function ReanchorWizard({ visible, sn, onClose }: Props) {
+export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<ReanchorStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  // The server's map_apply_phase while it installs the maps again.
+  const installPhase = sensors?.map_apply_phase ?? '';
+  const installing = retrying || ['syncing', 'regenerating', 'settling'].includes(installPhase);
   const owned = useRef<string | null>(null);
   const generation = useRef(0);
   const client = async () => {
@@ -76,6 +80,14 @@ export default function ReanchorWizard({ visible, sn, onClose }: Props) {
     } catch (e) { if (attempt === generation.current) setErr(e instanceof Error ? e.message : String(e)); }
     finally { if (attempt === generation.current) setStarting(false); }
   };
+  // Re-anchor refuses while a map install is unfinished; installing the maps
+  // again is the repair, and the status poll sees installPending clear.
+  const retryInstall = async () => {
+    setErr(null); setRetrying(true);
+    try { await (await client()).retryMapInstall(sn); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setRetrying(false); }
+  };
   const stop = async () => {
     const id = owned.current ?? status?.cycleId;
     try { if (id) await (await client()).reanchor(sn, 'stop', { cycleId: id }); }
@@ -96,7 +108,11 @@ export default function ReanchorWizard({ visible, sn, onClose }: Props) {
         <Text style={{ color: '#cbd5e1' }}>RTK: {status?.rtkFixed ? 'Fixed' : '?'} · {t(status?.onDock ? 'reanchorOnDock' : 'reanchorOffDock')}</Text>
         {!!status?.message && <Text accessibilityLiveRegion="polite" style={{ color: status.ok ? '#34d399' : status.phase === 'error' ? '#f87171' : 'white' }}>{status.message}</Text>}
         {status?.verificationPending && <Text style={{ color: '#fbbf24' }}>{t('reanchorPendingHint')}</Text>}
-        {status?.installPending && <Text style={{ color: '#fbbf24' }}>{t('reanchorInstallPending')}</Text>}
+        {status?.installPending && <>
+          <Text style={{ color: '#fbbf24' }}>{t('reanchorInstallPending')}</Text>
+          {installPhase === 'failed' && !installing && <Text style={{ color: '#f87171' }}>{t('reanchorInstallFailed')}</Text>}
+          {installing ? <ActivityIndicator /> : button(t('reanchorRetryInstall'), () => void retryInstall())}
+        </>}
         {status && !compatible && <Text style={{ color: '#fbbf24' }}>{t('reanchorUpdateRequired')}</Text>}
         {err && <Text accessibilityRole="alert" style={{ color: '#f87171' }}>{err}</Text>}
         {active ? <><ActivityIndicator />{button(t('reanchorStop'), () => void stop())}</> : <>

@@ -4,7 +4,10 @@ export default {
   reanchorConfirmOwnDock: "I am with the mower on its own dock. The dock has not moved since these zones were recorded.",
   reanchorStop: "Stop",
   reanchorRetryHint: "Return the mower to its own dock with the joystick, then restart the complete check.",
-  reanchorInstallPending: "A map installation is incomplete. Restore or reconcile that installation before re-anchoring.",
+  reanchorInstallPending: "A map installation did not finish. Retry it first; re-anchoring can start after that.",
+  reanchorRetryInstall: "Retry installation",
+  reanchorInstallFailed: "The installation failed again. Make sure the mower is on its dock and online, then retry.",
+  reanchorBannerInstallBody: "A map installation did not finish. Go-home is blocked. Tap to retry it.",
   reanchorPendingHint: "A previous origin write still needs verification. Retrying first checks the saved result and repeats the dock cycle.",
 
   // ── Beta firmware warning (OtaScreen) ─────────────────────────

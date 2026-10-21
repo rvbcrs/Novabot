@@ -544,6 +544,11 @@ export class ApiClient {
     return this.request('POST', `/api/dashboard/reanchor/${encodeURIComponent(sn)}`, { body: { action, ...options } });
   }
 
+  /** Install the server's maps on the mower again: the repair for an install that did not finish. */
+  async retryMapInstall(sn: string): Promise<void> {
+    await this.request('POST', `/api/dashboard/maps/${encodeURIComponent(sn)}/apply`, { body: {} });
+  }
+
   /** Auto re-anchor progress, polled by the re-anchor wizard. */
   async getReanchorStatus(sn: string): Promise<ReanchorStatus> {
     const r = await this.request<{ ok: boolean; status: ReanchorStatus }>(

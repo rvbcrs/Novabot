@@ -4,7 +4,10 @@ export default {
   reanchorConfirmOwnDock: "Je suis près de la tondeuse sur sa propre station. La station n’a pas été déplacée depuis l’enregistrement de ces zones.",
   reanchorStop: "Arrêter",
   reanchorRetryHint: "Ramenez la tondeuse sur sa propre station avec le joystick, puis relancez le contrôle complet.",
-  reanchorInstallPending: "Une installation de carte est incomplète. Restaurez ou vérifiez cette installation avant le réancrage.",
+  reanchorInstallPending: "Une installation de carte n'a pas abouti. Relancez-la d'abord ; le réancrage pourra commencer ensuite.",
+  reanchorRetryInstall: "Relancer l'installation",
+  reanchorInstallFailed: "L'installation a de nouveau échoué. Vérifiez que la tondeuse est sur sa station et en ligne, puis réessayez.",
+  reanchorBannerInstallBody: "Une installation de carte n'a pas abouti. Le retour à la base est bloqué. Touchez pour la relancer.",
   reanchorPendingHint: "Une modification précédente de l’origine doit encore être vérifiée. Une nouvelle tentative vérifie d’abord le résultat enregistré et répète le trajet vers la station.",
 
   // ── Beta firmware warning (OtaScreen) ─────────────────────────

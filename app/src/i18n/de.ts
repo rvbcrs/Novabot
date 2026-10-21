@@ -4,7 +4,10 @@ export default {
   reanchorConfirmOwnDock: "Ich bin beim Mäher an seiner eigenen Station. Die Station wurde seit der Aufnahme dieser Zonen nicht versetzt.",
   reanchorStop: "Stoppen",
   reanchorRetryHint: "Fahre den Mäher mit dem Joystick zurück auf seine eigene Station und starte die vollständige Prüfung erneut.",
-  reanchorInstallPending: "Eine Karteninstallation ist unvollständig. Stelle diese Installation wieder her oder gleiche sie ab, bevor du neu verankerst.",
+  reanchorInstallPending: "Eine Karteninstallation wurde nicht abgeschlossen. Wiederhole sie zuerst; danach kann das Neuverankern beginnen.",
+  reanchorRetryInstall: "Installation wiederholen",
+  reanchorInstallFailed: "Die Installation ist erneut fehlgeschlagen. Stelle sicher, dass der Mäher auf seiner Ladestation steht und online ist, und versuche es dann erneut.",
+  reanchorBannerInstallBody: "Eine Karteninstallation wurde nicht abgeschlossen. Heimfahren ist blockiert. Tippen, um sie zu wiederholen.",
   reanchorPendingHint: "Eine frühere Änderung des Ursprungs muss noch geprüft werden. Ein neuer Versuch prüft zuerst das gespeicherte Ergebnis und wiederholt die Dockfahrt.",
 
   // ── Beta firmware warning (OtaScreen) ─────────────────────────
