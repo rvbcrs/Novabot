@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "version": "2026.1021.1715",
+      "date": "2026-10-21",
+      "sections": {
+        "server": [
+          "The status keeps the mower's own stop reason as detail (Novabot-4grv)"
+        ]
+      }
+    },
+    {
       "version": "2026.1021.1520",
       "date": "2026-10-21",
       "sections": {
@@ -216,24 +225,6 @@
           "Close path traversal, shell injection and gate bypass found in the repo review",
           "Refuse a mower update while the mower is off its dock",
           "Fill an empty map database from the mower itself"
-        ]
-      }
-    },
-    {
-      "version": "2026.1005.2300",
-      "date": "2026-10-05",
-      "sections": {
-        "dashboard": [
-          "Use the admin page's glow background"
-        ],
-        "app": [
-          "Home fits one screen while mowing, map fills the gap"
-        ],
-        "firmware": [
-          "Never let mow_zone_drive take over a live task (Novabot-7xu)"
-        ],
-        "server": [
-          "Follow the charger's own transport after a charger OTA (Novabot-d46)"
         ]
       }
     }
