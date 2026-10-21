@@ -3295,6 +3295,9 @@ def run_extended_command(cmd_name, handler, params, respond):
                 return
             handler(params, reply)
         except Exception as error:
+            # The reason also stays in this log: the response alone left
+            # nothing to read on the mower afterwards.
+            log(f"{cmd_name} failed: {error}")
             reply(f"{cmd_name}_respond", {"result": 1, "error": str(error)})
 
     if cmd_name in _MAP_OPERATION_COMMANDS:

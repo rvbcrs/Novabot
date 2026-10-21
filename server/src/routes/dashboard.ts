@@ -31,7 +31,7 @@ import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameU
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
 import { frameSnapshotSignature } from '../services/copyAlignment.js';
-import { guardedDockMove, rememberDockedPose, settleDockMotion, type DockPose } from '../services/dockMotion.js';
+import { guardedDockMove, rememberDockedPose, settleDockMotion, DockMotionError, type DockPose } from '../services/dockMotion.js';
 import { assertReanchorFiles, measureReanchorDock, REANCHOR_TOLERANCE_M, type Origin } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
@@ -3293,7 +3293,9 @@ dashboardRouter.get('/demo/:sn', (req: Request, res: Response) => {
 // Own-dock recovery uses bounded body-relative motion before trusting the heading.
 class ReanchorError extends TextError {}
 type ReanchorPhase = 'idle' | 'check' | 'relock' | 'dock' | 'anchor' | 'verify' | 'done' | 'error';
-interface ReanchorStat { phase: ReanchorPhase; message: Msg; ok?: boolean; error?: string; pose?: { x: number; y: number }; dist?: number; ts: number; revision: number; cycleId: string; }
+// detail: the mower's own reason for a stop (DockMotionError.raw), for remote
+// diagnosis; the screen shows `message`.
+interface ReanchorStat { phase: ReanchorPhase; message: Msg; ok?: boolean; error?: string; detail?: string; pose?: { x: number; y: number }; dist?: number; ts: number; revision: number; cycleId: string; }
 type ReanchorCycle = { id: string; revision: number; operatorAt: number; startedAt: number; cancelled: boolean; finished: boolean; motionId?: string };
 const reanchorStatus = new Map<string, ReanchorStat>();
 const reanchorCycles = new Map<string, ReanchorCycle>();
@@ -3415,7 +3417,8 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
       setReanchor(sn, cycle, 'done', M`Frame gecontroleerd: ${measured.dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: measured.base, dist: measured.dist });
     }, true);
   } catch (error) {
-    setReanchor(sn, cycle, 'error', error instanceof TextError ? error.msg : M`${error instanceof Error ? error.message : String(error)}`, { error: 'reanchor_failed', ok: false });
+    setReanchor(sn, cycle, 'error', error instanceof TextError ? error.msg : M`${error instanceof Error ? error.message : String(error)}`,
+      { error: 'reanchor_failed', ok: false, ...(error instanceof DockMotionError && error.raw ? { detail: error.raw } : {}) });
   } finally {
     stopReanchor(sn, cycle);
     cycle.finished = true;

@@ -818,6 +818,23 @@ check("a hello that fails to send ends neither the connection nor the patrol re-
       == [["subscribe", "subscribe", "publish_failed", "patrol_status", "loop"]] * 2)
 check("and the failure is logged", any("ext_hello" in line for line in logged))
 
+# A command that fails says why in extended_commands.log. Only the response
+# carried the reason, so the mower kept nothing to read afterwards (Aaron's
+# re-anchor stops, Oct 2026).
+logged, replies = [], []
+real = {"log": ec.log}
+ec.log = logged.append
+try:
+    def failing(params, reply):
+        raise ValueError("RTK corrections or localization lost during motion")
+    ec.run_extended_command("dock_measurement_move", failing, {}, lambda n, d: replies.append((n, d)))
+finally:
+    restore(real)
+check("a failed command still answers with its error",
+      replies == [("dock_measurement_move_respond", {"result": 1, "error": "RTK corrections or localization lost during motion"})])
+check("and logs the command and its reason",
+      any("dock_measurement_move" in line and "RTK corrections" in line for line in logged))
+
 # The exit code is lost on the mower: main() ignores SIGCHLD (#60), so the kernel reaps every
 # child and Popen reads its returncode as 0. The end of a drive that did not report its own
 # must still go out, or the last status stays `patrolling` and every reconnect re-sends it.

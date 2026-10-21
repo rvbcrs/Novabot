@@ -90,7 +90,7 @@ import { markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, markMa
 import { frameSnapshotSignature } from '../../services/copyAlignment.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { mapRepo } from '../../db/repositories/index.js';
-import { guardedDockMove, settleDockMotion } from '../../services/dockMotion.js';
+import { guardedDockMove, settleDockMotion, DockMotionError, readableDockMotionError } from '../../services/dockMotion.js';
 import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
 import { publishToDevice, publishToExtended, onExtendedResponse, offExtendedResponse } from '../../mqtt/mapSync.js';
 
@@ -284,6 +284,19 @@ it('a slow snapshot read after the measurement does not make the measurement sta
   await start(); await tick(70_000);
   expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
   expect(requestCount).toBe(1); expect(measurementCount).toBe(2);
+});
+// The screen shows the plain sentence; the mower's own reason stays in the
+// status for remote diagnosis. Aaron's stops all read "position data dropped
+// out", which covers five different causes (Oct 2026).
+it('keeps the mower\'s raw stop reason as the status detail', async () => {
+  vi.mocked(guardedDockMove).mockRejectedValueOnce(
+    new DockMotionError(readableDockMotionError('RTK corrections or localization lost during motion'), 'RTK corrections or localization lost during motion'));
+  vi.useFakeTimers(); feed({ map_position_orientation: 1.606 });
+  await start(); await tick(5000);
+  const s = await status();
+  expect(s.phase).toBe('error');
+  expect(s.detail).toBe('RTK corrections or localization lost during motion');
+  expect(s.message).toMatch(/RTK/);
 });
 it('refuses conflicting native anchors before departure', async () => {
   vi.useFakeTimers(); feed(); snapshotConflict = true;
