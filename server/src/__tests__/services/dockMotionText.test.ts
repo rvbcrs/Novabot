@@ -15,7 +15,9 @@ const en = (raw: string) => renderMsg('en', readableDockMotionError(raw));
 describe('readableDockMotionError', () => {
   it('turns the reasons users hit into plain sentences', () => {
     expect(en('motion telemetry stale: /robot_combination_localization/combination_status')).toMatch(/^The mower's position data dropped out/);
-    expect(en('RTK corrections or localization lost during motion')).toMatch(/position data dropped out/);
+    // Not "wait a minute": its RTK was not Fixed (the wizard showed "RTK: ?" on
+    // the dock), and waiting does not help when it stays that way (Aaron, Oct 2026).
+    expect(en('RTK corrections or localization lost during motion')).toMatch(/^The mower lost RTK Fixed .*"RTK: Fixed"/);
     expect(en('robot is busy, low on battery or in error')).toMatch(/30% battery/);
     expect(en('chassis stop or fault')).toMatch(/STOP button/);
     expect(en('dock pattern lost')).toMatch(/camera could not see the pattern/);

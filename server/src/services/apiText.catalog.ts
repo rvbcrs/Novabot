@@ -11,6 +11,11 @@ import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
   // ── Dock measurement / re-anchor: the firmware's reason in plain words (services/dockMotion.ts) ──
+  "De maaier verloor RTK-Fixed of zijn RTK-correcties tijdens de controle, daarom stopte hij voor de veiligheid. Start pas opnieuw als hier \"RTK: Fixed\" staat terwijl hij op het dock staat. Blijft dat uit, controleer dan of het laadstation stroom heeft en de antenne vrij zicht op de lucht heeft.": {
+    en: "The mower lost RTK Fixed or its RTK corrections during the check, so it stopped for safety. Only start again when this shows \"RTK: Fixed\" while it is on the dock. If that does not come, check that the charging station has power and that its antenna has a clear view of the sky.",
+    fr: "La tondeuse a perdu le RTK Fixed ou ses corrections RTK pendant le contrôle, elle s'est donc arrêtée par sécurité. Ne recommencez que lorsque « RTK: Fixed » s'affiche ici pendant qu'elle est sur sa station. Si cela n'arrive pas, vérifiez que la station de charge est alimentée et que son antenne a une vue dégagée sur le ciel.",
+    de: "Der Mäher hat während der Prüfung RTK-Fixed oder seine RTK-Korrekturen verloren und deshalb aus Sicherheitsgründen angehalten. Starten Sie erst wieder, wenn hier „RTK: Fixed“ steht, während er auf der Ladestation steht. Kommt das nicht, prüfen Sie, ob die Ladestation Strom hat und ihre Antenne freie Sicht zum Himmel hat.",
+  },
   "De positiegegevens van de maaier vielen even weg, daarom stopte hij voor de veiligheid. Dat gebeurt soms vlak na het opstarten of bij een zwak RTK-signaal: wacht een minuut voordat je opnieuw begint.": {
     en: "The mower's position data dropped out for a moment, so it stopped for safety. This can happen shortly after start-up or with a weak RTK signal: wait a minute before you start again.",
     fr: "Les données de position de la tondeuse ont été interrompues un instant, elle s'est donc arrêtée par sécurité. Cela peut arriver peu après le démarrage ou avec un signal RTK faible : attendez une minute avant de recommencer.",

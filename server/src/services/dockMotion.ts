@@ -18,6 +18,11 @@ export class DockMotionError extends TextError {
  */
 export function readableDockMotionError(raw: string): Msg {
   const r = raw.toLowerCase();
+  // Every movement needs RTK Fixed with fresh corrections; waiting does not
+  // help when it stays without (Aaron: "RTK: ?" on the dock, Oct 2026).
+  if (r.includes('rtk corrections')) {
+    return M`De maaier verloor RTK-Fixed of zijn RTK-correcties tijdens de controle, daarom stopte hij voor de veiligheid. Start pas opnieuw als hier "RTK: Fixed" staat terwijl hij op het dock staat. Blijft dat uit, controleer dan of het laadstation stroom heeft en de antenne vrij zicht op de lucht heeft.`;
+  }
   if (/telemetry stale|stamp stale|localization lost|localization jump|frame changed/.test(r)) {
     return M`De positiegegevens van de maaier vielen even weg, daarom stopte hij voor de veiligheid. Dat gebeurt soms vlak na het opstarten of bij een zwak RTK-signaal: wacht een minuut voordat je opnieuw begint.`;
   }
