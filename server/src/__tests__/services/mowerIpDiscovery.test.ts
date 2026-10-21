@@ -8,8 +8,8 @@ import {
   DISCOVERED_FRESHNESS_MS,
   stopMowerIpDiscovery,
   rememberReportedLanIp,
-  containerGatewayFromRoutes,
 } from '../../services/mowerIpDiscovery.js';
+import { containerGatewayFromRoutes } from '../../services/containerGateway.js';
 import { db } from '../../db/database.js';
 
 const userId = 'test-user-discovery';

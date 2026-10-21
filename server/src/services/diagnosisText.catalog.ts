@@ -548,6 +548,21 @@ export const CATALOG: Catalog = {
     fr: "aucune MAC BLE connue pour cette station de charge",
     de: "keine BLE-MAC für diese Ladestation bekannt",
   },
+  "via MQTT verbonden, dus hij zit op het netwerk; zijn eigen adres is achter de NAT van Docker niet te zien (alles komt binnen via {0})": {
+    en: "connected over MQTT, so it is on the network; behind Docker's NAT its own address cannot be seen (everything arrives through {0})",
+    fr: "connecté en MQTT, il est donc sur le réseau ; derrière le NAT de Docker, sa propre adresse n'est pas visible (tout arrive par {0})",
+    de: "über MQTT verbunden, also im Netzwerk; hinter dem NAT von Docker ist seine eigene Adresse nicht zu sehen (alles kommt über {0} herein)",
+  },
+  "achter de NAT van Docker is het adres van dit apparaat niet te zien (alles komt binnen via {0})": {
+    en: "behind Docker's NAT the address of this device cannot be seen (everything arrives through {0})",
+    fr: "derrière le NAT de Docker, l'adresse de cet appareil n'est pas visible (tout arrive par {0})",
+    de: "hinter dem NAT von Docker ist die Adresse dieses Geräts nicht zu sehen (alles kommt über {0} herein)",
+  },
+  "adres niet te zien achter de NAT van Docker": {
+    en: "address not visible behind Docker's NAT",
+    fr: "adresse non visible derrière le NAT de Docker",
+    de: "Adresse hinter dem NAT von Docker nicht sichtbar",
+  },
   "{0} is via MQTT verbonden, dus hij zit op het netwerk": {
     en: "{0} is connected over MQTT, so it is on the network",
     fr: "{0} est connecté en MQTT, il est donc sur le réseau",

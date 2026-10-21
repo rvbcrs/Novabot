@@ -16,6 +16,7 @@
  */
 import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
 import { computeDockDrift, stationOffset } from './dockDrift.js';
+import { containerGateway } from './containerGateway.js';
 import { adviseVersion, getManifest } from './firmwareAdvisory.js';
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
@@ -66,6 +67,8 @@ export interface DiagnosisProbes {
   mdnsSelfQuery: () => Promise<string[]>;
   /** MDNS_SIDECAR=true: the opennova-mdns service advertises from the host network on our behalf. */
   mdnsSidecar: () => boolean;
+  /** This container's default gateway: behind Docker Desktop's NAT every device connects from it. */
+  natGateway: () => string | null;
 }
 
 export const realProbes: DiagnosisProbes = {
@@ -79,6 +82,7 @@ export const realProbes: DiagnosisProbes = {
   mdnsStatus,
   mdnsSelfQuery: selfQuery,
   mdnsSidecar: () => process.env.MDNS_SIDECAR === 'true' || process.env.MDNS_SIDECAR === '1',
+  natGateway: containerGateway,
 };
 
 export interface DiagnosisInput {
@@ -342,7 +346,11 @@ export async function diagnoseConnection(
   //    own most basic failure: nothing arrives, so we see nothing, so we report
   //    nothing. Measurements only, no conclusions about what "probably" broke.
   const regEarly = deviceRepo.findBySn(sn);
-  const reach = await probe.reachability(regEarly?.ip_address ?? null);
+  // Behind Docker Desktop's NAT the broker sees every device come from the
+  // container's gateway: that address is Docker's, not the device's.
+  const seenIp = regEarly?.ip_address ?? null;
+  const natted = seenIp !== null && seenIp === probe.natGateway();
+  const reach = await probe.reachability(natted ? null : seenIp);
   const dnsAnswers = reach.dns.filter(d => d.addresses.length > 0);
   // Toon het adres waartegen we vergeleken hebben. serverIps bevat in een
   // bridged container 172.17.0.x, en dat stond onder een match die op het
@@ -397,7 +405,18 @@ export async function diagnoseConnection(
     });
   }
 
-  if (!reach.deviceIp) {
+  if (natted) {
+    const seen = parseLastSeen(regEarly);
+    const online = seen !== null && (now - seen) < OFFLINE_AFTER_MS;
+    push({
+      id: 'network',
+      group: 'reach',
+      status: online ? 'ok' : 'unknown',
+      evidence: online
+        ? T`via MQTT verbonden, dus hij zit op het netwerk; zijn eigen adres is achter de NAT van Docker niet te zien (alles komt binnen via ${seenIp})`
+        : T`achter de NAT van Docker is het adres van dit apparaat niet te zien (alles komt binnen via ${seenIp})`,
+    });
+  } else if (!reach.deviceIp) {
     // Nooit verbonden betekent geen adres, en dan is elke andere stap blind
     // voor dit apparaat. De hardware verraadt zichzelf wel op laag 2: de eerste
     // drie bytes van het MAC zeggen wie de fabrikant is, en die set komt uit de
@@ -510,7 +529,7 @@ export async function diagnoseConnection(
   // betekent dat de wifi staat. Het MAC wordt opgezocht en niet uitgerekend: de
   // afstand tussen wifi en BLE verschilt per hardware (ESP32 +2, LFIN +1).
   if (!reach.deviceIp) {
-    push({ id: 'wifi', group: 'reach', status: 'skipped', evidence: T`geen adres bekend` });
+    push({ id: 'wifi', group: 'reach', status: 'skipped', evidence: natted ? T`adres niet te zien achter de NAT van Docker` : T`geen adres bekend` });
   } else {
     // Eerst de echte uit de buurtabel. Lukt dat niet, dan uit de BLE-MAC die we
     // hoe dan ook kennen: de fabriekstabel heeft die van elk apparaat. Wel
@@ -783,21 +802,24 @@ export async function diagnoseConnection(
   // "hij is soms online", en run_novabot.sh heeft er niet voor niets een
   // dubbel-start-guard voor (GH #60). Zichtbaar in de pogingen: hetzelfde
   // client_id vanaf twee adressen.
+  // Een gevecht wisselt heen en weer: het oudere adres komt terug nadat het
+  // nieuwere verscheen. Eén apparaat dat eenmaal van adres wisselde (DHCP, een
+  // opnieuw aangemaakt Docker-netwerk) doet dat nooit (Steve, okt 2026).
   const attempts = connectionEventRepo.recent(sn, 100);
-  const addrsPerClient = new Map<string, Set<string>>();
-  for (const a of attempts) {
+  const addrsPerClient = new Map<string, string[]>();
+  for (const a of [...attempts].reverse()) {   // oudste eerst
     if (!a.remote_addr) continue;
-    const set = addrsPerClient.get(a.mqtt_client_id) ?? new Set<string>();
-    set.add(a.remote_addr);
-    addrsPerClient.set(a.mqtt_client_id, set);
+    const seq = addrsPerClient.get(a.mqtt_client_id) ?? [];
+    if (seq[seq.length - 1] !== a.remote_addr) seq.push(a.remote_addr);
+    addrsPerClient.set(a.mqtt_client_id, seq);
   }
-  const clashing = [...addrsPerClient.entries()].find(([, set]) => set.size > 1);
+  const clashing = [...addrsPerClient.entries()].find(([, seq]) => new Set(seq).size < seq.length);
   if (clashing) {
     push({
       id: 'client_conflict',
       group: 'connect',
       status: 'fail',
-      evidence: T`client_id ${clashing[0]} komt van ${[...clashing[1]].join(' en ')}`,
+      evidence: T`client_id ${clashing[0]} komt van ${[...new Set(clashing[1])].join(' en ')}`,
       action: T`twee apparaten of processen gebruiken hetzelfde client_id en gooien elkaar er om beurten uit; zet er één uit`,
     });
   } else {

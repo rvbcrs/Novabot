@@ -51,6 +51,7 @@ function probes(over: Partial<{
   mower: Record<string, unknown>;
   net: Record<string, unknown>;
   mdns: Record<string, unknown>; mdnsAnswers: string[]; sidecar: boolean;
+  natGateway: string | null;
 }> = {}) {
   return {
     reachability: async (deviceIp: string | null) => ({
@@ -96,6 +97,7 @@ function probes(over: Partial<{
     }),
     mdnsSelfQuery: async () => over.mdnsAnswers ?? ['192.168.1.2'],
     mdnsSidecar: () => over.sidecar ?? false,
+    natGateway: () => over.natGateway ?? null,
   } satisfies DiagnosisProbes;
 }
 
@@ -310,6 +312,22 @@ describe('reachability', () => {
   });
 });
 
+describe('behind Docker Desktop NAT', () => {
+  // Every device connects from the container's gateway there, so the address
+  // the broker saw is Docker's, not the device's (Steve, Oct 2026: "connected
+  // over wifi at 172.18.0.1").
+  it('does not present the gateway as the device address', async () => {
+    withIp('172.18.0.1');
+    const steps = (await diagnoseConnection(MOWER, Date.now(), { probes: probes({ natGateway: '172.18.0.1' }) })).steps;
+    const network = steps.find(s => s.id === 'network')!;
+    const wifi = steps.find(s => s.id === 'wifi')!;
+    expect(network.status).toBe('ok');
+    expect(network.evidence).toMatch(/NAT/);
+    expect(wifi.evidence).not.toMatch(/172\.18\.0\.1/);
+    expect(wifi.status).toBe('skipped');
+  });
+});
+
 /** Online, bound, with whatever sensor values the case needs. */
 async function live(snapshot: Record<string, string> | null) {
   withIp('192.0.2.10');
@@ -323,12 +341,24 @@ describe('connection quality', () => {
     // like "sometimes online" and run_novabot.sh carries a double-start guard
     // for exactly this (GH #60).
     const now = Date.now();
-    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.5', ts: now - 5000 });
-    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.9', ts: now });
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.5', ts: now - 180_000 });
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.9', ts: now - 120_000 });
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.5', ts: now });
     const step = (await live({ msg: 'x' })).steps.find(s => s.id === 'client_conflict')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('192.168.1.5');
     expect(step.action).toContain('client_id');
+  });
+
+  // One device that changed address (a DHCP lease, a recreated Docker network:
+  // 172.19.0.1 then 172.18.0.1 on Docker Desktop, Steve, Oct 2026) is not two
+  // devices: the old address does not come back.
+  it('is quiet when one device changed address once', async () => {
+    const now = Date.now();
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '172.19.0.1', ts: now - 3_600_000 });
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '172.18.0.1', ts: now - 60_000 });
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '172.18.0.1', ts: now });
+    expect((await live({ msg: 'x' })).steps.find(s => s.id === 'client_conflict')!.status).toBe('ok');
   });
 
   it('is quiet when one client_id comes from one address', async () => {
