@@ -25,11 +25,12 @@ env:
   SOURCE_DATE_EPOCH: 0
 
 jobs:
+  # The tests run while the images build; publish waits for both, and an
+  # image without a tag reaches no one.
   test:
     uses: ./.github/workflows/server-test.yml
 
   build:
-    needs: test
     strategy:
       matrix:
         include:
@@ -92,7 +93,7 @@ jobs:
           retention-days: 1
 
   publish:
-    needs: build
+    needs: [test, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

@@ -51,6 +51,14 @@ describe('release scripts leave the Docker build to GitHub', () => {
     expect(readFileSync(resolve(repoRoot, '.github/workflows/server-test.yml'), 'utf8')).toContain('workflow_call:');
   });
 
+  it('builds while the tests run, and moves no tag until both passed', () => {
+    const wf = readFileSync(workflowPath, 'utf8');
+    const build = wf.slice(wf.indexOf('\n  build:'), wf.indexOf('\n  publish:'));
+    expect(build).toContain('runs-on:');
+    expect(build).not.toMatch(/needs:/);
+    expect(wf).toMatch(/\n  publish:\n    needs: \[test, build\]/);
+  });
+
   it('keeps native coverage planner compilation in an explicit artifact build script', () => {
     const script = readFileSync(coverageNativeBuildScriptPath, 'utf8');
 
