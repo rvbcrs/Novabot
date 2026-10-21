@@ -39,6 +39,7 @@ import { areaFileName, generateMapZipFromDb, gridGpsToLocal, gridLocalToGps, par
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { isDemoMode, setDemoMode as setDemo, getDemoStatus } from '../services/demoSimulator.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
+import { upcomingReleaseNotes } from '../services/upcomingReleaseNotes.js';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -232,6 +233,23 @@ dashboardRouter.get('/server-update', async (req: Request, res: Response) => {
     res.json({ ...await checkServerUpdate(), selfUpdate: await selfUpdateStatus(), mowing: mowersAtWork() });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : T`Updatecontrole mislukt` });
+  }
+});
+
+// GET /api/dashboard/server-update/release-notes — the notes of the releases
+// between the running version and the newest on Docker Hub, so the banner can
+// show what changes before the user updates. [] on the :beta channel.
+dashboardRouter.get('/server-update/release-notes', async (req: Request, res: Response) => {
+  const T = reqT(req);
+  try {
+    const { checkServerUpdate, fetchJson } = await import('./adminStatus.js');
+    const update = await checkServerUpdate();
+    const releases = update.channel === 'release' && update.updateAvailable && update.latest
+      ? await upcomingReleaseNotes(update.latest, fetchJson)
+      : [];
+    res.json({ current: update.current, latest: update.latest, releases });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : T`Release notes ophalen mislukt` });
   }
 });
 

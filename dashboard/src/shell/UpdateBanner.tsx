@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUpCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { getServerUpdate, applyServerUpdate, type ServerUpdateInfo } from '../api/client';
+import { getServerUpdate, applyServerUpdate, fetchUpcomingReleaseNotes, type ServerUpdateInfo, type ReleaseNotesEntry } from '../api/client';
 import { useDialog } from '../components/common/Dialog';
+import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
 
 const POLL_MS = 10 * 60 * 1000; // match the admin panel; server caches 5 min
 const DISMISS_KEY = 'novabot.update.dismissed';
@@ -31,6 +32,18 @@ export function UpdateBanner() {
   const [phase, setPhase] = useState<'idle' | 'updating' | 'slow' | 'failed'>('idle');
   const [failure, setFailure] = useState('');
   const fromVersion = useRef('');
+  const [notes, setNotes] = useState<ReleaseNotesEntry[]>([]);
+  const [showNotes, setShowNotes] = useState(false);
+
+  // What the update brings, to read before pressing update. A :beta build has
+  // no notes of its own, so only a release asks.
+  const notesFor = info?.updateAvailable && info.channel !== 'beta' && info.latest !== dismissed ? info.latest : null;
+  useEffect(() => {
+    if (!notesFor) { setNotes([]); return; }
+    let alive = true;
+    fetchUpcomingReleaseNotes().then(r => { if (alive) setNotes(r); });
+    return () => { alive = false; };
+  }, [notesFor]);
 
   useEffect(() => {
     if (phase !== 'updating') return;
@@ -105,6 +118,14 @@ export function UpdateBanner() {
         <span className="font-semibold">{t('update.title')}</span>
         <span className="text-violet-200/80">{detail}</span>
         <div className="ml-auto flex items-center gap-2">
+          {notes.length > 0 && (
+            <button
+              onClick={() => setShowNotes(true)}
+              className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium transition-colors"
+            >
+              {t('releaseNotes.title')}
+            </button>
+          )}
           {info.selfUpdate?.available && phase !== 'updating' && (
             <button
               onClick={updateNow}
@@ -146,6 +167,13 @@ export function UpdateBanner() {
           <pre className="text-[11px] font-mono bg-black/40 border border-violet-700/40 rounded-md px-3 py-2 text-emerald-300 overflow-x-auto">docker compose pull
 docker compose up -d</pre>
         </div>
+      )}
+      {showNotes && (
+        <ReleaseNotesModal
+          releases={notes}
+          title={t('update.notesTitle', { current: info.current })}
+          onClose={() => setShowNotes(false)}
+        />
       )}
     </div>
   );

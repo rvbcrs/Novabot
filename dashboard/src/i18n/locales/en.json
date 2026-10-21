@@ -16,6 +16,7 @@
     "betaDetail": "A newer beta is available",
     "betaBuilt": " (built {{when}})",
     "howTo": "How to update",
+    "notesTitle": "New since v{{current}}",
     "dismiss": "Dismiss",
     "instructions": "Pull and restart the OpenNova container on your host:",
     "updateNow": "Update now",

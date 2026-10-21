@@ -16,6 +16,7 @@
     "betaDetail": "Une bêta plus récente est disponible",
     "betaBuilt": " (compilée le {{when}})",
     "howTo": "Comment mettre à jour",
+    "notesTitle": "Nouveautés depuis la v{{current}}",
     "dismiss": "Masquer",
     "instructions": "Mettez à jour et redémarrez le conteneur OpenNova sur votre hôte :",
     "updateNow": "Mettre à jour",

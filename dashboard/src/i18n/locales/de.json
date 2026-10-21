@@ -16,6 +16,7 @@
     "betaDetail": "Eine neuere Beta ist verfügbar",
     "betaBuilt": " (erstellt am {{when}})",
     "howTo": "Anleitung",
+    "notesTitle": "Neu seit v{{current}}",
     "dismiss": "Ausblenden",
     "instructions": "Container auf dem Host aktualisieren und neu starten:",
     "updateNow": "Jetzt aktualisieren",

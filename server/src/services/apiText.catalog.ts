@@ -821,6 +821,11 @@ export const CATALOG: Catalog = {
     fr: "La coupe des bordures les jours planifiés",
     de: "Das Kantenmähen an geplanten Tagen",
   },
+  "Release notes ophalen mislukt": {
+    en: "Could not fetch the release notes",
+    fr: "Impossible de récupérer les notes de version",
+    de: "Versionshinweise konnten nicht abgerufen werden",
+  },
   "SHA256 komt niet overeen: verwacht {0}, gekregen {1}": {
     en: "SHA256 mismatch: expected {0}, got {1}",
     fr: "SHA256 non concordant : attendu {0}, obtenu {1}",

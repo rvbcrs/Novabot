@@ -1432,6 +1432,19 @@ export async function fetchReleaseNotes(): Promise<ReleaseNotesEntry[]> {
   }
 }
 
+/** Release notes of the versions between the running server and the newest on
+ *  Docker Hub, newest first, read before updating. [] on the :beta channel or
+ *  when GitHub cannot be reached. */
+export async function fetchUpcomingReleaseNotes(): Promise<ReleaseNotesEntry[]> {
+  try {
+    const res = await get(`${BASE}/server-update/release-notes`);
+    const data = await res.json() as { releases?: ReleaseNotesEntry[] };
+    return data.releases ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** Running server version (shown in the dashboard header). Returns '?' on error. */
 export async function getServerVersion(): Promise<string> {
   try {

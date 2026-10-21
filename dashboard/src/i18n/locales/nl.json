@@ -16,6 +16,7 @@
     "betaDetail": "Er is een nieuwere beta beschikbaar",
     "betaBuilt": " (gebouwd op {{when}})",
     "howTo": "Hoe updaten",
+    "notesTitle": "Nieuw sinds v{{current}}",
     "dismiss": "Verbergen",
     "instructions": "Pull en herstart de OpenNova-container op je host:",
     "updateNow": "Nu updaten",

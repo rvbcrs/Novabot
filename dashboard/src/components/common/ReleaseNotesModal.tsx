@@ -16,12 +16,14 @@ const SECTION_LABEL: Record<(typeof SECTION_ORDER)[number], string> = {
 interface Props {
   releases: ReleaseNotesEntry[];
   onClose: () => void;
+  /** Eigen kop, bv. vanuit de update-balk voor de nog niet geïnstalleerde releases. */
+  title?: string;
 }
 
 /** Popup met release notes per release, nieuwste bovenaan, gegroepeerd op
  *  Dashboard/App/Admin/Firmware/Server. Geopend via het knopje naast het
- *  versienummer in de header. */
-export function ReleaseNotesModal({ releases, onClose }: Props) {
+ *  versienummer in de header, en vanuit de update-balk vóór het updaten. */
+export function ReleaseNotesModal({ releases, onClose, title }: Props) {
   const { t } = useTranslation();
 
   // Portal naar body: genest in de <header> maakt een ancestor met
@@ -39,7 +41,7 @@ export function ReleaseNotesModal({ releases, onClose }: Props) {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
           <ScrollText className="w-4 h-4 text-emerald-400" />
           <span className="text-sm font-semibold text-zinc-100">
-            {t('releaseNotes.title', 'Release notes')}
+            {title ?? t('releaseNotes.title', 'Release notes')}
           </span>
           <button
             onClick={onClose}
