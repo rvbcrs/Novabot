@@ -8,8 +8,8 @@ import { fetchDockDrift, type DockDriftDto } from '../../api/client';
  * antenna or the map frame moved and the zones no longer lie where they
  * were driven. Same numbers as the "position on the dock" diagnosis step.
  */
-const WARN_CM = 15;
-const FAIL_CM = 30;
+const WARN_CM = 25;
+const FAIL_CM = 40;
 
 const COLOR = { ok: '#34d399', warn: '#fbbf24', fail: '#f87171', unknown: '#71717a' } as const;
 

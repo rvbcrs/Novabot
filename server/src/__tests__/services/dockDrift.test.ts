@@ -17,13 +17,13 @@ describe('dock drift', () => {
 
     const walking = computeDockDrift([
       row('2026-09-01', 0, 0), row('2026-09-02', 0.01, 0), row('2026-09-03', 0, 0.01),
-      row('2026-09-12', 0.18, 0.05, 52.0000017, 5.0),   // the station moved ~19 cm
+      row('2026-09-12', 0.27, 0.05, 52.0000025, 5.0),   // the station moved ~28 cm
     ]);
     expect(walking.status).toBe('warn');
     expect(walking.referenceAt).toBe('2026-09-01 10:00:00');
-    expect(Math.round(walking.latest!.dist * 100)).toBe(19);
+    expect(Math.round(walking.latest!.dist * 100)).toBe(27);
 
-    const gone = computeDockDrift([row('2026-09-01', 0, 0), row('2026-09-02', 0, 0), row('2026-09-20', 0.40, 0, 52.0000036, 5.0)]);
+    const gone = computeDockDrift([row('2026-09-01', 0, 0), row('2026-09-02', 0, 0), row('2026-09-20', 0.50, 0, 52.0000045, 5.0)]);
     expect(gone.status).toBe('fail');
   });
 
@@ -34,6 +34,13 @@ describe('dock drift', () => {
     const d = computeDockDrift([row('2026-10-14', 0, 0), row('2026-10-15', 0, 0), row('2026-10-16', 0, 0),
       row('2026-10-20', 0.05, 0.03, 52.00000063, 5.0)]);
     expect(Math.round(d.latest!.gpsDist! * 100)).toBe(7);
+    expect(d.status).toBe('ok');
+  });
+
+  it('20 cm is still ok: warnings start at 25 cm', () => {
+    const d = computeDockDrift([row('2026-10-14', 0, 0), row('2026-10-15', 0, 0), row('2026-10-16', 0, 0),
+      row('2026-10-20', 0.20, 0, 52.0000018, 5.0)]);
+    expect(Math.round(d.latest!.gpsDist! * 100)).toBe(20);
     expect(d.status).toBe('ok');
   });
 
@@ -66,11 +73,11 @@ describe('dock drift judges the station by RTK (live LFIN2230700238)', () => {
   });
   it('a moved RTK position warns, also with the map position in place', () => {
     const d = computeDockDrift([row('2026-09-01', 0, 0), row('2026-09-02', 0, 0),
-      row('2026-09-09', 0, 0, 52.0000018, 5.0)]);   // ~20 cm north
+      row('2026-09-09', 0, 0, 52.0000025, 5.0)]);   // ~28 cm north
     expect(d.status).toBe('warn');
   });
   it('without GPS in the samples the map offset still counts', () => {
     const noGps = (day: string, x: number) => ({ ...row(day, x, 0), lat: null, lng: null });
-    expect(computeDockDrift([noGps('2026-09-01', 0), noGps('2026-09-02', 0), noGps('2026-09-09', 0.4)]).status).toBe('fail');
+    expect(computeDockDrift([noGps('2026-09-01', 0), noGps('2026-09-02', 0), noGps('2026-09-09', 0.5)]).status).toBe('fail');
   });
 });
