@@ -1,6 +1,28 @@
 {
   "releases": [
     {
+      "version": "2026.1021.1520",
+      "date": "2026-10-21",
+      "sections": {
+        "dashboard": [
+          "The update banner shows what the new version brings before you update"
+        ],
+        "app": [
+          "The re-anchor wizard retries an unfinished map install (Novabot-pkcv)"
+        ],
+        "admin": [
+          "The DNS check says it only tested the server, and gives a next step while no device is connected (Novabot-1wiz)"
+        ],
+        "server": [
+          "A stop on lost RTK says so, with RTK Fixed on the dock as the next step (Novabot-wroa)",
+          "Warn from 25 cm, a fault from 40 cm (Novabot-djwv)",
+          "No warning below 15 cm, a fault from 30 cm (Novabot-djwv)",
+          "A failed edit apply no longer deadlocks Re-sync and re-anchor (Novabot-pkcv)",
+          "The mower reports its own LAN address; Docker's gateway is never the mower (Novabot-xal2)"
+        ]
+      }
+    },
+    {
       "version": "2026.1020.1052",
       "date": "2026-10-20",
       "sections": {
@@ -212,66 +234,6 @@
         ],
         "server": [
           "Follow the charger's own transport after a charger OTA (Novabot-d46)"
-        ]
-      }
-    },
-    {
-      "version": "2026.1004.2306",
-      "date": "2026-10-04",
-      "sections": {
-        "dashboard": [
-          "Joystick camera, a dedicated nudge panel, and no false re-anchor banner",
-          "Show zone-copy progress in the map-apply panel",
-          "Show the source zone as a green ghost and start the copy on it",
-          "Copy a zone by pointing at the source dock, and nudge a copied zone",
-          "Show notifications newest first",
-          "Show the RTK fix quality as its label again after a live update",
-          "Restore the drone photo to a previous or its original placement",
-          "Measure the other mower's dock with this mower when copying a zone",
-          "Show applying a map on the mower step by step",
-          "3D render shows mowing progress in the same colours as the map",
-          "Copy a zone from another mower with a draggable dock marker and preview",
-          "API client and translations for copying a zone between mowers"
-        ],
-        "app": [
-          "Rename maps with an in-app text field",
-          "Stop sending raw Dutch errors from zone copy, dock repair and re-anchor",
-          "Raise pod deployment targets so Xcode 27 can archive",
-          "Floating frosted-glass action pill on Home",
-          "Translate the localization dock-departure message and wait for sync_map in the concurrent-apply test",
-          "Translate the reanchor texts changed by the measured-pose reanchor"
-        ],
-        "admin": [
-          "Release notes and what's new in the header",
-          "Keep device sets in a fixed order",
-          "Restyle the admin page as control-room glass"
-        ],
-        "firmware": [
-          "Stream edge-cut feedback live instead of at the end",
-          "Never refuse the departure on the docked position (error 139)"
-        ],
-        "server": [
-          "Keep Resume after bad localization parks a task in the field",
-          "Run the SigLIP model in a worker thread",
-          "Finish the session when the new build reports in, stall on silence",
-          "Keep mowing speed and work status in the signal history",
-          "Publish map_install_pending next to frame_unvalidated",
-          "Fall back to Europe/Amsterdam when TZ is not a valid zone",
-          "IOS profile carries only the CA certificate, no DNS payload",
-          "Let a quick zone copy accept a docked mower within 30 cm of its saved dock",
-          "Accept the firmware's rewritten map_info.json and let a zone copy retry a pending install",
-          "Copy a zone from a pointed source dock, and remember where a copy came from",
-          "Allow 10 cm between a docked mower and its saved dock before copying or repairing",
-          "Keep the original fault when the visual docking cancel is refused; decompile robot_decision recharge handlers",
-          "Drive the native visual docker from the measured departure pose (motion protocol v4)",
-          "Decompile auto_recharge_server and document its INIT_CHECK routing",
-          "Preserve recovery state across retries and cancellation",
-          "Close the review findings on the frame recovery and zone copy work",
-          "Edge cutting with obstacle detection Low",
-          "Keep the mowing trail through the return to the dock",
-          "Replace existing zone copy safely",
-          "Reanchor from measured vehicle pose instead of GPS antenna",
-          "… plus 24 kleinere wijzigingen"
         ]
       }
     }
