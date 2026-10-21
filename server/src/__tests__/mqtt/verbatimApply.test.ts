@@ -5,16 +5,20 @@ vi.mock('../../mqtt/broker.js', () => ({ isSnBanned: () => false, isDeviceOnline
 vi.mock('../../dashboard/socketHandler.js', () => ({ emitDeviceBound: vi.fn(), emitDevicePaired: vi.fn() }));
 vi.mock('../../mqtt/sensorData.js', () => ({ deviceCache: new Map() }));
 vi.mock('../../services/frameValidation.js', () => ({ isFrameNavBlocked: () => false, markFrameUnvalidated: vi.fn(), markMapInstallPending: vi.fn(), clearMapInstallPending: vi.fn() }));
+const apply = vi.hoisted(() => ({ phase: () => {}, fail: (() => {}) as (e: string) => void, done: () => {} }));
+vi.mock('../../services/mapApplyStatus.js', () => ({ beginMapApply: () => apply }));
+vi.mock('../../services/portableBackup.js', () => ({ listBackups: () => [], readBackup: () => Buffer.from('zip') }));
+vi.mock('../../services/portableMap.js', () => ({ parseBundle: async () => ({ mowerFiles: files() }) }));
 vi.mock('../../services/mowerMapOperation.js', () => ({
   assertMowerMapOperation: vi.fn(),
   readMowerMapSnapshot: vi.fn(),
   withMowerMapOperation: vi.fn(),
 }));
-import { applyVerbatimToMower, verifyMowerMapFiles, type VerbatimMowerFiles } from '../../mqtt/mapSync.js';
+import { applyVerbatimToMower, verifyMowerMapFiles, pushMapToMowerVerbatim, type VerbatimMowerFiles } from '../../mqtt/mapSync.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { isDeviceOnline } from '../../mqtt/broker.js';
 import { markFrameUnvalidated } from '../../services/frameValidation.js';
-import { readMowerMapSnapshot, type MowerMapOperation } from '../../services/mowerMapOperation.js';
+import { readMowerMapSnapshot, withMowerMapOperation, type MowerMapOperation } from '../../services/mowerMapOperation.js';
 
 const pgm = Buffer.concat([Buffer.from('P5\n2 2\n255\n'), Buffer.alloc(4, 254)]).toString('base64');
 const files = (): VerbatimMowerFiles => ({
@@ -38,10 +42,24 @@ describe('confirmed verbatim apply', () => {
     clearPositionTelemetry('A'); ingestPositionTelemetry('A', { battery_state: 'CHARGING' });
     deviceCache.set('A', new Map([['battery_state', 'CHARGING']]));
     vi.mocked(readMowerMapSnapshot).mockResolvedValue(snapshot());
+    command.mockResolvedValue({ result: 0 });
+  });
+
+  // Like sync_map: only a new origin or dock file changes the frame. pos.json is
+  // never written here, so a write that keeps charging_station.yaml leaves the
+  // frame as it was; a map edit no longer asks for a re-anchor every time.
+  it('leaves the frame alone when charging_station.yaml stays the same', async () => {
+    expect(await applyVerbatimToMower('A', files(), operation)).toMatchObject({ pushed: true });
+    expect(markFrameUnvalidated).not.toHaveBeenCalled();
+  });
+
+  it('marks the frame unvalidated before a write that changes charging_station.yaml', async () => {
+    vi.mocked(readMowerMapSnapshot).mockResolvedValueOnce({ ...snapshot(), charging_station_yaml: 'charging_pose: [5, 5, 0]' });
     command.mockImplementation(async () => {
       expect(markFrameUnvalidated).toHaveBeenCalledWith('A');
       return { result: 0 };
     });
+    expect(await applyVerbatimToMower('A', files(), operation)).toMatchObject({ pushed: true });
   });
 
   it('requires correlated firmware support before writing and keeps incomplete bundles untouched', async () => {
@@ -85,5 +103,23 @@ describe('confirmed verbatim apply', () => {
     command.mockClear();
     expect((await verifyMowerMapFiles('A', files(), operation)).pushed).toBe(true);
     expect(command).not.toHaveBeenCalled();
+  });
+});
+
+// A failed edit push only logged "GEBLOKKEERD door kaartvalidatie": the cause
+// was lost and map_apply_phase never said failed, so the dashboard's Retry
+// banner never showed (LFIN1231000265, Oct 2026).
+describe('a failed verbatim push', () => {
+  it('shows the failure with its cause, so the dashboard offers Retry', async () => {
+    const sn = 'LFIN_A';
+    vi.mocked(isDeviceOnline).mockReturnValue(true);
+    clearPositionTelemetry(sn); ingestPositionTelemetry(sn, { battery_state: 'CHARGING' });
+    vi.mocked(readMowerMapSnapshot).mockResolvedValue(snapshot());
+    vi.mocked(withMowerMapOperation).mockImplementation(async (_sn, fn) => fn({ ...operation, sn }));
+    const failed = vi.spyOn(apply, 'fail');
+    command.mockResolvedValueOnce(null);
+
+    expect(await pushMapToMowerVerbatim(sn, 'edit.zip')).toMatchObject({ ok: false, error: 'write_timeout' });
+    expect(failed).toHaveBeenCalledWith('sync_timeout');
   });
 });

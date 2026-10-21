@@ -33,6 +33,7 @@ import { isSnBanned, isDeviceOnline } from './broker.js';
 import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending, setPendingReanchor } from '../services/frameValidation.js';
 import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, isMowerMapOperationBusy, type MowerMapOperation } from '../services/mowerMapOperation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
+import type { MapApplyError } from '../services/mapApplyStatus.js';
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceCache } from './sensorData.js';
@@ -817,7 +818,10 @@ export async function applyVerbatimToMower(
   if (!before || before.result !== 0 || before.snapshot_consistent !== true) return fail('snapshot_unavailable');
   if (!isDeviceOnline(sn) || !freshPositionState(sn).docked) return fail('mower_not_docked');
   markMapInstallPending(sn);
-  markFrameUnvalidated(sn);
+  // Like sync_map: only a new origin or dock file changes the frame. pos.json
+  // is never written (the readback below demands it unchanged); while the
+  // write runs, the pending install already blocks navigation.
+  if (files.chargingStationYaml != null && files.chargingStationYaml !== before.charging_station_yaml) markFrameUnvalidated(sn);
   const written = await operation.command('write_map_files', {
     csv_files: files.csvFiles,
     x3_csv_files: files.x3CsvFiles ?? files.csvFiles,
@@ -834,6 +838,13 @@ export async function applyVerbatimToMower(
   return { pushed: true, validation, operationId: operation.id };
 }
 
+/** applyVerbatimToMower's error as the map_apply_error the dashboard has a text for. */
+const VERBATIM_APPLY_ERRORS: Record<string, MapApplyError> = {
+  write_timeout: 'sync_timeout', write_failed: 'sync_failed', readback_mismatch: 'install_mismatch',
+  snapshot_unavailable: 'snapshot_failed', mower_offline: 'mower_offline', mower_not_docked: 'not_docked',
+  map_validation_failed: 'bundle_failed',
+};
+
 /**
  * Push de geïmporteerde kaart naar de maaier via DEZELFDE route als de admin
  * "Import bundle" knop: lees de (server-side gegenereerde) bundel → parseBundle
@@ -846,7 +857,7 @@ export async function applyVerbatimToMower(
 export async function pushMapToMowerVerbatim(
   sn: string,
   filename?: string,
-): Promise<{ ok: boolean; offline?: boolean; noBundle?: boolean; noFiles?: boolean; invalidMap?: boolean }> {
+): Promise<{ ok: boolean; offline?: boolean; noBundle?: boolean; noFiles?: boolean; invalidMap?: boolean; error?: string }> {
   if (!sn.startsWith('LFIN')) return { ok: false };
 
   let buf: Buffer | null = null;
@@ -892,8 +903,11 @@ export async function pushMapToMowerVerbatim(
     return applied;
   });
   if (!res.pushed) {
-    console.error(`${TAG} pushMapToMowerVerbatim: ${sn} GEBLOKKEERD door kaartvalidatie — bundel NIET gepusht, maaier ongemoeid`);
-    return { ok: false, invalidMap: true };
+    console.error(`${TAG} pushMapToMowerVerbatim: ${sn} niet geïnstalleerd (${res.error ?? 'onbekend'})`);
+    // The dashboard's failure banner (with Retry) shows the cause.
+    const { beginMapApply } = await import('../services/mapApplyStatus.js');
+    beginMapApply(sn).fail(VERBATIM_APPLY_ERRORS[res.error ?? ''] ?? 'install_mismatch');
+    return { ok: false, invalidMap: true, error: res.error };
   }
   console.log(`${TAG} Kaart naar ${sn} gepusht via apply-verbatim (write_map_files)`);
   return { ok: true };

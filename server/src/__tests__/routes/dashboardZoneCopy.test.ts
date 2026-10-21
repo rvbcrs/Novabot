@@ -626,3 +626,29 @@ describe('server-qualified measurement', () => {
     expect((await request(server).get(endpoint)).status).toBe(409);
   });
 });
+
+// A failed edit push leaves the install pending and the frame unvalidated, and
+// re-anchor refuses until the install is done. Re-sync and Revert push the map
+// again, which is the repair; Discard only touches the database. All three
+// got a 409, so the user could do nothing (LFIN1231000265, Oct 2026).
+describe('the map gate while an edit install is pending', () => {
+  beforeEach(() => { vi.mocked(isDeviceOnline).mockReturnValue(false); });
+  const gated = (res: request.Response) => res.status === 409 && res.body.reason === 'frame_unvalidated';
+
+  it('lets Re-sync and Revert through, as the repair', async () => {
+    markFrameUnvalidated(B); markMapInstallPending(B);
+    expect(gated(await request(server).post(`/api/dashboard/maps/${B}/edit/apply`).send({}))).toBe(false);
+    expect(gated(await request(server).post(`/api/dashboard/maps/${B}/edit/revert`).send({}))).toBe(false);
+  });
+
+  it('keeps blocking them while only the frame waits for a re-anchor', async () => {
+    markFrameUnvalidated(B);
+    expect(gated(await request(server).post(`/api/dashboard/maps/${B}/edit/apply`).send({}))).toBe(true);
+    expect(gated(await request(server).post(`/api/dashboard/maps/${B}/edit/revert`).send({}))).toBe(true);
+  });
+
+  it('lets Discard clear the drafts whatever the frame state', async () => {
+    markFrameUnvalidated(B); markMapInstallPending(B);
+    expect((await request(server).delete(`/api/dashboard/maps/${B}/edit/drafts`)).status).toBe(200);
+  });
+});

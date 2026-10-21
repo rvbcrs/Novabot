@@ -154,9 +154,13 @@ dashboardRouter.use(['/maps/:sn', '/calibration/:sn'], (req, res, next) => {
       /^\/dock-return\/[^/]+$/.test(req.path)) { next(); return; }
   // A failed install leaves the frame unvalidated with the install pending;
   // applying again is the repair, and so is copying a zone (a full CSV
-  // install that brings its own dock channel), so those pass the frame gate.
-  const retry = req.method === 'POST' && (req.path === '/apply' || /^\/copy-from\/[^/]+(?:\/preview)?$/.test(req.path)) && isMapInstallPending(sn);
-  if (isMowerMapOperationBusy(sn) || (isFrameUnvalidated(sn) && !retry)) {
+  // install that brings its own dock channel) or the editor's Re-sync and
+  // Revert (a verified write of the server's map), so those pass the frame
+  // gate. Re-anchor refuses until then. Discarding drafts only touches the
+  // database, the editor's way out whatever the frame.
+  const retry = req.method === 'POST' && (['/apply', '/edit/apply', '/edit/revert'].includes(req.path) || /^\/copy-from\/[^/]+(?:\/preview)?$/.test(req.path)) && isMapInstallPending(sn);
+  const discard = req.method === 'DELETE' && req.path === '/edit/drafts';
+  if (isMowerMapOperationBusy(sn) || (isFrameUnvalidated(sn) && !retry && !discard)) {
     const T = reqT(req);
     res.status(409).json({ ok: false, reason: isMowerMapOperationBusy(sn) ? 'map_operation_busy' : 'frame_unvalidated', error: T`Rond eerst de kaart- of herankerprocedure af.` }); return;
   }
