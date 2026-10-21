@@ -10,13 +10,45 @@ const repoRoot = resolve(__dirname, '../../..');
 const releaseScriptPath = resolve(repoRoot, 'release.sh');
 const coverageNativeBuildScriptPath = resolve(repoRoot, 'scripts/build-coverage-native-image.sh');
 
-describe('release script Docker build cache', () => {
-  it('keeps buildx cache enabled by default with an explicit no-cache opt-in', () => {
-    const script = readFileSync(releaseScriptPath, 'utf8');
+// The image is built on GitHub, not on the maintainer's machine: a local
+// multi-arch build was slow, a push from home broke off halfway (2026-10-21),
+// and the container release.sh left running took over the mowers via mDNS.
+const workflowPath = resolve(repoRoot, '.github/workflows/docker.yml');
+const betaScriptPath = resolve(repoRoot, 'release-beta.sh');
+/** A script without its comment lines: the beta header tells the device to `docker compose pull`. */
+const code = (path: string) => readFileSync(path, 'utf8').split('\n').filter(l => !l.trimStart().startsWith('#')).join('\n');
 
-    expect(script).toContain('RELEASE_NO_CACHE');
-    expect(script).toContain('CACHE_ARGS');
-    expect(script).not.toMatch(/--push\s+--no-cache\s+\./);
+describe('release scripts leave the Docker build to GitHub', () => {
+  it('release.sh builds, pushes and starts nothing locally, and waits for the tag\'s workflow', () => {
+    const script = code(releaseScriptPath);
+    expect(script).not.toMatch(/docker (buildx|run|pull|compose)/);
+    expect(script).toContain('git push --tags');
+    expect(script).toMatch(/gh run watch .*--exit-status/);
+    expect(script).toContain('docker.yml');
+  });
+
+  it('release-beta.sh only starts the workflow for pushed code', () => {
+    const script = code(betaScriptPath);
+    expect(script).not.toMatch(/docker (buildx|run|pull|compose)/);
+    expect(script).toMatch(/gh workflow run docker\.yml --ref/);
+    expect(script).toMatch(/push .* first/);
+  });
+
+  it('the workflow publishes on a release tag or a manual beta run, and nothing else', () => {
+    const wf = readFileSync(workflowPath, 'utf8');
+    const on = wf.slice(wf.indexOf('\non:'), wf.indexOf('\njobs:'));
+    expect(on).toMatch(/tags: \['v\[0-9\]\*'\]/);
+    expect(on).toContain('workflow_dispatch');
+    expect(on).not.toMatch(/branches:/);
+    expect(wf).toContain('uses: ./.github/workflows/server-test.yml');
+    expect(wf).toContain('ubuntu-24.04-arm');
+    expect(wf).toContain("import('@huggingface/transformers')");
+    expect(wf).toContain('push-by-digest=true');
+    expect(wf).toContain('rewrite-timestamp=true');
+    expect(wf).toContain('type=gha');
+    // A tag moves latest, the version and beta; a manual run only beta.
+    expect(wf).toMatch(/\$IMAGE:latest .*\$IMAGE:\$\{GITHUB_REF_NAME#v\} .*\$IMAGE:beta/);
+    expect(readFileSync(resolve(repoRoot, '.github/workflows/server-test.yml'), 'utf8')).toContain('workflow_call:');
   });
 
   it('keeps native coverage planner compilation in an explicit artifact build script', () => {

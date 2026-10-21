@@ -1,69 +1,39 @@
 #!/bin/bash
-# release-beta.sh — build the CURRENT code and push it to rvbcrs/opennova:beta.
+# release-beta.sh — let GitHub build the pushed code of this branch and push it
+# to rvbcrs/opennova:beta (.github/workflows/docker.yml).
 #
 # A moving "beta" channel for the latest stuff to test on a beta device, WITHOUT
-# touching production. Unlike release.sh it does NOT bump the version, commit/tag
-# git, push :latest, or restart the local container (so no mDNS hijack of the LAN
-# mowers).
+# touching production: no version, no tag, no :latest. Nothing is built or
+# started on this machine. The workflow runs the server tests first.
 #
 #   Beta device:  image: rvbcrs/opennova:beta   (then `docker compose pull && up -d`)
-#   Promote a good beta to production:
-#     ./release.sh                                       # normal versioned release (rebuilds), OR
-#     docker buildx imagetools create \                  # retag the SAME tested bytes, no rebuild
-#       -t rvbcrs/opennova:latest rvbcrs/opennova:beta
+#   Promote a good beta to production: ./release.sh
 set -e
-. "$(dirname "$0")/tools/quiet-build.sh"
 cd "$(dirname "$0")"
 
-# ── Pick a node >=18 (vitest needs it; system /usr/local/bin/node may be v8) ──
-need_modern_node() {
-  command -v node >/dev/null 2>&1 || return 1
-  local major; major=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null) || return 1
-  [ "$major" -ge 18 ]
-}
-if ! need_modern_node && [ -d "$HOME/.nvm/versions/node" ]; then
-  NVM_LATEST=$(ls -1 "$HOME/.nvm/versions/node" 2>/dev/null | sed 's/^v//' \
-    | awk -F. '$1 >= 18' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
-  [ -n "$NVM_LATEST" ] && export PATH="$HOME/.nvm/versions/node/v$NVM_LATEST/bin:$PATH" \
-    && echo "Using node v$NVM_LATEST from nvm"
-fi
-need_modern_node || { echo "ERROR: node >=18 required for vitest." >&2; exit 1; }
-
-# Tests gate the beta too — a broken beta on a real device wastes more time than
-# it saves. ponytail: comment out for a code-only beta push when you're in a hurry.
-echo "Running server tests..."
-# Flaky-onderzoek (2026-09-09): elke respons >= 400 in de suite wordt met
-# headers en poortpaar gelogd, zodat een 403/400 "uit het niets" traceerbaar is.
-export TEST_HTTP_TRACE=1 TEST_HTTP_TRACE_FILE="/tmp/novabot-test-http-trace-$(date +%Y%m%d-%H%M%S).log"
-( cd server && npm test --silent )
-
-# Same explicit cache override as release.sh.
-CACHE_ARGS=()
-if [ "${RELEASE_NO_CACHE:-0}" = "1" ] || [ "${RELEASE_NO_CACHE:-}" = "true" ]; then
-  CACHE_ARGS=(--no-cache)
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+SHA=$(git rev-parse HEAD)
+git fetch -q origin "$BRANCH"
+if [ "$SHA" != "$(git rev-parse "origin/$BRANCH")" ]; then
+  echo "ERROR: push $BRANCH first; GitHub builds the beta from what is on GitHub." >&2
+  exit 1
 fi
 
-# Smoke vóór de push: kan de AI-classifier (onnxruntime, glibc) laden in de
-# verse image? Les van 2026-07-19: Alpine/musl brak dit stil — tests draaien
-# met een gestubde classifier op de host en zien zoiets nooit.
-echo "Smoke: classifier-import in verse image (host-arch)..."
-docker buildx build --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
-  --builder multiplatform-builder -t opennova-smoke --load "${CACHE_ARGS[@]}" .
-docker run --rm --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" --network none --workdir /app/server --entrypoint node opennova-smoke \
-  -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke FAALT:',e.message);process.exit(1)})"
-
-echo "Building + pushing rvbcrs/opennova:beta (amd64 + arm64)..."
-# Tijdstempels in de gebouwde lagen normaliseren (buildkit: rewrite-timestamp
-# op de image-output, gestuurd door SOURCE_DATE_EPOCH). Zonder dit kreeg de
-# node_modules-laag bij elke npm ci een nieuwe digest en haalde iedere
-# gebruiker bij iedere release 353 MB opnieuw op, ook als er niets in
-# veranderd was. Zie de deps-stage in de Dockerfile voor de andere helft.
-export SOURCE_DATE_EPOCH=0
-docker buildx build --platform linux/amd64,linux/arm64 \
-  --builder multiplatform-builder \
-  -t "rvbcrs/opennova:beta" \
-  --output type=image,push=true,rewrite-timestamp=true "${CACHE_ARGS[@]}" .
+gh workflow run docker.yml --ref "$BRANCH"
+echo "GitHub builds rvbcrs/opennova:beta from $BRANCH (${SHA:0:8})..."
+RUN_ID=""
+for _ in $(seq 1 30); do
+  sleep 5
+  RUN_ID=$(gh run list --workflow docker.yml --event workflow_dispatch --branch "$BRANCH" --limit 5 \
+    --json databaseId,headSha -q "map(select(.headSha == \"$SHA\")) | .[0].databaseId // empty" 2>/dev/null || true)
+  [ -n "$RUN_ID" ] && break
+done
+if [ -z "$RUN_ID" ]; then
+  echo "ERROR: the beta run did not show up; see https://github.com/rvbcrs/Novabot/actions" >&2
+  exit 1
+fi
+gh run watch "$RUN_ID" --exit-status --interval 30
 
 echo ""
 echo "Pushed rvbcrs/opennova:beta"
-echo "Beta device pulls :beta. Promote when good: ./release.sh (or the imagetools retag in this header)."
+echo "Beta device pulls :beta. Promote when good: ./release.sh"

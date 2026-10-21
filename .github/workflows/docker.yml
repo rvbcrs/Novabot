@@ -1,0 +1,120 @@
+name: docker
+
+# Builds the server image on GitHub and pushes it to Docker Hub
+# (rvbcrs/opennova, where every install, the self-update and the update check
+# look). A release tag (v2026.MMDD.HHMM, pushed by release.sh) publishes
+# latest, the version and beta; a manual run (release-beta.sh) only beta.
+# Nothing else builds an image, so nothing reaches users or beta devices
+# unasked. Needs the repository secret DOCKERHUB_TOKEN (Read & Write).
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: rvbcrs/opennova
+  # Fixed timestamps in the layers (rewrite-timestamp below): without it every
+  # npm ci gave the node_modules layer a new digest and every user pulled
+  # 353 MB again on every release. Also set for the smoke build, so the push
+  # build finds the same cache.
+  SOURCE_DATE_EPOCH: 0
+
+jobs:
+  test:
+    uses: ./.github/workflows/server-test.yml
+
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          # Each platform on its own hardware: arm64 under emulation took
+          # 863 s for npm ci alone.
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: rvbcrs
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: opennova-smoke
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      # Can the AI classifier (onnxruntime, glibc) load in the fresh image?
+      # Alpine/musl once broke it silently; the tests stub the classifier.
+      - name: Smoke
+        run: >-
+          docker run --rm --network none --workdir /app/server --entrypoint node opennova-smoke
+          -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke failed:',e.message);process.exit(1)})"
+
+      # The same build from the cache, pushed by digest only: no tag moves
+      # until both platforms are in (publish).
+      - name: Push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true,rewrite-timestamp=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+
+      - name: Keep the digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.runner }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: rvbcrs
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag
+        working-directory: /tmp/digests
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            # A release is newer than whatever beta had, so beta rides along.
+            tags="-t $IMAGE:latest -t $IMAGE:${GITHUB_REF_NAME#v} -t $IMAGE:beta"
+          else
+            tags="-t $IMAGE:beta"
+          fi
+          docker buildx imagetools create $tags $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:${{ github.ref_type == 'tag' && 'latest' || 'beta' }}"

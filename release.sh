@@ -1,5 +1,6 @@
 #!/bin/bash
-# Release script: run tests, bump patch version, build + push Docker image.
+# Release script: run tests, write the release notes, commit, tag and push.
+# The tag makes GitHub build and push the Docker image; this script waits for it.
 # Tests run FIRST — a failing test aborts before any commit, tag or push.
 set -e
 . "$(dirname "$0")/tools/quiet-build.sh"
@@ -63,59 +64,25 @@ git commit -m "release: v$NEW"
 git tag "v$NEW"
 git push && git push --tags
 
-# Build + push multi-platform Docker image (amd64 + arm64).
-# Keep Docker's layer cache enabled by default; the npm ci dependency layers
-# (server + dashboard) are the expensive part and only rebuild when the
-# lockfiles change.
-CACHE_ARGS=()
-if [ "${RELEASE_NO_CACHE:-0}" = "1" ] || [ "${RELEASE_NO_CACHE:-}" = "true" ]; then
-  CACHE_ARGS=(--no-cache)
-  echo "Building Docker image (amd64 + arm64, cache disabled)..."
-else
-  echo "Building Docker image (amd64 + arm64, cache enabled)..."
-  echo "  Set RELEASE_NO_CACHE=1 for a full rebuild."
+# The image is built on GitHub (.github/workflows/docker.yml), started by the
+# tag just pushed: it runs the tests again, builds amd64 and arm64 on their own
+# hardware, smoke-tests and only then pushes rvbcrs/opennova:latest, :$NEW and
+# :beta. Nothing is built, pushed or started on this machine, so no local
+# container takes over the mowers via mDNS. Wait for it, so a failed build or
+# push shows here.
+echo "GitHub builds the image for v$NEW (.github/workflows/docker.yml)..."
+RUN_ID=""
+for _ in $(seq 1 30); do
+  RUN_ID=$(gh run list --workflow docker.yml --branch "v$NEW" --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+  [ -n "$RUN_ID" ] && break
+  sleep 5
+done
+if [ -z "$RUN_ID" ]; then
+  echo "ERROR: no docker workflow run for v$NEW; see https://github.com/rvbcrs/Novabot/actions" >&2
+  exit 1
 fi
-
-# Smoke vóór de push: kan de AI-classifier (onnxruntime, glibc) laden in de
-# verse image? Les van 2026-07-19: Alpine/musl brak dit stil — tests draaien
-# met een gestubde classifier op de host en zien zoiets nooit.
-echo "Smoke: classifier-import in verse image (host-arch)..."
-docker buildx build --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
-  --builder multiplatform-builder -t opennova-smoke --load "${CACHE_ARGS[@]}" .
-docker run --rm --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" --network none --workdir /app/server --entrypoint node opennova-smoke \
-  -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke FAALT:',e.message);process.exit(1)})"
-
-# Tijdstempels in de gebouwde lagen normaliseren (buildkit: rewrite-timestamp
-# op de image-output, gestuurd door SOURCE_DATE_EPOCH). Zonder dit kreeg de
-# node_modules-laag bij elke npm ci een nieuwe digest en haalde iedere
-# gebruiker bij iedere release 353 MB opnieuw op, ook als er niets in
-# veranderd was. Zie de deps-stage in de Dockerfile voor de andere helft.
-export SOURCE_DATE_EPOCH=0
-docker buildx build --platform linux/amd64,linux/arm64 \
-  --builder multiplatform-builder \
-  -t "rvbcrs/opennova:latest" \
-  -t "rvbcrs/opennova:$NEW" \
-  -t "rvbcrs/opennova:beta" \
-  --output type=image,push=true,rewrite-timestamp=true "${CACHE_ARGS[@]}" .
-# :beta rides along on the same build: a release is by definition newer than
-# whatever the beta channel had, and a beta device that lags behind production
-# only ever produced confusing bug reports. Same bytes, no separate retag.
-
-# Restart local container with new image.
-# NOTE: `docker buildx build --push` (multiplatform) pushes to the registry but
-# does NOT load the image into the local Docker store. Without an explicit pull,
-# `docker compose up -d` would silently reuse the STALE local image and run old
-# code. So pull the freshly-pushed image first.
-echo "Pulling freshly-pushed image into local store..."
-# docker-compose.yml runs rvbcrs/opennova:LATEST, so we MUST refresh the local
-# :latest tag (not just :$NEW) or `up -d` keeps running the stale local :latest.
-docker pull "rvbcrs/opennova:latest" 2>/dev/null || docker compose pull 2>/dev/null
-docker pull "rvbcrs/opennova:$NEW" 2>/dev/null || true
-echo "Restarting local container..."
-docker compose down 2>/dev/null
-docker compose up -d 2>/dev/null
+gh run watch "$RUN_ID" --exit-status --interval 30
 
 echo ""
 echo "Released v$NEW"
-echo "  Docker: rvbcrs/opennova:latest + rvbcrs/opennova:$NEW + rvbcrs/opennova:beta"
-echo "  Local container restarted"
+echo "  Docker: rvbcrs/opennova:latest + rvbcrs/opennova:$NEW + rvbcrs/opennova:beta (built by GitHub)"

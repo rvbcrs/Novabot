@@ -10,6 +10,8 @@ on:
     paths:
       - server/**
       - .github/workflows/server-test.yml
+  # The Docker workflow runs the same tests before it builds an image.
+  workflow_call:
 
 jobs:
   test:
