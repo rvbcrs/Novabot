@@ -59,7 +59,10 @@ afterEach(() => vi.useRealTimers());
 
 describe('checkServerUpdate on the beta channel', () => {
   it('offers an update when Docker Hub holds another :beta digest than the running image', async () => {
-    const { deps, fetched } = fakeDeps({ tag: 'beta', digest: OLDER_DIGEST }, { [HUB_BETA]: hubBeta() });
+    // A manual beta run (release-beta.sh): no version tag carries its digest.
+    const { deps, fetched } = fakeDeps({ tag: 'beta', digest: OLDER_DIGEST }, {
+      [HUB_BETA]: hubBeta(), [HUB_TAGS]: { results: [...rolling, { name: NEWER, digest: OLDER_DIGEST }, OLD] },
+    });
     expect(await checkServerUpdate(deps)).toEqual({
       current: SERVER_VERSION,
       latest: 'beta@4d7efc6e0d33',
@@ -68,8 +71,23 @@ describe('checkServerUpdate on the beta channel', () => {
       latestBuiltAt: BUILT_AT,
       channel: 'beta',
     });
-    // Only the :beta tag is asked for, never the tag list the release path reads.
-    expect(fetched).toEqual([HUB_BETA]);
+    expect(fetched).toEqual([HUB_BETA, HUB_TAGS]);
+  });
+
+  // A release tag pushes :latest, the version and :beta from one build (docker.yml):
+  // that :beta is the release, and the banner can show its notes (2026.1022.1742).
+  it('names the release a newer :beta is, when a version tag carries its digest', async () => {
+    const { deps } = fakeDeps({ tag: 'beta', digest: OLDER_DIGEST }, {
+      [HUB_BETA]: hubBeta(), [HUB_TAGS]: { results: [...rolling, { name: NEWER, digest: HUB_DIGEST }, OLD] },
+    });
+    expect(await checkServerUpdate(deps)).toMatchObject({ updateAvailable: true, channel: 'beta', release: NEWER });
+  });
+
+  it('still offers the beta when the tag list cannot be read', async () => {
+    const { deps } = fakeDeps({ tag: 'beta', digest: OLDER_DIGEST }, { [HUB_BETA]: hubBeta() });
+    const update = await checkServerUpdate(deps);
+    expect(update).toMatchObject({ updateAvailable: true, channel: 'beta' });
+    expect(update).not.toHaveProperty('release');
   });
 
   it('offers nothing once the running image is the one Docker Hub holds for :beta', async () => {
@@ -146,15 +164,16 @@ describe('checkServerUpdate cache', () => {
     vi.setSystemTime(new Date('2026-10-18T12:00:00Z'));
     const { deps, fetched, lookups } = fakeDeps({ tag: 'beta', digest: OLDER_DIGEST }, { [HUB_BETA]: hubBeta() });
 
+    const betaAsks = () => fetched.filter(u => u === HUB_BETA).length;
     const first = await checkServerUpdate(deps);
     vi.setSystemTime(new Date('2026-10-18T12:04:59Z'));
     expect(await checkServerUpdate(deps)).toEqual(first);
-    expect(fetched).toHaveLength(1);
+    expect(betaAsks()).toBe(1);
     expect(lookups()).toBe(1);
 
     vi.setSystemTime(new Date('2026-10-18T12:05:01Z'));
     await checkServerUpdate(deps);
-    expect(fetched).toHaveLength(2);
+    expect(betaAsks()).toBe(2);
     expect(lookups()).toBe(2);
   });
 

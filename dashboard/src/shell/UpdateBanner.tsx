@@ -8,9 +8,9 @@ import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
 const POLL_MS = 10 * 60 * 1000; // match the admin panel; server caches 5 min
 const DISMISS_KEY = 'novabot.update.dismissed';
 
-// channel and latestBuiltAt come from the server for a :beta install; ServerUpdateInfo
-// (api/client.ts) does not list them yet.
-type BannerInfo = ServerUpdateInfo & { channel?: 'beta' | 'release'; latestBuiltAt?: string | null };
+// channel, latestBuiltAt and release come from the server for a :beta install;
+// ServerUpdateInfo (api/client.ts) does not list them yet.
+type BannerInfo = ServerUpdateInfo & { channel?: 'beta' | 'release'; latestBuiltAt?: string | null; release?: string };
 
 /**
  * Mirrors the admin panel's "Server update available" banner: polls Docker Hub
@@ -36,8 +36,8 @@ export function UpdateBanner() {
   const [showNotes, setShowNotes] = useState(false);
 
   // What the update brings, to read before pressing update. A :beta build has
-  // no notes of its own, so only a release asks.
-  const notesFor = info?.updateAvailable && info.channel !== 'beta' && info.latest !== dismissed ? info.latest : null;
+  // no notes of its own unless it is a release (`release`, pushed with :beta).
+  const notesFor = info?.updateAvailable && (info.channel !== 'beta' || info.release) && info.latest !== dismissed ? info.latest : null;
   useEffect(() => {
     if (!notesFor) { setNotes([]); return; }
     let alive = true;

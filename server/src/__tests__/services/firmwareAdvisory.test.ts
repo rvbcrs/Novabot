@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { adviseVersion, customBuildNumber, getManifest, _setFirmwareAdvisoryIo, type Manifest } from '../../services/firmwareAdvisory.js';
 import { otaVersionRepo } from '../../db/repositories/otaVersions.js';
 
@@ -80,5 +80,22 @@ describe('firmware advisory', () => {
     expect(calls).toBe(1);
     _setFirmwareAdvisoryIo({ fetchJson: async () => { throw new Error('offline'); } });
     expect((await getManifest(true))?.firmwares.length).toBe(3);
+  });
+
+  // 2026-10-22: custom-52 was published at 20:30 and a dashboard still offered
+  // custom-50, from a manifest kept six hours.
+  it('reads a newly published build within half an hour', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-10-22T12:00:00Z'));
+      _setFirmwareAdvisoryIo({ reset: true, fetchJson: async () => manifest });
+      await getManifest();
+      const newer = { ...manifest, firmwares: [{ version: 'v6.0.2-custom-52', device_type: 'mower', url: 'https://x/52.deb' }, ...manifest.firmwares] };
+      _setFirmwareAdvisoryIo({ fetchJson: async () => newer });
+      vi.setSystemTime(new Date('2026-10-22T12:30:01Z'));
+      expect((await getManifest())?.firmwares[0].version).toBe('v6.0.2-custom-52');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -238,14 +238,16 @@ dashboardRouter.get('/server-update', async (req: Request, res: Response) => {
 
 // GET /api/dashboard/server-update/release-notes — the notes of the releases
 // between the running version and the newest on Docker Hub, so the banner can
-// show what changes before the user updates. [] on the :beta channel.
+// show what changes before the user updates. On the :beta channel only when
+// the newer :beta is a release (checkServerUpdate's `release`).
 dashboardRouter.get('/server-update/release-notes', async (req: Request, res: Response) => {
   const T = reqT(req);
   try {
     const { checkServerUpdate, fetchJson } = await import('./adminStatus.js');
     const update = await checkServerUpdate();
-    const releases = update.channel === 'release' && update.updateAvailable && update.latest
-      ? await upcomingReleaseNotes(update.latest, fetchJson)
+    const target = update.channel === 'release' ? update.latest : update.release;
+    const releases = update.updateAvailable && target
+      ? await upcomingReleaseNotes(target, fetchJson)
       : [];
     res.json({ current: update.current, latest: update.latest, releases });
   } catch (err) {

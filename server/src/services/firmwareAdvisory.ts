@@ -21,6 +21,9 @@ import { equipmentRepo } from '../db/repositories/equipment.js';
 
 export const MANIFEST_URL = 'https://downloads.ramonvanbruggen.nl/opennova-manifest.json';
 const REFRESH_MS = 6 * 3_600_000;
+// How long a fetched manifest stands: a build published now shows in the
+// banner within this, where six hours kept offering the one before.
+const MANIFEST_TTL_MS = 30 * 60_000;
 
 export interface ManifestEntry {
   version: string;
@@ -73,7 +76,7 @@ export function customBuildNumber(version: string | null | undefined): number | 
 }
 
 export async function getManifest(force = false): Promise<Manifest | null> {
-  if (!force && cache && Date.now() - cache.at < REFRESH_MS) return cache.manifest;
+  if (!force && cache && Date.now() - cache.at < MANIFEST_TTL_MS) return cache.manifest;
   try {
     const raw = await fetcher(MANIFEST_URL) as Partial<Manifest>;
     const manifest: Manifest = { firmwares: raw.firmwares ?? [], withdrawn: raw.withdrawn ?? {} };

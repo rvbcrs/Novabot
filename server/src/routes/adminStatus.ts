@@ -1038,6 +1038,8 @@ export interface ServerUpdatePayload {
   channel: 'beta' | 'release';
   /** Beta only: when Docker Hub last updated :beta, i.e. when the newer build was made. */
   latestBuiltAt?: string | null;
+  /** Beta only: the version tag a newer :beta is (a release pushes both from one build); it has release notes. */
+  release?: string;
   /** Beta only: why no claim is made. The running image has no registry digest to compare, or Docker Hub sent none. */
   reason?: 'digest_unknown' | 'hub_digest_missing';
 }
@@ -1085,15 +1087,28 @@ async function checkBetaUpdate(d: ServerUpdateDeps, runningDigest: string | null
     return { current: SERVER_VERSION, latest: null, updateAvailable: false, lastUpdatedAt: null, latestBuiltAt: null, channel: 'beta', reason: 'hub_digest_missing' };
   }
   const builtAt = hub.last_updated ?? null;
+  const updateAvailable = runningDigest !== null && runningDigest !== hubDigest;
+  const release = updateAvailable ? await releaseWithDigest(d, hubDigest) : null;
   return {
     current: SERVER_VERSION,
     latest: `beta@${hubDigest.replace('sha256:', '').slice(0, 12)}`,
-    updateAvailable: runningDigest !== null && runningDigest !== hubDigest,
+    updateAvailable,
     lastUpdatedAt: builtAt,
     latestBuiltAt: builtAt,
     channel: 'beta',
+    ...(release ? { release } : {}),
     ...(runningDigest === null ? { reason: 'digest_unknown' as const } : {}),
   };
+}
+
+/** The version tag pushed with `digest` (a release also pushes :beta), or null; a failed tag list is no claim. */
+async function releaseWithDigest(d: ServerUpdateDeps, digest: string): Promise<string | null> {
+  try {
+    const data = await d.fetchJson(HUB_TAGS_URL) as { results?: Array<{ name?: string; digest?: string }> };
+    return (data.results ?? []).find(t => t.digest === digest && /^\d{4}\.\d{3,4}\.\d{3,4}$/.test(t.name ?? ''))?.name ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function checkReleaseUpdate(d: ServerUpdateDeps): Promise<ServerUpdatePayload> {
