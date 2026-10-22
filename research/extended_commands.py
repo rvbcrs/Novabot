@@ -5547,12 +5547,49 @@ def _dock_motion_chassis_ok(data, allow_charge_stop=False):
                     not (allow_charge_stop and k in ("warning_charge_stop", "error_charge_stop"))))
 
 
+# Pattern limits while the native docker approaches (GH #158: 0.35 m and 0.7 s
+# stopped normal native corrections). auto_recharge_server keeps the station
+# pose in odom and steers on it (course align: PID up to 0.2 m/s and 0.349
+# rad/s), accepting a pattern pose up to max_time_out (60 s) old; it does not
+# need the pattern in every frame. Ours stay far tighter:
+# - side offset 0.60 m: the start window below accepts 1.40 m x sin(0.40 rad)
+#   = 0.55 m off the docking axis, and the native correction turns the pattern
+#   further aside; the camera's view is the limit beyond that.
+# - age 2.0 s: covers a correction turn hiding the pattern, which is at most
+#   0.4 m of odometry-guided travel at the native 0.2 m/s, well inside the
+#   1.6 m bound around the dock pose that guard() keeps enforcing.
+# - age 4.0 s within 30 cm of the pattern, where it can disappear: the final
+#   align creeps in 2 mm steps and waits 1.5 s to reconfirm charge ("wait
+#   1500ms and reconfirm charge status"), and contact then still has to reach
+#   robot_status (2 Hz). The dock itself bounds any movement there.
+_DOCK_MARKER_LATERAL = .60
+_DOCK_MARKER_MAX_AGE, _DOCK_MARKER_NEAR_AGE = 2., 4.
+# robot_status is 2 Hz; 1.5 s stopped dock motions on a few late messages
+# (GH #158). Same allowance as the 1 Hz localisation status.
+_DOCK_ROBOT_STATUS_MAX_AGE = 2.5
+# stationary() needs a 1.75 s pose window without driving samples plus a 1 s
+# hold, about 2.5-3 s at 2 Hz once the wheels stand still; 3 s timed out on a
+# chassis ramp-down or one late map pose (GH #158). The mower is held at zero
+# twist and guarded all the while, so the longer window adds no motion.
+_DOCK_STOP_CONFIRM_S = 6
+# Charging contact raises both charge_stop flags (chassis_incident, every 2 s)
+# and merged_work_status 4 (robot_status, 2 Hz). The two arrive in either
+# order, up to one chassis period plus a late message apart (GH #158).
+_DOCK_CONTACT_WINDOW_S = 3.
+
+
+def _dock_charge_stop_expected(now, contact_at, flags_since):
+    """While docking, charge_stop flags belong to contact seen within the window, before or after."""
+    return ((contact_at is not None and 0 <= now - contact_at <= _DOCK_CONTACT_WINDOW_S) or
+            (flags_since is not None and 0 <= now - flags_since <= _DOCK_CONTACT_WINDOW_S))
+
+
 def _dock_marker_forward(marker):
     """Bound the visual approach by the front pattern, never by a possibly shifted map."""
     if marker["header"].get("frame_id") != "aruco_tag":
         raise ValueError("unexpected dock pattern frame")
     point, _ = _marker_inverse(_marker_pose(marker["pose"]))
-    if not (0 < point[0] <= 1.9 and abs(point[1]) <= .35 and abs(point[2]) <= .5):
+    if not (0 < point[0] <= 1.9 and abs(point[1]) <= _DOCK_MARKER_LATERAL and abs(point[2]) <= .5):
         raise ValueError("dock pattern is not close and in front of the mower")
     return point[0]
 
@@ -5652,6 +5689,10 @@ def handle_dock_measurement_move(params, respond):
     result_future = None
     native_code = None
     native_finished_at = None
+    # Docking only: when robot_status last showed contact and since when the
+    # chassis flags charge_stop (monotonic seconds).
+    contact_at = None
+    charge_stop_since = None
 
     def record(topic, msg):
         now, data = time.monotonic(), message_to_ordereddict(msg)
@@ -5674,28 +5715,43 @@ def handle_dock_measurement_move(params, respond):
         return (float(raw["position"]["x"]), float(raw["position"]["y"]), _marker_yaw(q))
 
     def guard(docking=False):
+        nonlocal contact_at, charge_stop_since
         _dock_motion_lease(state)
         if "/cloud_move_cmd" in latest:
             raise ValueError("manual control interrupted the measurement")
-        robot = read("/robot_decision/robot_status", 1.5)
+        robot = read("/robot_decision/robot_status", _DOCK_ROBOT_STATUS_MAX_AGE)
         if (int(robot["merged_work_status"]) not in ((0, 2, 4, 5) if docking else (0, 4, 5)) or
                 int(robot["error_status"]) not in (0, 8, 113) or int(robot["battery_power"]) < 30):
             raise ValueError("robot is busy, low on battery or in error")
         # Charging contact asserts both charge_stop flags on a healthy docked
-        # mower. Permit them only for departure or confirmed docking contact.
-        dock_contact = int(robot["merged_work_status"]) == 4
-        if not _dock_motion_chassis_ok(read("/chassis_incident", 3),
-                                       (action == "reverse" and from_dock) or (docking and dock_contact)):
+        # mower. Permit them only for departure or, while docking, docking
+        # contact seen within the contact window on either side of the flags.
+        chassis = read("/chassis_incident", 3)
+        allow_charge_stop = action == "reverse" and from_dock
+        if docking:
+            now = time.monotonic()
+            if int(robot["merged_work_status"]) == 4:
+                contact_at = latest["/robot_decision/robot_status"][0]
+            if chassis.get("warning_charge_stop") is True or chassis.get("error_charge_stop") is True:
+                charge_stop_since = charge_stop_since or now
+            else:
+                charge_stop_since = None
+            allow_charge_stop = _dock_charge_stop_expected(now, contact_at, charge_stop_since)
+        if not _dock_motion_chassis_ok(chassis, allow_charge_stop):
             raise ValueError("chassis stop or fault")
         rtk = read("/bestpos_parsed_data", 1.5)
         age = float(rtk.get("diff_age", float("inf")))
         quality = int(rtk["qual"])
         # The first bounded, body-axis departure initializes heading. Float is
         # acceptable there; every later movement and measurement needs Fixed.
-        if (quality not in ((4, 5) if action == "reverse" and from_dock else (4,)) or
-                not math.isfinite(age) or not 0 <= age <= 3 or
-                int(read("/robot_combination_localization/combination_status", COMBINATION_STATUS_MAX_AGE)["status"]) != 200):
-            raise ValueError("RTK corrections or localization lost during motion")
+        # Three reasons, not one: each has its own next step for the user.
+        if quality not in ((4, 5) if action == "reverse" and from_dock else (4,)):
+            raise ValueError("RTK not Fixed during motion (quality %d)" % quality)
+        if not math.isfinite(age) or not 0 <= age <= 3:
+            raise ValueError("RTK corrections stale during motion (age %.1f s)" % age)
+        status = int(read("/robot_combination_localization/combination_status", COMBINATION_STATUS_MAX_AGE)["status"])
+        if status != 200:
+            raise ValueError("localization status not 200 during motion (status %d)" % status)
         odom = read("/robot_combination_localization/odom", .5)
         stamp = _marker_stamp(odom)
         if not 0 <= time.time() - stamp <= .5:
@@ -5843,13 +5899,22 @@ def handle_dock_measurement_move(params, respond):
             spin(.1)
             detector_attempted = True
             request = SetBool.Request(); request.data = True
+            enabled_at = time.time()
             service(detector, request)
+            # Judge a pattern seen after the detector was enabled, not the
+            # first sample on the topic: that can carry an older stamp and
+            # stopped the return before it began (GH #158). Standing still.
             deadline = time.monotonic() + 3
-            while "/aruco/pose" not in latest and time.monotonic() < deadline:
-                spin(); guard()
-            marker = read("/aruco/pose", .5)
-            if not 0 <= time.time() - _marker_stamp(marker) <= .5:
-                raise ValueError("no fresh dock pattern before docking")
+            marker = None
+            while marker is None:
+                entry = latest.get("/aruco/pose")
+                if (entry and 0 <= time.monotonic() - entry[0] <= .5 and
+                        enabled_at <= _marker_stamp(entry[1]) and 0 <= time.time() - _marker_stamp(entry[1]) <= .5):
+                    marker = entry[1]
+                elif time.monotonic() >= deadline:
+                    raise ValueError("no fresh dock pattern before docking")
+                else:
+                    spin(); guard()
             last_marker_forward = _dock_marker_forward(marker)
             if not docker.wait_for_server(timeout_sec=1):
                 raise ValueError("visual docking action unavailable")
@@ -5872,7 +5937,7 @@ def handle_dock_measurement_move(params, respond):
         # Confirm a real stop (reverse) or stable contact (dock) within a bounded
         # visual approach (35s live on 2026-09-26). Docking is never inferred from
         # the native result alone.
-        deadline = time.monotonic() + (75 if action == "dock" else 3)
+        deadline = time.monotonic() + (75 if action == "dock" else _DOCK_STOP_CONFIRM_S)
         stopped_at = None
         while time.monotonic() < deadline:
             spin()
@@ -5892,9 +5957,9 @@ def handle_dock_measurement_move(params, respond):
                         raise ValueError("visual docking ended without charging contact (native code %s)" % native_code)
                 # The pattern can disappear in the final 15 cm; allow only a
                 # short final contact attempt there, never a blind search.
-                near = last_marker_forward < .3
-                marker = read("/aruco/pose", 2 if near else .7)
-                if not 0 <= time.time() - _marker_stamp(marker) <= (2 if near else .7):
+                max_age = _DOCK_MARKER_NEAR_AGE if last_marker_forward < .3 else _DOCK_MARKER_MAX_AGE
+                marker = read("/aruco/pose", max_age)
+                if not 0 <= time.time() - _marker_stamp(marker) <= max_age:
                     raise ValueError("dock pattern lost")
                 last_marker_forward = _dock_marker_forward(marker)
             contact = int(robot["merged_work_status"]) == 4

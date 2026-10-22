@@ -71,7 +71,8 @@ class MotionTest(unittest.TestCase):
         if start is None: start = (0. if from_dock else -.5 if action == 'reverse' else -1.1, 0., 0.)
         if charge_pose == 'auto': charge_pose = {'x': 0., 'y': 0., 'yaw': 0.} if action == 'dock' else None
         if distance is None: distance = (1. if from_dock else .2) if action == 'reverse' else 0
-        sim = types.SimpleNamespace(now=100., next_map=100., x=start[0], y=start[1], yaw=start[2], velocity=0., homing=False, native_done=False, native_code=None, detector=False, calls=[], goals=[], published=[], lights=[], destroyed=False, service_fault_at=float('inf'))
+        sim = types.SimpleNamespace(now=100., next_map=100., x=start[0], y=start[1], yaw=start[2], velocity=0., homing=False, native_done=False, native_code=None, detector=False, calls=[], goals=[], published=[], lights=[], destroyed=False, service_fault_at=float('inf'),
+                                    coast_until=0., coast_speed=0., docked_at=None, detector_at=None)
         subscriptions = {}
         state = {'created': 100., 'heartbeat': 100., 'cancelled': False, 'used': False}
         c._DOCK_MOTIONS[ID] = state
@@ -91,7 +92,9 @@ class MotionTest(unittest.TestCase):
             def call_async(self, req):
                 sim.calls.append(self.name)
                 if self.name == CANCEL: sim.homing = False
-                if self.name == '/enable_aruco_localization': sim.detector = req.data
+                if self.name == '/enable_aruco_localization':
+                    sim.detector = req.data
+                    if req.data: sim.detector_at = sim.now
                 refused = self.name == CANCEL and failure == 'cancel-refused'
                 return types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(success=True, return_code=1 if refused else 0))
         class AutoCharging:
@@ -119,6 +122,9 @@ class MotionTest(unittest.TestCase):
             def get_subscription_count(self): return 0 if self.topic == '/led_set' and failure == 'lamp-unavailable' else 1
             def publish(self, msg):
                 if self.topic == '/cmd_vel':
+                    # The chassis ramps down and the fused pose trails the wheels.
+                    if failure == 'coast' and msg.linear.x == 0 and sim.velocity < 0:
+                        sim.coast_until, sim.coast_speed = sim.now + .6, sim.velocity
                     sim.velocity = msg.linear.x
                     sim.published.append(sim.velocity)
                 if self.topic == '/led_set': sim.lights.append(msg['data'])
@@ -142,11 +148,21 @@ class MotionTest(unittest.TestCase):
                 speed = .15 if sim.homing else sim.velocity
                 if failure == 'moving-at-start' or (failure == 'creeping' and speed == 0 and any(v < 0 for v in sim.published)):
                     speed = -.03
+                if failure == 'coast' and sim.now < sim.coast_until:
+                    speed = sim.coast_speed
                 if failure != 'stalled': sim.x = min(0., sim.x + speed * .05)
                 if sim.x == 0 and sim.homing:
                     sim.homing = False; speed = 0
                     sim.native_done = True
+                    sim.docked_at = sim.now
                     sim.native_code = 12 if failure in ('no-contact', 'native-fail-after-contact') else 100
+                contact = sim.x > -.01 and failure != 'no-contact'
+                # robot_decision can report the charging state after the chassis
+                # flags (native "wait 1500ms and reconfirm charge status").
+                if failure in ('flags-first', 'final-gap'):
+                    contact = sim.docked_at is not None and sim.now >= sim.docked_at + 1.5
+                if failure == 'contact-flicker' and sim.docked_at is not None and sim.docked_at + .3 <= sim.now < sim.docked_at + .8:
+                    contact = False
                 if failure == 'native-fail-early' and sim.homing and sim.x < -.6:
                     sim.homing = False; speed = 0; sim.native_done = True; sim.native_code = 3
                 stamp_ns = round((1000 + sim.now - .001) * 1e9)
@@ -159,20 +175,31 @@ class MotionTest(unittest.TestCase):
                     p['position']['x'] += .15
                     p['orientation'].update(z=math.sin(.4 / 2), w=math.cos(.4 / 2))
                 chassis = {k: False for k in ('warning_push_button_stop', 'error_push_button_stop', 'warning_collision_stop', 'error_collision_stop', 'warning_upraise_stop', 'error_upraise_stop', 'error_turn_over', 'error_lora', 'warning_lora_rtk_data_overtime')}
-                if from_dock or (action == 'dock' and sim.x == 0.) or failure == 'charge-fault':
+                if from_dock or (action == 'dock' and sim.x == 0. and (failure != 'final-gap' or contact)) or failure == 'charge-fault':
                     chassis.update(warning_charge_stop=True, error_charge_stop=True)
                 if failure == 'bumper' and sim.now > 103: chassis['error_collision_stop'] = True
                 values = {
                     '/robot_decision/map_position': p,
                     '/robot_combination_localization/odom': {'header': h, 'twist': {'twist': {'linear': {'x': 0. if failure in ('moving-at-start', 'creeping') else speed, 'y': 0., 'z': 0.}, 'angular': {'x': 0., 'y': 0., 'z': 0.}}}},
-                    '/robot_decision/robot_status': {'merged_work_status': 4 if sim.x > -.01 and failure != 'no-contact' else 2 if sim.homing else 0, 'error_status': 0, 'battery_power': 80},
+                    '/robot_decision/robot_status': {'merged_work_status': 4 if contact else 2 if sim.homing else 0, 'error_status': 0, 'battery_power': 80},
                     '/bestpos_parsed_data': {'qual': 5 if failure == 'float' else 1 if (failure == 'rtk' and sim.now > 103) or (failure == 'rtk-during-goal' and sim.now > sim.service_fault_at) else 4,
                                              'diff_age': 4. if failure == 'rtk-age' and sim.now > 103 else 1.},
                     '/chassis_incident': chassis,
-                    '/robot_combination_localization/combination_status': {'status': 200},
+                    '/robot_combination_localization/combination_status': {'status': 100 if failure == 'localization' and sim.now > 103 else 200},
                 }
-                if sim.detector and failure != 'missing-pattern' and not (failure in ('pattern-lost', 'cancel-refused') and sim.now > 104):
-                    values['/aruco/pose'] = {'header': dict(h, frame_id='aruco_tag'), 'pose': {'position': {'x': -(2.5 if failure == 'distant-pattern' else .1 - sim.x), 'y': 0., 'z': -.15}, 'orientation': {'x': 0., 'y': 0., 'z': 0., 'w': 1.}}}
+                # One late robot_status (2 s, still inside 2.5 s) and one that stays away.
+                if (failure == 'late-status' and 102 <= sim.now < 104) or (failure == 'lost-status' and 102 <= sim.now < 105.2):
+                    values.pop('/robot_decision/robot_status')
+                pattern_gap = ((failure == 'pattern-gap' and 103 <= sim.now < 104.5) or
+                               (failure == 'final-gap' and sim.x > -.15))
+                if sim.detector and failure != 'missing-pattern' and not pattern_gap and not (failure in ('pattern-lost', 'cancel-refused') and sim.now > 104):
+                    # A native lateral correction swings the pattern to the side for a moment.
+                    lateral = {'native-correction': .5, 'native-overcorrection': .7}.get(failure, 0.) if 103 <= sim.now < 104 else 0.
+                    header = dict(h, frame_id='aruco_tag')
+                    if failure == 'stale-pattern' or (failure == 'stale-pattern-first' and sim.now < sim.detector_at + .5):
+                        old_ns = stamp_ns - 2 * 10**9
+                        header['stamp'] = {'sec': old_ns // 10**9, 'nanosec': old_ns % 10**9}
+                    values['/aruco/pose'] = {'header': header, 'pose': {'position': {'x': -(2.5 if failure == 'distant-pattern' else .1 - sim.x), 'y': -lateral, 'z': -.15}, 'orientation': {'x': 0., 'y': 0., 'z': 0., 'w': 1.}}}
                 if failure == 'manual' and sim.now > 103: values['/cloud_move_cmd'] = {}
                 if failure == 'stale' and sim.now > 103: values.pop('/robot_combination_localization/odom')
                 if sim.now < sim.next_map:
@@ -305,8 +332,78 @@ class MotionTest(unittest.TestCase):
     def test_dock_goal_reports_first_guard_failure(self):
         sim, results = self.run_motion('dock', 'rtk-during-goal', recovery=True)
         self.assertFalse(results)
-        self.assertEqual(sim.error, 'RTK corrections or localization lost during motion')
+        self.assertEqual(sim.error, 'RTK not Fixed during motion (quality 1)')
         self.assertFalse(sim.homing)
+
+    def test_each_lost_rtk_or_localization_cause_has_its_own_reason(self):
+        # One combined reason sent users after RTK when the localization was
+        # re-initialising, and the other way round (GH #158).
+        for failure, reason in (('rtk', 'RTK not Fixed during motion (quality 1)'),
+                                ('rtk-age', 'RTK corrections stale during motion (age 4.0 s)'),
+                                ('localization', 'localization status not 200 during motion (status 100)')):
+            with self.subTest(failure=failure):
+                sim, results = self.run_motion(failure=failure)
+                self.assertFalse(results)
+                self.assertEqual(sim.error, reason)
+
+    def test_stop_window_after_the_reverse_outlasts_a_chassis_ramp_down(self):
+        # stationary() needs a 1.75 s pose window free of driving samples plus a
+        # 1 s hold: a 0.6 s ramp-down left nothing of the 3 s window (GH #158).
+        sim, results = self.run_motion(failure='coast')
+        self.assertEqual(results[0]['result'] if results else getattr(sim, 'error', None), 0)
+        self.assertTrue(all(v in (0., -.08) for v in sim.published))
+
+    def test_robot_status_may_arrive_late_but_not_stay_away(self):
+        sim, results = self.run_motion(failure='late-status')
+        self.assertEqual(results[0]['result'] if results else getattr(sim, 'error', None), 0)
+        sim, results = self.run_motion(failure='lost-status')
+        self.assertFalse(results)
+        self.assertEqual(sim.error, 'motion telemetry stale: /robot_decision/robot_status')
+
+    def test_pattern_bounds_cover_the_start_window(self):
+        def marker(forward, lateral):
+            return {'header': {'frame_id': 'aruco_tag'}, 'pose': {'position': {'x': -forward, 'y': -lateral, 'z': -.15},
+                                                                  'orientation': {'x': 0., 'y': 0., 'z': 0., 'w': 1.}}}
+        # 1.40 m x sin(0.40 rad) = 0.55 m: the side offset the start window itself accepts.
+        self.assertAlmostEqual(c._dock_marker_forward(marker(1.5, .55)), 1.5)
+        self.assertAlmostEqual(c._dock_marker_forward(marker(.4, -.55)), .4)
+        for forward, lateral in ((1.5, .65), (1.95, 0.), (-.1, 0.)):
+            with self.subTest(forward=forward, lateral=lateral), self.assertRaises(ValueError):
+                c._dock_marker_forward(marker(forward, lateral))
+
+    def test_native_correction_may_swing_or_hide_the_pattern_briefly(self):
+        # Normal native docking steers the pattern aside or out of view for a
+        # moment and recovers (GH #158); the guard must let it.
+        for failure in ('native-correction', 'pattern-gap', 'final-gap'):
+            with self.subTest(failure=failure):
+                sim, results = self.run_motion('dock', failure)
+                self.assertTrue(results and results[0]['docked'], getattr(sim, 'error', None))
+        for failure in ('native-overcorrection', 'pattern-lost'):
+            with self.subTest(failure=failure):
+                sim, results = self.run_motion('dock', failure)
+                self.assertFalse(results)
+                self.assertFalse(sim.homing)
+                self.assertIn(CANCEL, sim.calls)
+
+    def test_charge_stop_belongs_to_contact_seen_just_before_or_after(self):
+        # chassis_incident (every 2 s) and robot_status (2 Hz) report one
+        # contact in either order (GH #158).
+        for failure in ('flags-first', 'contact-flicker'):
+            with self.subTest(failure=failure):
+                sim, results = self.run_motion('dock', failure)
+                self.assertTrue(results and results[0]['docked'], getattr(sim, 'error', None))
+        # Without contact the flags are a stop again once the window has passed.
+        sim, results = self.run_motion('dock', 'no-contact')
+        self.assertFalse(results)
+        self.assertEqual(sim.error, 'chassis stop or fault')
+
+    def test_docking_waits_for_a_pattern_seen_after_the_detector_was_enabled(self):
+        sim, results = self.run_motion('dock', 'stale-pattern-first')
+        self.assertTrue(results and results[0]['docked'], getattr(sim, 'error', None))
+        sim, results = self.run_motion('dock', 'stale-pattern')
+        self.assertFalse(results)
+        self.assertEqual(sim.error, 'no fresh dock pattern before docking')
+        self.assertNotIn(GOAL, sim.calls)
 
     def test_failed_cancellation_keeps_the_original_cause_in_the_error(self):
         # 2026-09-30 20:11: a refused cancel inside `finally` replaced the guard
