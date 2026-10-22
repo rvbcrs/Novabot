@@ -203,6 +203,10 @@ class FakeDriver:
         self._status = (mzd.TASK_MODE_COVERAGE, 0)
         return True
 
+    def cancel_coverage_goals(self):
+        self.calls.append(("cancel_coverage_goals",))
+        return True
+
     def recharge_active(self, timeout=4.0):
         return False
 
@@ -232,10 +236,13 @@ def test_without_channel_the_firmware_runs_the_whole_task():
 def test_a_parked_task_is_cleared_before_the_start():
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
-    # USER_STOP left behind by an earlier attempt: start_cov would be refused.
+    # USER_STOP left behind by an earlier attempt: start_cov would be refused,
+    # by robot_decision until the quit and by coverage_planner_server (error 125)
+    # until its paused coverage goal is cancelled.
     drv = FakeDriver(localized=None, status=(mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP))
     assert mzd.do_mow(drv, "map6", 1000000, 6, None) == 0
-    assert drv.calls == [("reload_map",), ("quit_mapping_mode",), ("start_cov", 1000000)]
+    assert drv.calls == [("reload_map",), ("quit_mapping_mode",), ("cancel_coverage_goals",),
+                         ("start_cov", 1000000)]
 
 
 def test_nothing_parked_means_no_quit_call():
@@ -387,7 +394,7 @@ class EdgeDriver(FakeDriver):
     def log_applied_params(self, names):
         pass
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
         self.calls.append(("nav_to",))
         self._loc = (x, y)
         return True, ""

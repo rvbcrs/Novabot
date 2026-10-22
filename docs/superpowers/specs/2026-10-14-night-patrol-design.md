@@ -71,6 +71,18 @@ So there is nothing to finish. We build it from parts that do work:
    a recharge, and on its way out it cancels its own nav2 goal. The stop cleanup
    cancels only the goals accepted up to the stop (CancelGoal stamp), so the docking
    goal that follows survives it.
+   Before its departure (on the dock nothing drives, so any is a leftover), after
+   its handover and after clearing a parked task the drive also cancels the
+   `navigate_through_coverage_paths` goals accepted so far (CancelGoal stamp, now):
+   `quit_mapping_mode` clears robot_decision but leaves that goal paused in
+   coverage_planner_server, and every coverage start after it was refused with
+   error 125 until a refusal cancelled it (Walter, 2026-10-21: every departure left
+   one for hours, the round of 21:30 never left the dock).
+   Checkpoints, settle legs and the approach to a channel end once the mower is
+   within `ARRIVE_M` (0.35 m) of the goal: the drive cancels the goal itself. nav2's
+   own end asks for 0.1 m and a yaw; it ran 15-23 cm past the goal and then spun a
+   wheel for minutes trying to turn there (Walter, 2026-10-21, at the channel
+   map0->map1 and at a checkpoint). The mower looks in the direction it drove.
 6. **Headlight is set by the server** (`novabot/cmd/<SN>` `{led_set}`) on
    `patrolling`, and switched off (0) on every terminal phase before go_to_charge,
    so the patrol's bright light never reaches the dock marker; the mower then

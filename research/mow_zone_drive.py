@@ -154,6 +154,16 @@ def _dist(a, b):
 # te kunnen raken, daarboven kan er van alles tussen staan.
 LEAD_IN_MAX_M = 0.5
 
+# Within this distance of a nav_to goal the drive ends the goal itself
+# (nav_to's arrive_m). nav2 ran 15-23 cm past a goal at 0.5 m/s and then tried
+# to reach the goal's yaw (general_goal_checker 0.1 rad) on the spot: one wheel
+# spun for minutes while GPS stood still, and the odometry kept the progress
+# checker happy (Walter, LFIN2231000367, 2026-10-21: 03:37 and 22:07 at the
+# channel map0->map1, 19:32 at a checkpoint). Below
+# LEAD_IN_MAX_M, so a channel's lead-in bridges what is left.
+ARRIVE_M = 0.35
+ARRIVE_POLL_S = 0.5
+
 # Afstand tussen opeenvolgende punten in het pad dat naar FollowPath gaat. Een
 # opgenomen kanaal is vaak maar twee punten over een paar meter, en Pure Pursuit
 # heeft daar niets om op te sturen: hij pakt een mikpunt ver vooruit, schiet
@@ -745,8 +755,10 @@ class Driver:
                 weg.append((x, y))
         return weg, notitie or "%d cellen bereikbaar" % sum(seen)
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
-        """Let the planner drive the short approach to a point.
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
+        """Let the planner drive the short approach to a point. With `arrive_m`
+        the drive ends the goal itself once the mower is that close, (True,
+        "arrived"): nav2's own end asks for 0.1 m and the goal's yaw (ARRIVE_M).
 
         A recorded channel starts where the mower once crossed between two
         zones, not where it happens to stand, so something has to cover the gap.
@@ -773,7 +785,16 @@ class Driver:
             self._drop_goal()
             return False, "nav_to_pose goal rejected"
         res_fut = gh.get_result_async()
-        rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=timeout)
+        if arrive_m is None:
+            rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=timeout)
+        else:
+            deadline = time.monotonic() + timeout
+            while not res_fut.done() and time.monotonic() < deadline:
+                rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=ARRIVE_POLL_S)
+                pos = None if res_fut.done() else self.robot_xy(timeout=1.0)
+                if pos is not None and math.hypot(pos[0] - x, pos[1] - y) <= arrive_m:
+                    self._drop_goal()
+                    return True, "arrived"
         r = res_fut.result()
         if r is None:
             self._drop_goal()
@@ -999,6 +1020,25 @@ class Driver:
         rclpy.spin_until_future_complete(self.node, fut, timeout_sec=reply)
         return fut.done()
 
+    def cancel_coverage_goals(self, timeout=5.0):
+        """Cancel every /navigate_through_coverage_paths goal accepted up to now.
+
+        A stopped task stays parked in coverage_planner_server after
+        quit_mapping_mode cleared robot_decision: its coverage goal waits there
+        (REQUEST_STOP) for hours, and every coverage start after it is refused
+        with "Can not planning when action working", error 125 (Walter,
+        LFIN2231000367, 2026-10-21: the patrol of 21:30 never left the dock, the
+        goal of the 19:30 departure was still running). robot_decision only
+        cancels it itself after such a refusal. A zero goal id with a stamp
+        cancels the goals accepted at or before the stamp (ROS 2 CancelGoal),
+        nothing that starts later. True when the server answered."""
+        from action_msgs.srv import CancelGoal   # as in extended_commands; the test stubs lack action_msgs.srv
+        req = CancelGoal.Request()
+        req.goal_info.goal_id.uuid = [0] * 16
+        req.goal_info.stamp.sec, req.goal_info.stamp.nanosec = divmod(time.time_ns(), 10 ** 9)
+        return self._call(CancelGoal, "/navigate_through_coverage_paths/_action/cancel_goal",
+                          req, timeout=timeout)
+
     def stop_task(self, timeout=None):
         """Stop a running coverage task (SetBool data:true; false means CONTINUE).
         `timeout` as for quit_mapping_mode."""
@@ -1092,6 +1132,10 @@ class Driver:
         docked_before = self.docked()
         on_pile = bool(docked_before or (before and anchor and _dist(before, anchor) <= ON_PILE_M))
         requested = handed_over = stop_sent = started = False
+        # On the dock nothing drives, so a coverage goal still there is a
+        # leftover (an older build, a killed drive) that would refuse this start
+        # with error 125 (cancel_coverage_goals).
+        log(f"leftover coverage goal cancelled: {self.cancel_coverage_goals()}")
         try:
             requested = True   # a kill during the request itself may still start the task
             if not self.start_cov(map_ids, cutterhigh, direction):
@@ -1148,6 +1192,8 @@ class Driver:
                 self.quit_mapping_mode()
                 st = self.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)
                 log(f"after quit_mapping_mode: status={st}")
+            if stop_sent:
+                log(f"departure's coverage goal cancelled: {self.cancel_coverage_goals()}")
             handed_over = True
         finally:
             if requested and not handed_over:
@@ -1655,6 +1701,7 @@ def clear_parked_task(drv):
     log(f"parked task found (status={st}): clearing it first")
     drv.quit_mapping_mode()
     log(f"after quit_mapping_mode: status={drv.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)}")
+    log(f"parked coverage goal cancelled: {drv.cancel_coverage_goals()}")
 
 
 def _drive_channel_hop(drv, base, fname, robot, hop, total):
@@ -1682,7 +1729,7 @@ def _drive_channel_hop(drv, base, fname, robot, hop, total):
             f"{pts[0]}, laat de planner dat doen")
         aankomst = (math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0])
                     if len(pts) > 1 else None)
-        ok, msg = drv.nav_to(pts[0][0], pts[0][1], yaw=aankomst)
+        ok, msg = drv.nav_to(pts[0][0], pts[0][1], yaw=aankomst, arrive_m=ARRIVE_M)
         if not ok:
             log(f"transit hop {hop + 1}/{total} aanloop faalde: {msg}")
             return False, msg, robot
@@ -1719,7 +1766,7 @@ def _drive_hops(drv, base, robot, hops):
                     ok, msg = False, "no_entry_point"
                 else:
                     log(f"hop {i + 1}/{len(hops)}: into touching {zone} at {target}")
-                    ok, msg = drv.nav_to(target[0], target[1])
+                    ok, msg = drv.nav_to(target[0], target[1], arrive_m=ARRIVE_M)
                     robot = drv.robot_xy() or target
             if not ok:
                 return False, msg, robot
@@ -2275,7 +2322,7 @@ def _patrol_settle(drv, zone, robot):
             log("patrol: no room for a settle leg; driving the checkpoints on this frame")
             return True, robot
         log(f"patrol: settle leg {leg + 1}/{PATROL_SETTLE_LEGS} to ({target[0]:.2f},{target[1]:.2f})")
-        ok, msg = drv.nav_to(target[0], target[1], timeout=PATROL_NAV_TIMEOUT_S)
+        ok, msg = drv.nav_to(target[0], target[1], timeout=PATROL_NAV_TIMEOUT_S, arrive_m=ARRIVE_M)
         robot = drv.robot_xy() or (target if ok else robot)
         if not ok:
             log(f"patrol: settle leg failed ({msg})")
@@ -2313,7 +2360,7 @@ def _patrol_drive_to(drv, poly, seq, x, y):
     occupied cell) and gets one retry PATROL_INWARD_M further into the zone
     (_inward_point), when that point still lies in it."""
     t0 = time.monotonic()
-    ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S)
+    ok, msg = drv.nav_to(x, y, timeout=PATROL_NAV_TIMEOUT_S, arrive_m=ARRIVE_M)
     if ok:
         return True, "", (x, y)
     took = time.monotonic() - t0
@@ -2324,7 +2371,7 @@ def _patrol_drive_to(drv, poly, seq, x, y):
         return False, f"{msg} at once; {PATROL_INWARD_M} m further in is outside the zone", (x, y)
     log(f"patrol: checkpoint {seq} ({x:.2f},{y:.2f}) refused at once ({msg}), "
         f"trying {PATROL_INWARD_M} m further in at ({inward[0]:.2f},{inward[1]:.2f})")
-    ok, retry = drv.nav_to(inward[0], inward[1], timeout=PATROL_NAV_TIMEOUT_S)
+    ok, retry = drv.nav_to(inward[0], inward[1], timeout=PATROL_NAV_TIMEOUT_S, arrive_m=ARRIVE_M)
     if ok:
         return True, "", inward
     return False, f"{msg} at once; {PATROL_INWARD_M} m further in: {retry}", inward

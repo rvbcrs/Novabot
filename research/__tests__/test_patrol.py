@@ -257,6 +257,7 @@ SQ6 = [(30, 0), (40, 0), (40, 10), (30, 10)]    # elsewhere
 class HopDriver:
     def __init__(self, fail_at=None):
         self.calls, self.params = [], []
+        self.arrive = []   # arrive_m of every nav_to
         self._loc = (5.0, 5.0)
         self.fail_at = fail_at
 
@@ -269,8 +270,9 @@ class HopDriver:
     def robot_xy(self, timeout=6.0):
         return self._loc
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
         self.calls.append(("nav_to", round(x, 2), round(y, 2)))
+        self.arrive.append(arrive_m)
         if self.fail_at == "nav_to":
             return False, "nav_to_pose_status_6"
         self._loc = (x, y)
@@ -309,8 +311,8 @@ class StaleAfterApproach(HopDriver):
     def robot_xy(self, timeout=6.0):
         return None if self.stale else self._loc
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
-        result = super().nav_to(x, y, yaw, timeout)
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
+        result = super().nav_to(x, y, yaw, timeout, arrive_m)
         self.stale = True
         return result
 
@@ -407,11 +409,11 @@ class PatrolDriver(HopDriver):
         self._loc = (1.0, 1.0)
         return self._loc
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
         if (x, y) in self.unreachable:
             self.calls.append(("nav_to_fail", x, y))
             return False, "nav_to_pose_status_6"
-        return super().nav_to(x, y, yaw, timeout)
+        return super().nav_to(x, y, yaw, timeout, arrive_m)
 
     def ensure_perception(self):
         return True
@@ -464,6 +466,20 @@ def test_patrol_settles_the_frame_before_the_first_checkpoint():
     assert len(uploads) == 1
 
 
+def test_patrol_and_transit_goals_end_within_reach():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = SettleDriver([1.3, 0.2], merged=mzd.MERGED_CHARGING)
+    run_patrol(drv, [{"zone": "map0", "points": [[7, 7]]}])
+    assert drv.arrive == [mzd.ARRIVE_M] * 2, drv.arrive               # the settle leg, the checkpoint
+    with_maps({"map0_work.csv": SQ0, "map1_work.csv": SQ1, "map6_work.csv": SQ6,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    hop = HopDriver()
+    mzd._drive_hops(hop, mzd._csv_base(), (5.0, 5.0), [("touch", None, "map1")])
+    hop._loc = (5.0, 5.0)
+    mzd._drive_hops(hop, mzd._csv_base(), (5.0, 5.0), [("channel", "map0tomap6_0_unicom.csv", "map6")])
+    assert hop.arrive == [mzd.ARRIVE_M] * 2, hop.arrive               # the touch step, the lead-in
+
+
 def test_patrol_ends_when_the_frame_never_settles():
     with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
     drv = SettleDriver([1.3], merged=mzd.MERGED_CHARGING)
@@ -510,9 +526,9 @@ class StalePatrolDriver(PatrolDriver):
     def robot_xy(self, timeout=6.0):
         return None if self.driven else self._loc
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
         self.driven = True
-        return super().nav_to(x, y, yaw, timeout)
+        return super().nav_to(x, y, yaw, timeout, arrive_m)
 
 
 def test_a_stale_pose_after_a_checkpoint_reports_that_checkpoint():
@@ -569,7 +585,7 @@ class CheckpointDriver(PatrolDriver):
     def monotonic(self):
         return self.now
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
         goal = (round(x, 2), round(y, 2))
         self.goals.append(goal)
         if goal in self.occupied:
@@ -585,7 +601,7 @@ class CheckpointDriver(PatrolDriver):
 class NothingReachable(PatrolDriver):
     """nav2 refuses every goal at once, the inward retries too."""
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
         return False, "nav_to_pose_status_6"
 
 
@@ -1018,6 +1034,10 @@ class DepartureDriver(mzd.Driver):
         self._status = (mzd.TASK_MODE_COVERAGE, 0)
         return True
 
+    def cancel_coverage_goals(self):
+        self.calls.append(("cancel_coverage_goals",))
+        return True
+
 
 def depart(drv, sleep=None):
     """localize_via_firmware with the stop handlers installed. (exit code or None, result)."""
@@ -1221,6 +1241,24 @@ def test_a_departure_that_hands_over_runs_no_release():
     assert "recharge_active" not in names(drv), drv.calls
 
 
+# Walter (LFIN2231000367), 2026-10-21: the departure's coverage goal stayed
+# paused in coverage_planner_server after the stop and the quit, for hours
+# ("total navigation time" counting from 19:30:41). The next start_cov was
+# refused ("Can not planning when action working") as error 125, and the
+# patrol of 21:30 never left the dock.
+def test_the_handover_cancels_the_coverage_goal_the_departure_left():
+    with_maps({"map0tocharge_unicom.csv": [(0.16, 0.01), (2.0, 3.0)]})
+    drv = DepartureDriver()
+    code, _pos = depart(drv, sleep=lambda s: None)
+    assert code is None
+    n = names(drv)
+    # One left over from before (the departure runs on the dock, where nothing
+    # drives), and the departure's own after the handover.
+    assert n.count("cancel_coverage_goals") == 2, drv.calls
+    assert n.index("cancel_coverage_goals") < n.index("start_cov"), drv.calls
+    assert n.index("quit_mapping_mode") < len(n) - 1 - n[::-1].index("cancel_coverage_goals"), drv.calls
+
+
 def test_the_release_clients_are_made_when_the_departure_starts():
     drv = DepartureDriver(sigterm_in="robot_xy")
     depart(drv)
@@ -1300,8 +1338,8 @@ def test_a_refused_departure_leaves_robot_decision_alone():
             return False
     drv = Refused()
     assert depart(drv) == (None, None)
-    # The pose before the start, the start, and no stop, no clear.
-    assert names(drv) == ["prepare_release", "robot_xy", "start_cov"], drv.calls
+    # The pose before the start, a leftover coverage goal, the start, and no stop, no clear.
+    assert names(drv) == ["prepare_release", "robot_xy", "cancel_coverage_goals", "start_cov"], drv.calls
 
 
 # ── A departure that did not happen is never handed over (#142, custom-49) ──
@@ -1338,6 +1376,7 @@ def test_a_departure_that_never_starts_is_not_handed_over():
         n = names(drv)
         assert "stop_task" in n, drv.calls                           # the stop still goes out
         assert ("quit_mapping_mode" in n) == late, (late, drv.calls)   # and clears a late task
+        assert n.count("cancel_coverage_goals") == (2 if late else 1), (late, drv.calls)   # with its coverage goal
         assert "recharge_active" not in n, drv.calls                 # no release on top of it
         said = out.getvalue()
         assert "firmware task never started (status=(1, 2))" in said, said
@@ -1632,6 +1671,45 @@ def test_a_goal_that_outlives_its_wait_is_cancelled_before_the_next_one_replaces
             assert drv.cancel_own_goal() is False and hanging.cancelled == 1, timed_out
 
 
+class Pending:
+    """A result future that never completes: nav2 still driving."""
+
+    def done(self):
+        return False
+
+    def result(self):
+        return None
+
+
+class DrivingHandle(FakeGoalHandle):
+    def get_result_async(self):
+        return Pending()
+
+
+# Walter (LFIN2231000367), 2026-10-21: nav2 ran 15-23 cm past a goal at
+# 0.5 m/s, then tried to reach its yaw (0.1 rad) on the spot and spun a wheel
+# for minutes (03:37 and 22:07 at the channel map0->map1, 19:32 at a
+# checkpoint). Within ARRIVE_M of the goal the drive ends the goal itself.
+def test_a_goal_within_reach_is_ended_by_the_drive_as_arrived():
+    driving = DrivingHandle()
+    poses = iter([(5.0, 2.0), (1.5, 2.0), (1.2, 2.1)])
+    with fake_actions(driving), contextlib.redirect_stdout(io.StringIO()):
+        drv = mzd.Driver(FakeNode(misses=0))
+        drv.robot_xy = lambda timeout=6.0: next(poses)
+        assert drv.nav_to(1.0, 2.0, arrive_m=mzd.ARRIVE_M) == (True, "arrived")
+        assert driving.cancelled == 1                                   # its own goal, once
+        assert drv.cancel_own_goal() is False and driving.cancelled == 1
+
+
+def test_a_goal_never_within_reach_still_times_out():
+    driving = DrivingHandle()
+    with fake_actions(driving), contextlib.redirect_stdout(io.StringIO()):
+        drv = mzd.Driver(FakeNode(misses=0))
+        drv.robot_xy = lambda timeout=6.0: (9.0, 9.0)
+        assert drv.nav_to(1.0, 2.0, timeout=0.05, arrive_m=mzd.ARRIVE_M) == (False, "nav_to_pose timeout")
+        assert driving.cancelled == 1
+
+
 class LateAnswer:
     """send_goal_async's future: no answer within the send's wait, the goal
     handle after it."""
@@ -1742,7 +1820,7 @@ def patrol_params(zones):
 class KilledPatrolDriver(PatrolDriver):
     """Killed (SIGTERM) on its way to the first checkpoint."""
 
-    def nav_to(self, x, y, yaw=None, timeout=120.0):
+    def nav_to(self, x, y, yaw=None, timeout=120.0, arrive_m=None):
         self.events.append(("nav_to", x, y))
         os.kill(os.getpid(), signal.SIGTERM)
         return True, ""

@@ -58,6 +58,10 @@ class FakeDrv:
         self.calls.append("quit_mapping_mode")
         self.status = (0, 0)
 
+    def cancel_coverage_goals(self):
+        self.calls.append("cancel_coverage_goals")
+        return True
+
 
 class Guard(unittest.TestCase):
     def test_live_task_is_left_alone(self):
@@ -74,7 +78,7 @@ class Guard(unittest.TestCase):
             drv = FakeDrv((1, ws))
             with redirect_stdout(io.StringIO()):
                 mzd.clear_parked_task(drv)
-            self.assertEqual(drv.calls, ["quit_mapping_mode"], ws)
+            self.assertEqual(drv.calls, ["quit_mapping_mode", "cancel_coverage_goals"], ws)
 
     def test_live_task_is_never_cleared(self):
         drv = FakeDrv((1, 90))
