@@ -20,6 +20,20 @@ export function readableDockMotionError(raw: string): Msg {
   const r = raw.toLowerCase();
   // Every movement needs RTK Fixed with fresh corrections; waiting does not
   // help when it stays without (Aaron: "RTK: ?" on the dock, Oct 2026).
+  // custom-51 names the cause: RTK not Fixed, stale corrections, or a
+  // localization that is not ready, each with its own next step (GH #158).
+  if (r.includes('rtk not fixed')) {
+    return M`De maaier verloor RTK-Fixed tijdens de controle, daarom stopte hij voor de veiligheid. Start pas opnieuw als hier "RTK: Fixed" staat terwijl hij op het dock staat. Blijft dat uit, controleer dan of het laadstation stroom heeft en de antenne vrij zicht op de lucht heeft.`;
+  }
+  if (r.includes('rtk corrections stale')) {
+    return M`De RTK-correcties van het laadstation kwamen tijdens de controle niet op tijd aan, daarom stopte de maaier voor de veiligheid. Ze komen via LoRa van het laadstation: controleer of het laadstation stroom heeft en start pas opnieuw als hier "RTK: Fixed" staat terwijl de maaier op het dock staat.`;
+  }
+  // Often the localization starting up again right after the mower leaves
+  // its dock; RTK can be fine meanwhile, so this must not send users after it.
+  if (r.includes('localization status')) {
+    return M`De lokalisatie van de maaier was even niet gereed, daarom stopte hij voor de veiligheid. Dat gebeurt vaak vlak nadat hij het dock verlaat, terwijl de lokalisatie opnieuw opstart. Wacht een minuut voordat je opnieuw begint.`;
+  }
+  // custom-50 and older report all three as one reason.
   if (r.includes('rtk corrections')) {
     return M`De maaier verloor RTK-Fixed of zijn RTK-correcties tijdens de controle, daarom stopte hij voor de veiligheid. Start pas opnieuw als hier "RTK: Fixed" staat terwijl hij op het dock staat. Blijft dat uit, controleer dan of het laadstation stroom heeft en de antenne vrij zicht op de lucht heeft.`;
   }
