@@ -504,6 +504,32 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     expect(isFrameUnvalidated(B)).toBe(false);
   });
 
+  // GH #161: the dashboard's Retry (and the app's "Retry installation") on a
+  // mower whose home0 lost map.yaml/map.pgm. regenerate refuses without them.
+  it('Retry first gives a mower that lost its whole-garden raster a new one, then the per-zone grids', async () => {
+    let reads = 0;
+    vi.mocked(publishToExtended).mockImplementation((_sn, command) => {
+      if (!command.read_map_files) return;
+      const data = { ...snapshot(), map_files_text: {}, map_files_b64: {} };
+      if (reads++ > 0) Object.assign(data, { map_files_text: { 'map.yaml': 'image: map.pgm\n' }, map_files_b64: { 'map.pgm': 'UDU=' } });
+      queueMicrotask(() => answer({ read_map_files_respond: data }));
+    });
+    markMapInstallPending(B);
+    expect((await request(server).post(applyUrl).send({})).status).toBe(200);
+    await answer({ sync_map_respond: { result: 0 } });
+    await answer({ write_map_files_respond: { result: 0 } });
+    const sent = vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1])[0]).filter(c => c !== 'read_map_files');
+    expect(sent).toEqual(['sync_map', 'write_map_files']);
+    const write = vi.mocked(publishToExtended).mock.calls.find(c => c[1].write_map_files)![1].write_map_files as Record<string, any>;
+    expect(write.csv_files).toEqual(csvFixture);
+    expect(Object.keys(write.map_files_b64).sort()).toEqual(['map.pgm', 'map.png']);
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); ingestPositionTelemetry(B, { error_status: 0 });
+    await vi.waitFor(() => expect(phases().at(-1)).toBe(''));
+    expect(phases()).not.toContain('failed');
+    expect(isMapInstallPending(B)).toBe(false);
+  });
+
   it.each(['pos_json', 'charging_station_yaml'] as const)('retains independent frame recovery when %s changes during a CSV install', async file => {
     let reads = 0;
     vi.mocked(publishToExtended).mockImplementation((_sn, command) => {

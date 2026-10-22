@@ -10,7 +10,8 @@ import { freshPositionState } from './positionTelemetry.js';
 import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending } from './frameValidation.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
-import { sameMapFile } from './portableSnapshot.js';
+import { geometryFromMowerFiles, sameMapFile } from './portableSnapshot.js';
+import { synthesizeMowerFiles } from '../maps/synthMowerFiles.js';
 
 // The mower unzips, restarts its mapping node and rasterises every slot; on a
 // big garden that is tens of seconds.
@@ -72,6 +73,8 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
 
 // The mower downloads the ZIP, unpacks it and restarts its mapping node.
 const SYNC_MAP_TIMEOUT_MS = 120_000;
+// It backs up home0 before writing; the same budget as a verbatim restore.
+const WRITE_MAP_FILES_TIMEOUT_MS = 120_000;
 
 /**
  * Ask the mower to rebuild its per-slot grids after a map push, and wait for
@@ -97,6 +100,64 @@ async function regeneratePerMapFiles(sn: string, operation: MowerMapOperation): 
   }
 }
 
+/**
+ * regenerate_per_map_files masks the whole-garden raster (map.yaml + map.pgm)
+ * into the per-zone grids and refuses without it. Only save_map type:1 writes
+ * that raster on the mower, and sync_map cannot bring it: its ZIP may hold
+ * CSVs only. A mower that lost it failed every install and every Retry
+ * (GH #161). read_map_files lists the rasters; firmware that lists none is
+ * left as it was.
+ */
+function lacksWholeMapRaster(snapshot: Record<string, unknown>): boolean {
+  const text = snapshot.map_files_text, b64 = snapshot.map_files_b64;
+  if (!text || typeof text !== 'object' || !b64 || typeof b64 !== 'object') return false;
+  return typeof (text as Record<string, unknown>)['map.yaml'] !== 'string' || typeof (b64 as Record<string, unknown>)['map.pgm'] !== 'string';
+}
+
+/** The whole-garden raster for these CSVs, built as for a synthesized portable bundle. */
+function wholeMapRaster(sn: string, csvFiles: Record<string, string>): { text: Record<string, string>; b64: Record<string, string> } | null {
+  try {
+    const { workMaps, obstacles, unicom, chargingPose } = geometryFromMowerFiles({ csvFiles, chargingStationYaml: null });
+    const synth = synthesizeMowerFiles({
+      workMaps, unicom, chargingPose,
+      obstacles: obstacles.map(o => ({ canonical: o.canonical, parentMap: o.canonical.match(/^map\d+/)?.[0] ?? '', points: o.points })),
+    });
+    const b64: Record<string, string> = { 'map.pgm': synth.mapFilesB64['map.pgm'] };
+    if (synth.mapFilesB64['map.png']) b64['map.png'] = synth.mapFilesB64['map.png'];
+    return { text: { 'map.yaml': synth.mapFilesText['map.yaml'] }, b64 };
+  } catch (err) {
+    console.warn(`[AUTO-PUSH] ${sn}: kaartraster voor de hele tuin niet op te bouwen:`, err);
+    return null;
+  }
+}
+
+/**
+ * Give a mower without the whole-garden raster one built from the CSVs that
+ * sync_map just installed. write_map_files always rewrites both CSV trees, so
+ * it gets exactly those again: no connector is pruned (sync_map left none
+ * outside this set), no other raster is removed, pos.json and the dock file
+ * stay untouched and the mapping node is not restarted a second time.
+ */
+async function writeWholeMapRaster(sn: string, csvFiles: Record<string, string>, operation: MowerMapOperation): Promise<'ok' | 'bundle_failed' | 'regenerate_timeout' | 'regenerate_failed'> {
+  const raster = wholeMapRaster(sn, csvFiles);
+  if (!raster) return 'bundle_failed';
+  const written = await operation.command('write_map_files', {
+    csv_files: csvFiles, x3_csv_files: csvFiles,
+    map_files_text: raster.text, map_files_b64: raster.b64,
+    restart_mapping: false,
+  }, WRITE_MAP_FILES_TIMEOUT_MS);
+  if (!written) {
+    console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op write_map_files (kaartraster hele tuin)`);
+    return 'regenerate_timeout';
+  }
+  if (written.result !== 0) {
+    console.warn(`[AUTO-PUSH] ${sn}: kaartraster hele tuin schrijven faalde: ${String(written.error ?? '')}`);
+    return 'regenerate_failed';
+  }
+  console.log(`[AUTO-PUSH] ${sn}: map.yaml/map.pgm ontbraken; opgebouwd uit de CSV's en geschreven`);
+  return 'ok';
+}
+
 /** CSV-only transfer/readback. The caller commits server state before clearing install pending. */
 export async function installVerifiedMapZip(
   sn: string,
@@ -116,6 +177,10 @@ export async function installVerifiedMapZip(
     }, SYNC_MAP_TIMEOUT_MS);
     if (!sync || sync.result !== 0 || sync.restart === false || sync.auto_recharge_restart === false) { apply.fail(sync ? 'sync_failed' : 'sync_timeout'); return null; }
     apply.phase('regenerating');
+    if (lacksWholeMapRaster(before)) {
+      const raster = await writeWholeMapRaster(sn, Object.fromEntries(expectedCsv), operation);
+      if (raster !== 'ok') { apply.fail(raster); return null; }
+    }
     const regen = await regeneratePerMapFiles(sn, operation);
     if (regen !== 'ok') { apply.fail(regen); return null; }
     apply.phase('settling');

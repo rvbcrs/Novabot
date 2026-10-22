@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../mqtt/broker.js', () => ({ isDeviceOnline: () => true }));
 vi.mock('../../services/mowerFileCapability.js', () => ({ isOpenNovaMower: () => true }));
@@ -17,6 +17,7 @@ import { deviceCache } from '../../mqtt/sensorData.js';
 import { readMowerMapSnapshot } from '../../services/mowerMapOperation.js';
 import type { MowerMapOperation } from '../../services/mowerMapOperation.js';
 import type { MapApply } from '../../services/mapApplyStatus.js';
+import { parsePgm } from '../../maps/validateGrid.js';
 
 const sn = 'LFIN_APPLY_TEST';
 const anchor = { x: 0.03, y: 0.73 };
@@ -75,6 +76,58 @@ it('names a changed origin or dock yaml as a frame change', async () => {
   const a = apply();
   expect(await installVerifiedMapZip(sn, input(), mower(after), a)).toBeNull();
   expect(a.fail).toHaveBeenCalledWith('frame_changed');
+});
+
+// GH #161 (LFIN2231000451, custom-50): home0 had lost map.yaml/map.pgm. sync_map
+// can only bring CSVs, so regenerate_per_map_files refused ("call save_map
+// type:1 first") and every Retry failed the same way.
+describe('a mower without the whole-garden raster', () => {
+  const lost = { ...before, map_files_text: { 'map0.yaml': 'image: map0.pgm\n' }, map_files_b64: {} };
+  const names = (op: MowerMapOperation) => vi.mocked(op.command).mock.calls.map(c => c[0]);
+  const written = (op: MowerMapOperation) => vi.mocked(op.command).mock.calls.find(c => c[0] === 'write_map_files')?.[1] as Record<string, any>;
+  const lostInput = () => ({ ...input(), before: lost });
+
+  it('gets one built from the installed CSVs before the per-zone grids', async () => {
+    const op = mower(before);
+    vi.mocked(op.command).mockImplementation(async (name: string) => name === 'sync_map' ? { result: 0, restart: true, auto_recharge_restart: true }
+      : ['write_map_files', 'regenerate_per_map_files'].includes(name) ? { result: 0 } : null);
+    const a = apply();
+    expect(await installVerifiedMapZip(sn, lostInput(), op, a)).toBe(before);
+    expect(a.fail).not.toHaveBeenCalled();
+    expect(names(op)).toEqual(['sync_map', 'write_map_files', 'regenerate_per_map_files']);
+    const params = written(op);
+    // The CSVs sync_map just installed, unchanged, in both trees; nothing pruned or restarted.
+    expect(params.csv_files).toEqual(files);
+    expect(params.x3_csv_files).toEqual(files);
+    expect(params.prune_connectors).toBeFalsy();
+    expect(params.restart_mapping).toBe(false);
+    expect(params).not.toHaveProperty('charging_station_yaml');
+    expect(params).not.toHaveProperty('pos_json');
+    expect(Object.keys(params.map_files_text)).toEqual(['map.yaml']);
+    expect(Object.keys(params.map_files_b64).sort()).toEqual(['map.pgm', 'map.png']);
+    expect(params.map_files_text['map.yaml']).toMatch(/^image: map\.pgm$/m);
+    const grid = parsePgm(Buffer.from(params.map_files_b64['map.pgm'], 'base64'));
+    // Both zones, 1 m border each side, at 5 cm: x -3..14, y 0..8.
+    expect(grid && [grid.W, grid.H]).toEqual([380, 200]);
+  });
+
+  it.each([[null, 'regenerate_timeout'], [{ result: 1, error: 'disk full' }, 'regenerate_failed']] as const)(
+    'stops before regenerate when writing it fails (%o)', async (answer, error) => {
+      const op = mower(before);
+      vi.mocked(op.command).mockImplementation(async (name: string) => name === 'sync_map' ? { result: 0, restart: true, auto_recharge_restart: true }
+        : name === 'write_map_files' ? answer : { result: 0 });
+      const a = apply();
+      expect(await installVerifiedMapZip(sn, lostInput(), op, a)).toBeNull();
+      expect(a.fail).toHaveBeenCalledWith(error);
+      expect(names(op)).toEqual(['sync_map', 'write_map_files']);
+    });
+
+  it('keeps a raster that is there', async () => {
+    const present = { ...before, map_files_text: { 'map.yaml': 'image: map.pgm\n' }, map_files_b64: { 'map.pgm': 'UDU=' } };
+    const op = mower(before);
+    expect(await installVerifiedMapZip(sn, { ...input(), before: present }, op, apply())).toBe(before);
+    expect(names(op)).toEqual(['sync_map', 'regenerate_per_map_files']);
+  });
 });
 
 // Field report (N2000, Oct 2026): a mower without any dock channel got the same
