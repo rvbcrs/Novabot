@@ -1,6 +1,18 @@
 {
   "releases": [
     {
+      "version": "2026.1022.2232",
+      "date": "2026-10-22",
+      "sections": {
+        "firmware": [
+          "Cancel the coverage goal a departure leaves; end patrol and transit goals within 0.35 m (Novabot-m8rg)"
+        ],
+        "server": [
+          "A :beta that is a release shows its notes; the firmware manifest is read again after 30 min instead of 6 h"
+        ]
+      }
+    },
+    {
       "version": "2026.1022.1742",
       "date": "2026-10-22",
       "sections": {
@@ -222,17 +234,6 @@
           "Send soft_restart to extended_commands, where its handler lives",
           "Reverse into the middle of the docking window when re-anchoring",
           "… plus 2 kleinere wijzigingen"
-        ]
-      }
-    },
-    {
-      "version": "2026.1009.2157",
-      "date": "2026-10-09",
-      "sections": {
-        "server": [
-          "Cut the edge right after the mow instead of after a trip to the dock",
-          "A finished edge cut drives home, and only real mowing arms the next one",
-          "Deleting or editing a schedule in the Novabot app works again"
         ]
       }
     }
