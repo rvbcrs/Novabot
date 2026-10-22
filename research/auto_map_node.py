@@ -2,7 +2,7 @@
 """auto_map_node — orkestratie van de autonome boundary-rit (route B).
 
 Standalone daemon naast extended_commands.py (importeert die als bibliotheek
-voor MiniMQTT/read_config/ros2_run — import is bijwerkingsvrij). Luistert op
+voor connect_mqtt/read_config/ros2_run — import is bijwerkingsvrij). Luistert op
 novabot/extended/<SN> en handelt ALLEEN de auto-map-commando's af:
 
   start_auto_map_test  {radiusM?, timeoutS?}  — kale volg-test (fase 0) én
@@ -89,7 +89,7 @@ def parse_action_result(text):
 
 
 # ── Daemon ───────────────────────────────────────────────────────────────────
-# extended_commands.py als bibliotheek: MiniMQTT, read_config, ros2_run, log.
+# extended_commands.py als bibliotheek: connect_mqtt, read_config, ros2_run, log.
 # Import is bijwerkingsvrij (alles achter __main__-guard), bewezen door
 # research/__tests__/test_extended_helpers.py.
 _EC = None
@@ -529,8 +529,8 @@ def main():
 
     while True:
         try:
-            client = ec.MiniMQTT(addr, port, f"auto_map_{sn}", on_message)
-            client.connect()
+            # Broker picked on every attempt (GH #160), not the one from the start.
+            client = ec.connect_mqtt(f"auto_map_{sn}", on_message)
             client.subscribe(sub_topic)
             state["client"] = client
             ec.log("[auto_map] verbonden, wacht op commando's")

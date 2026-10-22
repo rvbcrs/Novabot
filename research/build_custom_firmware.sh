@@ -863,7 +863,21 @@ if [ -z "\$MQTT_ADDRESS" ] && [ -f "\$LAST_KNOWN_FILE" ]; then
     MQTT_ADDRESS="\$(cat "\$LAST_KNOWN_FILE")"
     log "getent miste — MQTT addr uit last-known: \$MQTT_ADDRESS"
 fi
-[ -n "\$MQTT_ADDRESS" ] && echo "\$MQTT_ADDRESS" > "\$LAST_KNOWN_FILE"
+# server_ip.txt is also how stap 4 below recognises a broker address this
+# script wrote itself (GH #160), so read it before it is rewritten. An answer
+# that is not OpenNova (DNS falling back to the public lfibot.com) never
+# replaces a known server: that would make the address it wrote look custom.
+PREV_SERVER_IP=""
+[ -f "\$LAST_KNOWN_FILE" ] && PREV_SERVER_IP="\$(tr -d '[:space:]' < "\$LAST_KNOWN_FILE")"
+MQTT_VERIFIED=0
+if [ -n "\$MQTT_ADDRESS" ] && probe_http "\$MQTT_ADDRESS" "\$PORT"; then
+    MQTT_VERIFIED=1
+fi
+if [ -n "\$MQTT_ADDRESS" ] && { [ "\$MQTT_VERIFIED" = "1" ] || [ -z "\$PREV_SERVER_IP" ]; }; then
+    echo "\$MQTT_ADDRESS" > "\$LAST_KNOWN_FILE"
+elif [ -n "\$MQTT_ADDRESS" ] && [ "\$MQTT_ADDRESS" != "\$PREV_SERVER_IP" ]; then
+    log "\$MQTT_ADDRESS:\$PORT does not answer as OpenNova, server_ip.txt stays \$PREV_SERVER_IP"
+fi
 
 # 2. Ethernet altijd beschikbaar voor noodherstel (RDK X3 default: 192.168.1.10)
 ip addr add 192.168.1.10/24 dev eth0 2>/dev/null || true
@@ -882,11 +896,13 @@ else
 #   - Atomic write — schrijf naar .tmp, valideer, dan mv (nooit direct)
 #   - Post-write validatie — als resultaat secties mist, ABORT en herstel
 #   - Herstelvolgorde: .bak → .factory → niets wijzigen
-python3 << PYEOF
+PREV_SERVER_IP="\$PREV_SERVER_IP" MQTT_VERIFIED="\$MQTT_VERIFIED" python3 << PYEOF
 import json, os, shutil, sys, tempfile
 
 mqtt_addr = "\${MQTT_ADDRESS}"
 mqtt_port = \${MQTT_PORT_NUM}
+prev_server_ip = os.environ.get("PREV_SERVER_IP", "").strip()
+mqtt_verified = os.environ.get("MQTT_VERIFIED") == "1"
 cfg_file = "\${MQTT_CONFIG_FILE}"
 backup = cfg_file + ".bak"
 factory = cfg_file + ".factory"
@@ -965,10 +981,26 @@ elif not isinstance(c.get("mqtt", {}).get("value"), dict):
 
 existing_addr = c.get("mqtt", {}).get("value", {}).get("addr", "")
 is_stock_addr = existing_addr in ("", "mqtt.lfibot.com", "mqtt-dev.lfibot.com", "app.lfibot.com")
+# What this script (or opennova_discovery.py) wrote itself is also in
+# server_ip.txt, so it is not a custom address: when the server moves, it
+# follows (GH #160), but only to an address that answered as OpenNova. An
+# address set by hand (BLE, ESP32 tool) never equals that file.
+is_own_addr = bool(prev_server_ip) and existing_addr == prev_server_ip
 if is_stock_addr:
     c["mqtt"]["value"]["addr"] = mqtt_addr
     c["mqtt"]["value"]["port"] = mqtt_port
     log_msg(f"MQTT addr updated: {existing_addr} -> {mqtt_addr}")
+elif is_own_addr:
+    if mqtt_verified and mqtt_addr != existing_addr:
+        c["mqtt"]["value"]["addr"] = mqtt_addr
+        log_msg(f"MQTT addr moved with the server: {existing_addr} -> {mqtt_addr}")
+    elif mqtt_addr != existing_addr:
+        log_msg(f"MQTT addr KEPT: {mqtt_addr} answered not as OpenNova, {existing_addr} stays")
+    else:
+        log_msg(f"MQTT addr unchanged: {existing_addr}")
+    # The port that was there belongs to this install; only fill it in when missing.
+    if not c["mqtt"]["value"].get("port"):
+        c["mqtt"]["value"]["port"] = mqtt_port
 else:
     log_msg(f"MQTT addr KEPT (custom): {existing_addr} (niet overschreven door {mqtt_addr})")
     # De poort hoort bij het adres: als BLE-provisioning een custom broker heeft
@@ -1388,11 +1420,15 @@ MONSTOP
 fi
 
 # === Stap 5d-bis: Runtime mDNS discovery loop toevoegen ===
-# Polls opennova.local / opennovabot.local elke 60s via stdlib resolver
-# (libnss-mdns). Bij IP-mismatch met huidige mqtt_host voor 2 polls op rij:
-# atomic rewrite van json_config.json + http_address.txt, kill van mqtt_node
-# zodat mqtt_node_monitor.sh respawnt met nieuwe broker. Geen reboot, geen
-# SSH nodig voor server-migraties (laptop ↔ NAS ↔ Pi).
+# Polls opennova.local / opennovabot.local every 60 s via the stdlib resolver
+# (libnss-mdns). Without an mDNS answer it follows the DNS redirect of
+# mqtt.lfibot.com, only for an address the firmware wrote itself and only to
+# an OpenNova server (GH #160). When the answer differs from the current
+# mqtt host for 2 polls in a row: atomic rewrite of json_config.json +
+# http_address.txt + server_ip.txt, mqtt_node killed so it respawns with the
+# new broker, and the MQTT helpers (extended_commands, led_bridge,
+# auto_map_node) restarted. No reboot and no SSH needed for a server
+# migration (laptop, NAS, Pi).
 # Spec: docs/superpowers/specs/2026-04-28-zero-touch-mqtt-redirect-design.md
 echo "[5d-bis/9] Runtime mDNS discovery loop toevoegen..."
 
@@ -1451,6 +1487,12 @@ fi
 # firmware busy with a task, mapping or docking? Copied unconditionally.
 cp "$SCRIPT_DIR/firmware_state.py" "$NOVABOT_ROOT/scripts/firmware_state.py"
 echo "  firmware_state.py gekopieerd naar scripts/"
+
+# Shared by extended_commands.py, led_bridge.py and auto_map_node.py (all
+# import it): which broker answers now, picked anew on every reconnect so the
+# helpers follow a server that moved (GH #160). Copied unconditionally.
+cp "$SCRIPT_DIR/broker_resolver.py" "$NOVABOT_ROOT/scripts/broker_resolver.py"
+echo "  broker_resolver.py gekopieerd naar scripts/"
 
 # === Stap 5d: Camera stream service toevoegen ===
 echo "[5d/9] Camera stream service toevoegen..."

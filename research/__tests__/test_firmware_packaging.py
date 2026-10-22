@@ -20,7 +20,7 @@ BUILD = os.path.join(RESEARCH, "build_custom_firmware.sh")
 # Wat er op LFIN2230700238 in /root/novabot/scripts staat en van ons is.
 # obdCheck.py staat er ook maar is stock (2023, wordt nergens gestart).
 ONZE_SCRIPTS = [
-    "auto_map_node.py", "camera_stream.py", "extended_commands.py",
+    "auto_map_node.py", "broker_resolver.py", "camera_stream.py", "extended_commands.py",
     "lawn_edge_relay.py", "led_bridge.py", "mow_zone_drive.py",
     "opennova_discovery.py", "reload_nav_map.py",
     "seam_fix_daemon.py", "terrain_scan.py", "unicom_mirror.py",

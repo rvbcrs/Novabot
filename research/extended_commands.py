@@ -29,6 +29,13 @@ import sys
 import threading
 import time
 
+# broker_resolver.py ships next to this script (build_custom_firmware.sh); the
+# path also finds it when this file is loaded by path (auto_map_node.py, tests).
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.append(_SCRIPT_DIR)
+import broker_resolver  # noqa: E402
+
 def rtk_sample_payload(msg):
     """Only actual receiver samples carry coordinates; heartbeats never do."""
     stamp = msg.header.stamp
@@ -121,7 +128,12 @@ def charging_station_guard_interval_seconds():
 
 # ── SN en broker adres uit json_config.json lezen ──────────────────────────
 def read_config():
-    """Lees SN en MQTT broker adres uit json_config.json, met DNS fallback."""
+    """Read the SN and the configured MQTT broker from json_config.json.
+
+    The broker actually used is picked by connect_mqtt() on every (re)connect
+    (GH #160); the mqtt.lfibot.com DNS route (also the ESP32 AP case, where it
+    resolves to 10.0.0.1) now lives in broker_resolver.
+    """
     cfg_file = "/userdata/lfi/json_config.json"
     sn = None
     mqtt_addr = "127.0.0.1"
@@ -135,25 +147,6 @@ def read_config():
         mqtt_port = int(cfg.get("mqtt", {}).get("value", {}).get("port", mqtt_port))
     except Exception as e:
         log(f"Config lezen mislukt: {e}")
-
-    # Try to resolve mqtt.lfibot.com — if it resolves to a different IP than the config,
-    # use the resolved IP. This handles the ESP32 AP case where DNS resolves mqtt.lfibot.com
-    # to 10.0.0.1 but json_config has the home server IP (e.g. 192.168.0.222).
-    try:
-        resolved = socket.gethostbyname("mqtt.lfibot.com")
-        if resolved and resolved != mqtt_addr:
-            # Check if resolved IP is reachable (quick connect test)
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2)
-            try:
-                s.connect((resolved, mqtt_port))
-                s.close()
-                log(f"DNS mqtt.lfibot.com → {resolved} (using instead of {mqtt_addr})")
-                mqtt_addr = resolved
-            except:
-                s.close()
-    except:
-        pass
 
     if not sn or sn == "LFIN_ERROR_ERROR":
         log("WAARSCHUWING: Geen geldig SN gevonden, gebruik fallback")
@@ -440,6 +433,19 @@ class MiniMQTT:
                 raise ConnectionError("Verbinding verbroken")
             data.extend(chunk)
         return bytes(data)
+
+
+def connect_mqtt(client_id, on_message):
+    """A connected MiniMQTT on the broker that answers now.
+
+    The broker is picked anew on every (re)connect, so a server that moved to
+    a new IP is followed without restarting this script (GH #160). Also used
+    by auto_map_node.py.
+    """
+    addr, port = broker_resolver.resolve_broker()
+    client = MiniMQTT(addr, port, client_id, on_message=on_message)
+    client.connect()
+    return client
 
 
 # ── Serial PIN Verify (CMD 0x23 → STM32) ─────────────────────────────────
@@ -8214,12 +8220,11 @@ def main():
         except Exception as e:
             log(f"Fout bij verwerken: {e}")
 
-    # MQTT client met reconnect loop
+    # MQTT client with a reconnect loop; the broker is picked on every attempt.
     client_id = f"ext_cmd_{sn}"
     while True:
         try:
-            mqtt = MiniMQTT(mqtt_addr, mqtt_port, client_id, on_message=on_message)
-            mqtt.connect()
+            mqtt = connect_mqtt(client_id, on_message)
             mqtt.subscribe(sub_topic)
             mqtt.subscribe(cmd_topic)
             mqtt_ref[0] = mqtt

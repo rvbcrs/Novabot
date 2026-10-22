@@ -24,6 +24,13 @@ import sys
 import threading
 import time
 
+# broker_resolver.py ships next to this script (build_custom_firmware.sh); the
+# path also finds it when this file is loaded by path (tests).
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.append(_SCRIPT_DIR)
+import broker_resolver  # noqa: E402
+
 # ── Configuratie ────────────────────────────────────────────────────────────
 MQTT_RECONNECT_INTERVAL = 5   # seconden tussen reconnect pogingen
 MQTT_KEEPALIVE = 60           # MQTT keepalive interval
@@ -228,6 +235,19 @@ class MiniMQTT:
         return bytes(data)
 
 
+def connect_mqtt(client_id, on_message):
+    """A connected MiniMQTT on the broker that answers now.
+
+    Picked anew on every (re)connect: this bridge used to stay on the address
+    it read at start, so a server that moved to a new IP never got it back
+    (GH #160).
+    """
+    addr, port = broker_resolver.resolve_broker()
+    client = MiniMQTT(addr, port, client_id, on_message=on_message)
+    client.connect()
+    return client
+
+
 # ── ROS 2 LED publisher ───────────────────────────────────────────────────
 class LedPublisher:
     """Publiceert UInt8 naar /led_set via ROS 2."""
@@ -292,12 +312,11 @@ def main():
         except Exception as e:
             log(f"Fout bij verwerken: {e}")
 
-    # MQTT client met reconnect loop
+    # MQTT client with a reconnect loop; the broker is picked on every attempt.
     client_id = f"led_bridge_{sn}"
     while True:
         try:
-            mqtt = MiniMQTT(mqtt_addr, mqtt_port, client_id, on_message=on_message)
-            mqtt.connect()
+            mqtt = connect_mqtt(client_id, on_message)
             mqtt.subscribe(topic)
             mqtt.loop_forever()
         except KeyboardInterrupt:
