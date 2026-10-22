@@ -1691,7 +1691,7 @@ class DrivingHandle(FakeGoalHandle):
 # for minutes (03:37 and 22:07 at the channel map0->map1, 19:32 at a
 # checkpoint). Within ARRIVE_M of the goal the drive ends the goal itself.
 def test_a_goal_within_reach_is_ended_by_the_drive_as_arrived():
-    driving = DrivingHandle()
+    driving = WindingDown()
     poses = iter([(5.0, 2.0), (1.5, 2.0), (1.2, 2.1)])
     with fake_actions(driving), contextlib.redirect_stdout(io.StringIO()):
         drv = mzd.Driver(FakeNode(misses=0))
@@ -1699,6 +1699,48 @@ def test_a_goal_within_reach_is_ended_by_the_drive_as_arrived():
         assert drv.nav_to(1.0, 2.0, arrive_m=mzd.ARRIVE_M) == (True, "arrived")
         assert driving.cancelled == 1                                   # its own goal, once
         assert drv.cancel_own_goal() is False and driving.cancelled == 1
+
+
+class WindingDown(FakeGoalHandle):
+    """nav2 answers a cancel with the goal's result only a few polls later."""
+
+    def __init__(self):
+        super().__init__()
+        self.polls_after_cancel = 0
+        handle = self
+
+        class Result:
+            def done(self):
+                if handle.cancelled:
+                    handle.polls_after_cancel += 1
+                return handle.polls_after_cancel >= 3
+
+            def result(self):
+                return types.SimpleNamespace(status=5) if self.done() else None
+        self._fut = Result()
+
+    def get_result_async(self):
+        return self._fut
+
+
+# Walter (LFIN2231000367), 2026-10-22 22:28:17: nav2 cancelled its own
+# FollowPath while it wound the cancelled NavigateToPose down, 40 ms after the
+# cancel was answered, and took the channel's FollowPath we had just sent with
+# it (followpath_aborted_status_5). An arrival waits for the goal's end.
+def test_an_arrival_waits_until_nav2_has_ended_the_goal():
+    ending = WindingDown()
+    slept = []
+    real_time = mzd.time
+    mzd.time = types.SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=slept.append)
+    try:
+        with fake_actions(ending), contextlib.redirect_stdout(io.StringIO()):
+            drv = mzd.Driver(FakeNode(misses=0))
+            drv.robot_xy = lambda timeout=6.0: (1.1, 2.0)
+            assert drv.nav_to(1.0, 2.0, arrive_m=mzd.ARRIVE_M) == (True, "arrived")
+    finally:
+        mzd.time = real_time
+    assert ending.cancelled == 1 and ending.polls_after_cancel >= 3
+    assert slept == [mzd.ARRIVE_SETTLE_S]
 
 
 def test_a_goal_never_within_reach_still_times_out():

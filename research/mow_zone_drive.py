@@ -163,6 +163,12 @@ LEAD_IN_MAX_M = 0.5
 # LEAD_IN_MAX_M, so a channel's lead-in bridges what is left.
 ARRIVE_M = 0.35
 ARRIVE_POLL_S = 0.5
+# After the drive ends a goal itself: wait for nav2's result of it, then a
+# moment more, before the next goal. nav2 sent two FollowPath cancels 40 ms
+# after it answered ours, and the second took the channel's FollowPath sent in
+# between (Walter, 2026-10-22 22:28:17, followpath_aborted_status_5).
+ARRIVE_END_S = 5.0
+ARRIVE_SETTLE_S = 0.5
 
 # Afstand tussen opeenvolgende punten in het pad dat naar FollowPath gaat. Een
 # opgenomen kanaal is vaak maar twee punten over een paar meter, en Pure Pursuit
@@ -794,6 +800,13 @@ class Driver:
                 pos = None if res_fut.done() else self.robot_xy(timeout=1.0)
                 if pos is not None and math.hypot(pos[0] - x, pos[1] - y) <= arrive_m:
                     self._drop_goal()
+                    # nav2 cancels its own FollowPath while it winds the goal down,
+                    # after it answered the cancel, and took a FollowPath sent in
+                    # that gap with it (ARRIVE_SETTLE_S).
+                    end = time.monotonic() + ARRIVE_END_S
+                    while not res_fut.done() and time.monotonic() < end:
+                        rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=0.1)
+                    time.sleep(ARRIVE_SETTLE_S)
                     return True, "arrived"
         r = res_fut.result()
         if r is None:

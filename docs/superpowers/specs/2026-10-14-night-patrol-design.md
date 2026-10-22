@@ -83,6 +83,10 @@ So there is nothing to finish. We build it from parts that do work:
    own end asks for 0.1 m and a yaw; it ran 15-23 cm past the goal and then spun a
    wheel for minutes trying to turn there (Walter, 2026-10-21, at the channel
    map0->map1 and at a checkpoint). The mower looks in the direction it drove.
+   After such a cancel the drive waits for nav2's result of the goal and 0.5 s
+   more before its next goal: nav2 cancels its own FollowPath while it winds the
+   goal down, and once took the channel's FollowPath sent in that gap with it
+   (Walter, 2026-10-22, `followpath_aborted_status_5` on the way home).
 6. **Headlight is set by the server** (`novabot/cmd/<SN>` `{led_set}`) on
    `patrolling`, and switched off (0) on every terminal phase before go_to_charge,
    so the patrol's bright light never reaches the dock marker; the mower then
