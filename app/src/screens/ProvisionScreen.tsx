@@ -27,6 +27,7 @@ import { ApiClient, isUnsupportedFirmwareError } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useMowerState } from '../hooks/useMowerState';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
+import { provisionedDevicesForSn, allProvisionedOnline } from '../utils/provisionOnline';
 import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Provision'>;
@@ -447,7 +448,8 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   // The banner now says Configured until the server has actually seen the
   // device, and after the 60 s poll it says so when that never happened.
   const [connectTimedOut, setConnectTimedOut] = useState(false);
-  const deviceOnlineRef = useRef(false);
+  // Per device: only the device the server actually saw counts (GH #160).
+  const deviceOnlineRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!allDone || !allSuccess) return;
@@ -492,14 +494,6 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         if (lastSn && lastSeen) {
           const seenDate = new Date(lastSeen + 'Z'); // UTC
           const age = Date.now() - seenDate.getTime();
-          // Match against BLE device names (charger=CHARGER_PILE, mower=Novabot)
-          // or check if the SN is new (wasn't online before provisioning started)
-          const isOurDevice = devices.some(d => {
-            // SN-based match: device name might contain part of SN
-            const nameLower = (d.name ?? '').toLowerCase();
-            const snLower = (lastSn ?? '').toLowerCase();
-            return nameLower.includes(snLower) || snLower.includes(nameLower);
-          });
 
           if (age < 120000 && age > 0) { // within 2 minutes
             // Only mark as online if the device wasn't already online before we started
@@ -507,11 +501,20 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               seenDate.getTime() < provisionStartTime.current;
 
             if (!wasAlreadyOnline) {
-              const status: Record<string, boolean> = {};
-              for (const dev of devices) status[dev.id] = true;
-              setDeviceOnline(status);
-              deviceOnlineRef.current = true;
-              bleLog(`[MQTT-POLL] New device online: ${lastSn} (${Math.round(age/1000)}s ago)`);
+              // Only the provisioned device behind this SN. Marking all of
+              // them showed the mower online when only the dock reached the
+              // server (GH #160).
+              const matched = provisionedDevicesForSn(devices, lastSn);
+              const fresh = matched.filter(id => !deviceOnlineRef.current[id]);
+              if (fresh.length > 0) {
+                const next = { ...deviceOnlineRef.current };
+                for (const id of fresh) next[id] = true;
+                deviceOnlineRef.current = next;
+                setDeviceOnline(next);
+                bleLog(`[MQTT-POLL] New device online: ${lastSn} (${Math.round(age/1000)}s ago)`);
+              } else if (matched.length === 0) {
+                bleLog(`[MQTT-POLL] ${lastSn} is online but is not one of the provisioned devices`);
+              }
 
               // Drain pending LoRa registration queue — we weten nu eindelijk
               // de echte SN achter de BLE-scan anon-UUID. Match op SN prefix
@@ -551,9 +554,9 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     const interval = setInterval(pollDeviceStatus, 5000);
     const stopAfter = setTimeout(() => {
       clearInterval(interval);
-      if (!deviceOnlineRef.current) {
+      if (!allProvisionedOnline(devices, deviceOnlineRef.current)) {
         setConnectTimedOut(true);
-        bleLog('[MQTT-POLL] No device came online within 60s — credentials/2.4 GHz/WPA2 to check');
+        bleLog('[MQTT-POLL] Not every device came online within 60s; check credentials, 2.4 GHz, WPA2');
       }
     }, 60000);
 
@@ -585,7 +588,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   const handleProvisionAnother = () => {
     setConnectTimedOut(false);
     setDeviceOnline({});
-    deviceOnlineRef.current = false;
+    deviceOnlineRef.current = {};
     navigation.navigate('DeviceChoice', { mqttAddr, mqttPort });
   };
 
@@ -662,7 +665,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   const handleRetry = () => {
     setConnectTimedOut(false);
     setDeviceOnline({});
-    deviceOnlineRef.current = false;
+    deviceOnlineRef.current = {};
     startedRef.current = false;
     setAllDone(false);
     setAllSuccess(false);
@@ -686,6 +689,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   };
 
   const stateArray = Array.from(deviceStates.values());
+  const allOnline = allProvisionedOnline(devices, deviceOnline);
 
   return (
     <View style={styles.container}>
@@ -729,7 +733,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
             ]}
           >
             {(() => {
-              const connected = Object.keys(deviceOnline).length > 0;
+              const connected = allOnline;
               const icon = connected ? 'checkmark-circle' : connectTimedOut ? 'alert-circle' : 'time-outline';
               const color = connected ? colors.green : connectTimedOut ? colors.amber : colors.textDim;
               const title = connected ? t('pvConnectedExcl') : connectTimedOut ? t('pvNotConnectedYet') : t('pvConfigured');
@@ -751,7 +755,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
             })()}
 
             {/* Device MQTT status */}
-            {Object.keys(deviceOnline).length > 0 && (
+            {allOnline && (
               <View style={styles.onlineStatus}>
                 <Ionicons name="pulse" size={16} color={colors.green} />
                 <Text style={[styles.otaStatusText, { color: colors.green }]}>
@@ -759,7 +763,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                 </Text>
               </View>
             )}
-            {serverReachable === true && Object.keys(deviceOnline).length === 0 && (
+            {serverReachable === true && !allOnline && (
               <View style={styles.onlineStatus}>
                 <ActivityIndicator size="small" color={colors.textDim} />
                 <Text style={styles.otaStatusText}>
@@ -933,6 +937,9 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                 color={ds.device.type === 'charger' ? colors.amber : colors.emerald}
               />
               <Text style={styles.deviceName}>{ds.device.name}</Text>
+              {deviceOnline[ds.device.id] && (
+                <Ionicons name="pulse" size={16} color={colors.green} />
+              )}
               {ds.success && (
                 <View style={styles.successBadge}>
                   <Ionicons name="checkmark" size={14} color={colors.green} />
