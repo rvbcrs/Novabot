@@ -84,8 +84,10 @@ it('performs a 1 m departure, a second step, validated captures and a visual doc
   // only 0.87..1.47 m in front of the charge pose it is given.
   expect(moves.map(p => [p.distance_m, p.from_dock])).toEqual([[1, true], [.2, false], [0, false]]);
   expect(moves[0]).not.toHaveProperty('charge_pose');
-  expect(moves[2].charge_pose).toEqual(LEFT_FROM);
-  expect(recallDockedPose('source', 0)).toEqual(LEFT_FROM);
+  // x/y from where it left, heading from the saved dock: the docked yaw is from
+  // before the departure initialized the heading (GH #158).
+  expect(moves[2].charge_pose).toEqual({ x: LEFT_FROM.x, y: LEFT_FROM.y, yaw: 0 });
+  expect(recallDockedPose('source', 0)).toEqual({ x: LEFT_FROM.x, y: LEFT_FROM.y, yaw: 0 });
 });
 
 it('stops after a departure whose response lacks the pose it left from', async () => {
