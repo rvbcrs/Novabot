@@ -612,7 +612,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
           <div class="help-item"><b>Path files info</b> — info over de geplande-pad bestanden en de csv_file-map.</div>
           <div class="help-item"><b>System info</b> — systeeminformatie van de maaier ophalen (zonder SSH).</div>
           <div class="help-item"><b>Fetch</b> — haalt logregels van een ROS-bron op (met niveau- en zoekfilter).</div>
-          <div class="help-item"><b>Copy visible / Clear</b> — kopieer of wis de getoonde debug-uitvoer.</div>
+          <div class="help-item"><b>Copy visible / Download / Clear</b> — kopieer, bewaar als .log-bestand (om mee te sturen) of wis de getoonde debug-uitvoer.</div>
         </div></details>
 
         <details><summary>Maps — Map Viewer</summary><div class="help-sec">
@@ -808,6 +808,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
               <option value="timer_record">timer_record</option>
               <option value="novabot_mapping">novabot_mapping</option>
               <option value="localization">localization</option>
+              <option value="extended_commands">extended_commands (OpenNova)</option>
             </select>
           </div>
           <div>
@@ -839,6 +840,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px;color:#ccc"><input type="checkbox" id="mdOnlyErrors" onchange="mdRenderOutput()"> Errors only</label>
         <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px;color:#ccc"><input type="checkbox" id="mdOnlyWarns" onchange="mdRenderOutput()"> Warns</label>
         <button onclick="mdCopyOutput()" style="padding:6px 12px;background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.2);border-radius:6px;font-size:11px;cursor:pointer">Copy visible</button>
+        <button onclick="mdDownloadOutput()" style="padding:6px 12px;background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.2);border-radius:6px;font-size:11px;cursor:pointer">Download</button>
         <button onclick="mdOutputLines=[];mdRenderOutput()" style="padding:6px 12px;background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.2);border-radius:6px;font-size:11px;cursor:pointer">Clear</button>
       </div>
       <div id="mdOutput" style="height:calc(100vh - 460px);min-height:260px;overflow-y:auto;font-family:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;padding:10px;background:#0a0a1a;border:1px solid rgba(255,255,255,.06);border-radius:8px;line-height:1.55;word-break:break-all;color:#ccc"></div>
@@ -1951,6 +1953,22 @@ function mdCopyOutput() {
   navigator.clipboard.writeText(lines.join('\\n')).then(function(){
     mdSetStatus(__t('Copied {n} lines', { n: lines.length }), '#4ade80');
   });
+}
+
+// The fetched lines as a file, to attach to an issue or a message.
+function mdDownloadOutput() {
+  if (!mdOutputLines.length) { mdSetStatus(__t('Nothing to download'), '#f87171'); return; }
+  var sn = document.getElementById('mdMowerSelect').value || 'mower';
+  var source = document.getElementById('mdLogSource').value;
+  var stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
+  var url = URL.createObjectURL(new Blob([mdOutputLines.join('\\n') + '\\n'], { type: 'text/plain' }));
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = sn + '-' + source + '-' + stamp + '.log';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
 }
 
 // Connect Socket.io for real-time logs + events

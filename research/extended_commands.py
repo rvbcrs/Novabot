@@ -5028,6 +5028,8 @@ def handle_get_mqtt_log(params, respond):
 
 
 _ROS_LOG_DIR = "/root/novabot/data/ros2_log"
+# run_novabot.sh writes this script's own log per boot into <here>/<boot>/.
+_NOVABOT_LOG_DIR = "/root/novabot/novabot_log"
 
 # Known log sources — prefix of log filename. Extra aliases voor handig gebruik.
 _LOG_SOURCES = {
@@ -5076,7 +5078,8 @@ def handle_get_ros_log(params, respond):
     Generieke ROS log fetcher met filter ondersteuning.
 
     params:
-      source: string  — alias uit _LOG_SOURCES (default "mqtt_error")
+      source: string  — alias uit _LOG_SOURCES (default "mqtt_error"), of
+                        "extended_commands" voor het eigen log van dit script
       lines:  int     — aantal laatste regels (default 200, max 2000)
       grep:   string  — optional substring filter
       level:  string  — optional "INFO" | "WARN" | "ERROR" — filter op log level prefix
@@ -5088,8 +5091,10 @@ def handle_get_ros_log(params, respond):
         prefix = _LOG_SOURCES.get(source, source)  # fallback: raw prefix
 
         import glob
-        files = sorted(glob.glob(f"{_ROS_LOG_DIR}/{prefix}_*.log"),
-                       key=lambda p: os.path.getmtime(p), reverse=True)
+        # extended_commands.log is not a ROS log: it sits per boot in novabot_log.
+        pattern = (f"{_NOVABOT_LOG_DIR}/*/extended_commands.log" if source == "extended_commands"
+                   else f"{_ROS_LOG_DIR}/{prefix}_*.log")
+        files = sorted(glob.glob(pattern), key=lambda p: os.path.getmtime(p), reverse=True)
         if not files:
             respond("get_ros_log_respond", {"result": 0, "value": {"lines": [], "error": f"no log for source={source}"}})
             return
