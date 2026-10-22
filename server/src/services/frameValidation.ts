@@ -30,7 +30,11 @@ export function markMapInstallPending(sn: string): void {
   // Invalidate outstanding map measurements without inventing an origin change.
   revisions.set(sn, getFrameRevision(sn) + 1);
 }
-/** Only the verified installer, after its server commit, can release this reason. */
+/**
+ * Only the verified installer, after its server commit, can release this
+ * reason. It calls confirmMapInstall (mapApplyStatus), which also ends the
+ * failed banner; this module cannot import that one (sensorData imports this).
+ */
 export function clearMapInstallPending(sn: string): void {
   deviceSettingsRepo.remove(sn, INSTALL_KEY);
   installing.delete(sn);

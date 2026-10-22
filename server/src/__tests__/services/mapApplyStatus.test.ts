@@ -13,7 +13,8 @@ vi.mock('../../dashboard/socketHandler.js', () => ({ forwardToDashboard: vi.fn()
 
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { forwardToDashboard } from '../../dashboard/socketHandler.js';
-import { beginMapApply, waitForPlannerBack, errorCodeOf, PHASE_KEY, ERROR_KEY } from '../../services/mapApplyStatus.js';
+import { beginMapApply, confirmMapInstall, waitForPlannerBack, errorCodeOf, PHASE_KEY, ERROR_KEY } from '../../services/mapApplyStatus.js';
+import { clearMapInstallPending, isMapInstallPending, markMapInstallPending } from '../../services/frameValidation.js';
 
 const SN = 'LFIN_APPLY';
 const phase = () => deviceCache.get(SN)?.get(PHASE_KEY);
@@ -46,6 +47,29 @@ describe('beginMapApply', () => {
     older.fail('sync_failed');
     older.phase('settling');
     expect(phase()).toBe('syncing');
+  });
+});
+
+// GH #162: a failed banner only went away when a new run of the same kind
+// ended. A verified install by any route ends it, whoever reported it.
+describe('confirmMapInstall', () => {
+  beforeEach(() => { deviceCache.clear(); clearMapInstallPending(SN); });
+
+  it('releases the pending install and ends a failure another run reported', () => {
+    const verified = beginMapApply(SN);
+    markMapInstallPending(SN);
+    verified.phase('syncing');
+    const other = beginMapApply(SN);
+    other.fail('install_mismatch');
+    expect(phase()).toBe('failed');
+    confirmMapInstall(SN);
+    expect(isMapInstallPending(SN)).toBe(false);
+    expect(phase()).toBe('');
+    expect(deviceCache.get(SN)?.get(ERROR_KEY)).toBe('');
+    // Neither run can bring the failure back after the verification.
+    other.fail('sync_failed');
+    verified.fail('sync_failed');
+    expect(phase()).toBe('');
   });
 });
 

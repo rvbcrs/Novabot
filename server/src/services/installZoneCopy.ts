@@ -8,8 +8,8 @@ import { validateMapRasters } from '../maps/validateGrid.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { csvZip, type ConfirmedCopyDocks } from './dockChannelRepair.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
-import { clearMapInstallPending, isFrameUnvalidated, isMapInstallPending, markFrameUnvalidated } from './frameValidation.js';
-import { beginMapApply } from './mapApplyStatus.js';
+import { isFrameUnvalidated, isMapInstallPending, markFrameUnvalidated } from './frameValidation.js';
+import { beginMapApply, confirmMapInstall } from './mapApplyStatus.js';
 import { assertMowerMapOperation } from './mowerMapOperation.js';
 import { installVerifiedMapZip } from './mowerMapApply.js';
 import { DOCK_SEAT_TOLERANCE_M, stablePosition } from './positionTelemetry.js';
@@ -124,8 +124,7 @@ export async function installZoneCopy(
       if (photo) deviceSettingsRepo.upsert(sn, PHOTO_DOCK_KEY, JSON.stringify(photo));
       return result;
     })();
-    clearMapInstallPending(sn);
-    apply.done();
+    confirmMapInstall(sn);
     return saved;
   } catch (error) {
     if (!transferFailed) apply.fail('sync_failed'); // Preserve the installer's specific failure.

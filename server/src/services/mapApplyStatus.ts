@@ -13,6 +13,7 @@ import { positionTelemetry, POSITION_MAX_AGE_MS } from './positionTelemetry.js';
  */
 import { deviceCache } from '../mqtt/sensorData.js';
 import { forwardToDashboard } from '../dashboard/socketHandler.js';
+import { clearMapInstallPending } from './frameValidation.js';
 
 export type MapApplyPhase = 'syncing' | 'regenerating' | 'settling';
 export type MapApplyError = 'sync_timeout' | 'sync_failed' | 'regenerate_timeout' | 'regenerate_failed' | 'planner_timeout' | 'map_operation_busy'
@@ -58,6 +59,19 @@ export function beginMapApply(sn: string): MapApply {
     fail: e => { if (current()) publish(sn, 'failed', e); },
     done: () => { if (current()) publish(sn, '', ''); },
   };
+}
+
+/**
+ * A verified install, by any route, while it holds the map lease: releases
+ * map_install_pending and ends the failed banner, whichever run reported it.
+ * done() of the verifying run only cleared its own status, so a failure
+ * another run reported kept the banner up after the repair (GH #162). No run
+ * that started before can bring the failure back.
+ */
+export function confirmMapInstall(sn: string): void {
+  clearMapInstallPending(sn);
+  latest.set(sn, (latest.get(sn) ?? 0) + 1);
+  publish(sn, '', '');
 }
 
 /** Foutcode uit een ruwe ('140') of vertaalde ('Error (140)', 'OK') error_status. */

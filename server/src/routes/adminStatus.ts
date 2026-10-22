@@ -23,8 +23,8 @@ import { parseMapZip, MapArea } from '../mqtt/mapConverter.js';
 import { startMdnsAdvertiser, stopMdnsAdvertiser, getActiveAdvertisement } from '../services/mdnsAdvertiser.js';
 import { listBackups, backupPath } from '../services/mapBackup.js';
 import { getPolygonAnchor } from '../services/anchor.js';
-import { markFrameUnvalidated, isFrameUnvalidated, clearMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
-import { beginMapApply } from '../services/mapApplyStatus.js';
+import { markFrameUnvalidated, isFrameUnvalidated, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
+import { confirmMapInstall } from '../services/mapApplyStatus.js';
 import { settleRestoredFrame } from '../services/restoreFrameCheck.js';
 import { parseBundle, BundleValidationError, type ParsedBundle } from '../services/portableMap.js';
 import { synthesizePortableFromWalker } from '../maps/walkerBundleImporter.js';
@@ -2672,11 +2672,10 @@ adminStatusRouter.post('/maps/:sn/import-portable/:stagingId/apply-verbatim', as
         importStaging.transition(stagingId, 'APPLIED', { applyResult: {
           operationId: operation.id, bundleHash, mowerVerified: true,
         } });
-        clearMapInstallPending(sn);
+        confirmMapInstall(sn);
         // A confirmed full restore supersedes the prior recovery snapshot, but
         // still needs a complete frame check against this restored map.
         if (getPendingReanchor(sn)) { setPendingReanchor(sn, null); markFrameUnvalidated(sn); }
-        beginMapApply(sn).done();
         res.json({ ok: true, state: 'APPLIED', mode: 'verbatim', sourceSn, forced: force,
           mowerVerified: true, restored, operationId: operation.id,
           written: { csvFiles: Object.keys(mowerFiles.csvFiles).length, posJson: false,

@@ -4,10 +4,10 @@ import unzipper from 'unzipper';
 import { mapRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { isOpenNovaMower } from './mowerFileCapability.js';
-import { beginMapApply, waitForPlannerBack, type MapApply, type MapApplyError } from './mapApplyStatus.js';
+import { beginMapApply, confirmMapInstall, waitForPlannerBack, type MapApply, type MapApplyError } from './mapApplyStatus.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from './anchor.js';
 import { freshPositionState } from './positionTelemetry.js';
-import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending } from './frameValidation.js';
+import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending } from './frameValidation.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 import { geometryFromMowerFiles, sameMapFile } from './portableSnapshot.js';
@@ -59,8 +59,7 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
       for (const file of zip.files) if (file.type === 'File' && /^csv_file\/[^/]+$/.test(file.path)) expectedCsv.set(file.path.slice(9), (await file.buffer()).toString('utf8'));
       if (!expectedCsv.size) { apply.fail('bundle_failed'); return; }
       if (!await installVerifiedMapZip(sn, { bytes, expectedCsv, before, anchor }, operation, apply)) return;
-      clearMapInstallPending(sn);
-      apply.done();
+      confirmMapInstall(sn);
       success = true;
     });
   } catch (error) {

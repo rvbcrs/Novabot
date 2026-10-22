@@ -9,12 +9,12 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { snapshotDockPose, getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { DOCK_SEAT_TOLERANCE_M, stablePosition } from './positionTelemetry.js';
-import { isFrameUnvalidated, isMapInstallPending, clearMapInstallPending } from './frameValidation.js';
+import { isFrameUnvalidated, isMapInstallPending } from './frameValidation.js';
 import { snapshotAnchorMatches } from './anchor.js';
 import { parseMapCsv, mergeConnectorCopies, reconcileMowerCsvTrees } from './portableSnapshot.js';
 import { dockChannelPoints, DOCK_MAX_M } from './zoneCopy.js';
 import { distanceToPolygon } from './canonicalNaming.js';
-import { beginMapApply } from './mapApplyStatus.js';
+import { beginMapApply, confirmMapInstall } from './mapApplyStatus.js';
 import { installVerifiedMapZip } from './mowerMapApply.js';
 import { validateMapRasters } from '../maps/validateGrid.js';
 import { M, TextError } from './serverText.js';
@@ -233,8 +233,7 @@ export async function repairDockChannels(sn: string, expectedHash?: string) {
         if (photo) deviceSettingsRepo.upsert(sn, PHOTO_DOCK_KEY, JSON.stringify(photo));
       })();
       writeFileSync(path.join(backupDir, 'after.json'), JSON.stringify(after), { flag: 'wx' });
-      clearMapInstallPending(sn);
-      apply.done();
+      confirmMapInstall(sn);
       return { ok: true, preview, backupId: operation.id, applied: true };
     } catch (error) { apply.fail('sync_failed'); throw error; }
   });

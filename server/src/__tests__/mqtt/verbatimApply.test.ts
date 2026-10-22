@@ -6,7 +6,7 @@ vi.mock('../../dashboard/socketHandler.js', () => ({ emitDeviceBound: vi.fn(), e
 vi.mock('../../mqtt/sensorData.js', () => ({ deviceCache: new Map() }));
 vi.mock('../../services/frameValidation.js', () => ({ isFrameNavBlocked: () => false, markFrameUnvalidated: vi.fn(), markMapInstallPending: vi.fn(), clearMapInstallPending: vi.fn() }));
 const apply = vi.hoisted(() => ({ phase: () => {}, fail: (() => {}) as (e: string) => void, done: () => {} }));
-vi.mock('../../services/mapApplyStatus.js', () => ({ beginMapApply: () => apply }));
+vi.mock('../../services/mapApplyStatus.js', () => ({ beginMapApply: () => apply, confirmMapInstall: vi.fn() }));
 vi.mock('../../services/portableBackup.js', () => ({ listBackups: () => [], readBackup: () => Buffer.from('zip') }));
 vi.mock('../../services/portableMap.js', () => ({ parseBundle: async () => ({ mowerFiles: files() }) }));
 vi.mock('../../services/mowerMapOperation.js', () => ({

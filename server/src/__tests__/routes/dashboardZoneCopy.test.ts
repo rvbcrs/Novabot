@@ -142,7 +142,8 @@ vi.mock('../../services/mapBackup.js', () => ({ regenerateLatestZipFromBackup: (
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { publishToExtended, onExtendedResponse, offExtendedResponse } from '../../mqtt/mapSync.js';
 import { forwardToDashboard } from '../../dashboard/socketHandler.js';
-import { mapApplyTiming, PHASE_KEY, ERROR_KEY } from '../../services/mapApplyStatus.js';
+import { beginMapApply, mapApplyTiming, PHASE_KEY, ERROR_KEY } from '../../services/mapApplyStatus.js';
+import { deviceCache } from '../../mqtt/sensorData.js';
 import { isDeviceOnline } from '../../mqtt/broker.js';
 import { mapRepo } from '../../db/repositories/index.js';
 import { withConfirmedCopyDocks } from '../../services/dockChannelRepair.js';
@@ -528,6 +529,19 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     await vi.waitFor(() => expect(phases().at(-1)).toBe(''));
     expect(phases()).not.toContain('failed');
     expect(isMapInstallPending(B)).toBe(false);
+  });
+
+  // GH #162: the failed banner stayed until a run of its own kind replaced it.
+  it('a verified Retry ends the failed banner, also one another route reported meanwhile', async () => {
+    markMapInstallPending(B);
+    expect((await request(server).post(applyUrl).send({})).status).toBe(200);
+    await answer({ sync_map_respond: { result: 0 } });
+    beginMapApply(B).fail('install_mismatch'); // another route reports a failure while the Retry runs
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); ingestPositionTelemetry(B, { error_status: 0 });
+    await vi.waitFor(() => expect(isMapInstallPending(B)).toBe(false));
+    expect(phases().at(-1)).toBe('');
+    expect(deviceCache.get(B)?.get(PHASE_KEY)).toBe('');
   });
 
   it.each(['pos_json', 'charging_station_yaml'] as const)('retains independent frame recovery when %s changes during a CSV install', async file => {

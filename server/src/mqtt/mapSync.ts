@@ -30,7 +30,7 @@ import { emitDeviceBound, emitDevicePaired } from '../dashboard/socketHandler.js
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
 import { isSnBanned, isDeviceOnline } from './broker.js';
-import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending, setPendingReanchor } from '../services/frameValidation.js';
+import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, setPendingReanchor } from '../services/frameValidation.js';
 import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, isMowerMapOperationBusy, type MowerMapOperation } from '../services/mowerMapOperation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
 import type { MapApplyError } from '../services/mapApplyStatus.js';
@@ -917,19 +917,19 @@ export async function pushMapToMowerVerbatim(
 
   const res = await withMowerMapOperation(sn, async operation => {
     const applied = await applyVerbatimToMower(sn, mowerFiles, operation);
+    const { beginMapApply, confirmMapInstall } = await import('../services/mapApplyStatus.js');
     if (applied.pushed) {
-      clearMapInstallPending(sn);
+      confirmMapInstall(sn);
       setPendingReanchor(sn, null); // This confirmed full restore replaces the prior recovery snapshot.
-      const { beginMapApply } = await import('../services/mapApplyStatus.js');
-      beginMapApply(sn).done();
+    } else {
+      // The dashboard's failure banner (with Retry) shows the cause. Reported
+      // under the lease, so it cannot land over a run that started after it.
+      beginMapApply(sn).fail(VERBATIM_APPLY_ERRORS[applied.error ?? ''] ?? 'install_mismatch');
     }
     return applied;
   });
   if (!res.pushed) {
     console.error(`${TAG} pushMapToMowerVerbatim: ${sn} niet geïnstalleerd (${res.error ?? 'onbekend'})`);
-    // The dashboard's failure banner (with Retry) shows the cause.
-    const { beginMapApply } = await import('../services/mapApplyStatus.js');
-    beginMapApply(sn).fail(VERBATIM_APPLY_ERRORS[res.error ?? ''] ?? 'install_mismatch');
     return { ok: false, invalidMap: true, error: res.error };
   }
   console.log(`${TAG} Kaart naar ${sn} gepusht via apply-verbatim (write_map_files)`);
