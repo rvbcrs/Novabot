@@ -5,6 +5,7 @@ import { ApiClient, type ReanchorStatus } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import ManualJoystick from './ManualJoystick';
 import { useI18n } from '../i18n';
+import { afterPulse, pulseOutcome, REANCHOR_PULSE_MS } from '../utils/reanchorPulse';
 
 interface Props { visible: boolean; sn: string; sensors: Record<string, string> | undefined; onClose: () => void; }
 
@@ -19,6 +20,7 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
   const installPhase = sensors?.map_apply_phase ?? '';
   const installing = retrying || ['syncing', 'regenerating', 'settling'].includes(installPhase);
   const owned = useRef<string | null>(null);
+  const misses = useRef(0);
   const generation = useRef(0);
   const client = async () => {
     const url = await getServerUrl();
@@ -39,10 +41,12 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
         if (!url || cancelled) return;
         const api = new ApiClient(url);
         if (id) {
-          try {
-            const pulse = await api.reanchor(sn, 'pulse', { cycleId: id });
-            if (!cancelled && owned.current === id && !pulse.ok) owned.current = null;
-          } catch { if (!cancelled && owned.current === id) owned.current = null; }
+          // Only the server's refusal, or a window that has certainly expired, ends supervision.
+          const outcome = await pulseOutcome(() => api.reanchor(sn, 'pulse', { cycleId: id }));
+          if (!cancelled && owned.current === id) {
+            const next = afterPulse(misses.current, outcome);
+            if (next === null) owned.current = null; else misses.current = next;
+          }
         }
         if (cancelled) return;
         const s = await api.getReanchorStatus(sn);
@@ -59,7 +63,7 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
       }
     });
     void tick();
-    const timer = setInterval(tick, 1000);
+    const timer = setInterval(tick, REANCHOR_PULSE_MS);
     return () => {
       cancelled = true; generation.current = session + 1; clearInterval(timer); background.remove();
       const id = owned.current; owned.current = null;
@@ -74,7 +78,7 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
       const result = await api.reanchor(sn, 'auto', { mode: 'supervised-v2', ownDockUnmoved: confirmed });
       if (!result.ok || !result.cycleId) throw new Error(result.error || t('reanchorStartFailed'));
       if (attempt !== generation.current || AppState.currentState !== 'active') { await api.reanchor(sn, 'stop', { cycleId: result.cycleId }); return; }
-      owned.current = result.cycleId;
+      owned.current = result.cycleId; misses.current = 0;
       const s = await api.getReanchorStatus(sn);
       if (attempt === generation.current) setStatus(s);
     } catch (e) { if (attempt === generation.current) setErr(e instanceof Error ? e.message : String(e)); }
