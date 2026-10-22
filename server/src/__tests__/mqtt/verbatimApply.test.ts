@@ -95,6 +95,40 @@ describe('confirmed verbatim apply', () => {
     expect(await applyVerbatimToMower('A', files(), operation)).toMatchObject({ pushed: false, uncertain: true });
   });
 
+  // seam_fix_daemon (custom-50) rewrites map.pgm, the mapN.pgm and the PNGs as
+  // soon as they are written: same size, other pixels. An exact compare read a
+  // good edit back as failed and left the install pending (GH #159).
+  const pgmOf = (w: number, h: number, fill: number) =>
+    Buffer.concat([Buffer.from(`P5\n${w} ${h}\n255\n`), Buffer.alloc(w * h, fill)]).toString('base64');
+  const pngOf = (w: number, h: number, extra: number) => {
+    const ihdr = Buffer.alloc(25);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(ihdr, 0);
+    ihdr.writeUInt32BE(13, 8); ihdr.write('IHDR', 12, 'ascii');
+    ihdr.writeUInt32BE(w, 16); ihdr.writeUInt32BE(h, 20); ihdr[24] = 8;
+    return Buffer.concat([ihdr, Buffer.from([extra])]).toString('base64');
+  };
+  it('accepts rasters the mower rewrote at the same size', async () => {
+    const sent = files();
+    sent.mapFilesB64!['map.png'] = pngOf(2, 2, 1);
+    const rewritten = snapshot(sent);
+    rewritten.map_files_b64 = { 'map.pgm': pgmOf(2, 2, 0), 'map0.pgm': pgmOf(2, 2, 254), 'map.png': pngOf(2, 2, 7) };
+    vi.mocked(readMowerMapSnapshot).mockResolvedValueOnce(snapshot(sent)).mockResolvedValueOnce(rewritten);
+    expect(await applyVerbatimToMower('A', sent, operation)).toMatchObject({ pushed: true });
+  });
+
+  it('still rejects a raster of another size, a missing raster and changed text files', async () => {
+    const otherSize = snapshot();
+    otherSize.map_files_b64 = { ...otherSize.map_files_b64, 'map0.pgm': pgmOf(3, 2, 254) };
+    const missing = snapshot();
+    missing.map_files_b64 = { 'map.pgm': files().mapFilesB64!['map.pgm'] };
+    const yaml = snapshot();
+    yaml.map_files_text = { ...yaml.map_files_text, 'map0.yaml': 'image: other.pgm\n' };
+    for (const after of [otherSize, missing, yaml]) {
+      vi.mocked(readMowerMapSnapshot).mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(after);
+      expect(await applyVerbatimToMower('A', files(), operation)).toMatchObject({ pushed: false, error: 'readback_mismatch' });
+    }
+  });
+
   it('never treats ACK alone or timeout as success and reconciliation only reads', async () => {
     vi.mocked(readMowerMapSnapshot).mockResolvedValueOnce(snapshot()).mockResolvedValueOnce({ ...snapshot(), x3_csv_files: {} });
     expect((await applyVerbatimToMower('A', files(), operation)).error).toBe('readback_mismatch');

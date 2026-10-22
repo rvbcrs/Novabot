@@ -34,7 +34,7 @@ import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated, markMapIns
 import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, isMowerMapOperationBusy, type MowerMapOperation } from '../services/mowerMapOperation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
 import type { MapApplyError } from '../services/mapApplyStatus.js';
-import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
+import { validateMapRasters, parsePgm, type BundleValidation } from '../maps/validateGrid.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceCache } from './sensorData.js';
 import { edgeCutGate, stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
@@ -775,8 +775,31 @@ function sameFileSet(actual: unknown, expected: Record<string, string>, binary =
   const files = actual as Record<string, unknown>;
   return Object.keys(files).length === Object.keys(expected).length && Object.entries(expected).every(([name, value]) => {
     if (typeof files[name] !== 'string') return false;
-    return binary ? Buffer.from(files[name], 'base64').equals(Buffer.from(value, 'base64')) : files[name] === value;
+    return binary ? sameRaster(name, Buffer.from(files[name], 'base64'), Buffer.from(value, 'base64')) : files[name] === value;
   });
+}
+
+/**
+ * A raster read back from the mower matches what was sent when it is the same
+ * bytes, or a valid image of the same size. seam_fix_daemon rewrites map.pgm,
+ * every mapN.pgm and the PNGs as soon as they land (other pixels, never another
+ * size), so an exact compare read every good edit back as failed (GH #159).
+ * write_map_files itself reports a failed write.
+ */
+function sameRaster(name: string, actual: Buffer, sent: Buffer): boolean {
+  if (actual.equals(sent)) return true;
+  const size = (buf: Buffer): string | null => {
+    if (name.endsWith('.pgm')) {
+      const g = parsePgm(buf);   // null for a truncated file
+      return g ? `${g.W}x${g.H}` : null;
+    }
+    if (name.endsWith('.png') && buf.length >= 24 && buf.readUInt32BE(0) === 0x89504e47 && buf.toString('ascii', 12, 16) === 'IHDR') {
+      return `${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)}`;
+    }
+    return null;
+  };
+  const a = size(actual);
+  return a !== null && a === size(sent);
 }
 
 function snapshotMatchesFiles(snapshot: Record<string, unknown>, files: VerbatimMowerFiles): boolean {
