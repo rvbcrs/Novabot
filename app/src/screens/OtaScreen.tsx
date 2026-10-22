@@ -26,6 +26,7 @@ import { getSocket } from '../services/socket';
 import { formatDate } from '../lib/format';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 import { useI18n } from '../i18n';
+import { useFirmwareUpdate } from '../context/FirmwareUpdateContext';
 
 interface OtaProgressEntry {
   status: string;       // 'upgrade' | 'success' | 'failed' | 'error' | ...
@@ -64,6 +65,8 @@ function otaPhaseLabel(p: OtaProgressEntry, t: (key: string, params?: Record<str
 }
 
 export default function OtaScreen() {
+  // What the builds after the mower's own bring, to read before updating.
+  const { releases } = useFirmwareUpdate();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { t } = useI18n();
@@ -408,6 +411,22 @@ export default function OtaScreen() {
           const chargerCurrent = charger?.sensors.charger_version ?? charger?.sensors.sw_version ?? charger?.firmwareVersion ?? null;
           return (
             <>
+              {releases.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>
+                    {t('stOtaNotesTitle', { version: String(mowerCurrent ?? '').replace(/^v/i, '') })}
+                  </Text>
+                  <View style={[styles.card, styles.notesCard]}>
+                    {releases.map(r => (
+                      <View key={r.version} style={styles.notesRelease}>
+                        <Text style={styles.notesVersion}>{r.version}</Text>
+                        {r.notes.map((note, i) => <Text key={i} style={styles.notesLine}>• {note}</Text>)}
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
               {mowerVersions.length > 0 && (
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>{t('stOtaMowerFirmware')}</Text>
@@ -772,6 +791,10 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     justifyContent: 'center',
   },
   section: { marginBottom: 24 },
+  notesCard: { padding: 14, gap: 12 },
+  notesRelease: { gap: 3 },
+  notesVersion: { fontSize: 13, fontWeight: '700', color: c.emerald },
+  notesLine: { fontSize: 13, color: c.textDim, lineHeight: 18 },
   sectionTitle: {
     fontSize: 13, fontWeight: '600', color: c.textDim,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginLeft: 4,

@@ -214,6 +214,8 @@ export interface FirmwareAdvisory {
   current: string | null;
   reason: string | null;
   target: { version: string; description: string; downloaded: boolean } | null;
+  /** Every build after the mower's own up to the target, newest first (older servers send none). */
+  releases?: { version: string; notes: string[] }[];
 }
 
 export type OtaPhase =

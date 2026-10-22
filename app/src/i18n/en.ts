@@ -1012,6 +1012,7 @@ export default {
   stOtaCurrentVersions: "Current versions",
   stOtaNoDevices: "No devices connected",
   stOtaMowerFirmware: "Mower firmware",
+  stOtaNotesTitle: "New since {{version}}",
   stOtaChargerFirmware: "Charger firmware",
   stOtaNoVersions: "No firmware versions registered",
   stOtaNoVersionsHint: "Upload firmware files to the server's firmware/ directory.",

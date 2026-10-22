@@ -1010,6 +1010,7 @@ export default {
   stOtaCurrentVersions: "Huidige versies",
   stOtaNoDevices: "Geen apparaten verbonden",
   stOtaMowerFirmware: "Maaierfirmware",
+  stOtaNotesTitle: "Nieuw sinds {{version}}",
   stOtaChargerFirmware: "Laadstationfirmware",
   stOtaNoVersions: "Geen firmwareversies geregistreerd",
   stOtaNoVersionsHint: "Upload firmwarebestanden naar de map firmware/ op de server.",

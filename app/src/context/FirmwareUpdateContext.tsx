@@ -28,6 +28,8 @@ interface FirmwareUpdateState {
   /** The mower's custom build was withdrawn (manifest): update required,
    *  banner not dismissible. Null when fine or unknown. */
   advisory: FirmwareAdvisory | null;
+  /** What the builds after the mower's own bring, newest first; shown on the OTA screen. */
+  releases: NonNullable<FirmwareAdvisory['releases']>;
   /** Available AND not dismissed for this version — drives the Home banner. */
   bannerVisible: boolean;
   /** Hide the banner for the current version (persisted). Badges stay on. */
@@ -37,6 +39,7 @@ interface FirmwareUpdateState {
 const FirmwareUpdateContext = createContext<FirmwareUpdateState>({
   available: null,
   advisory: null,
+  releases: [],
   bannerVisible: false,
   dismiss: () => {},
 });
@@ -51,6 +54,7 @@ export function FirmwareUpdateProvider({ children }: { children: React.ReactNode
 
   const [available, setAvailable] = useState<MowerFirmwareUpdate | null>(null);
   const [advisory, setAdvisory] = useState<FirmwareAdvisory | null>(null);
+  const [releases, setReleases] = useState<FirmwareUpdateState['releases']>([]);
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
   const activeSn = activeMower?.sn ?? null;
 
@@ -79,10 +83,10 @@ export function FirmwareUpdateProvider({ children }: { children: React.ReactNode
       try {
         const url = activeSn ? await getServerUrl() : null;
         const adv = url ? await new ApiClient(url).getFirmwareAdvisory(activeSn as string) : null;
-        if (!cancelled) setAdvisory(adv?.required ? adv : null);
+        if (!cancelled) { setAdvisory(adv?.required ? adv : null); setReleases(adv?.releases ?? []); }
       } catch {
         // Older server without the endpoint: no advisory.
-        if (!cancelled) setAdvisory(null);
+        if (!cancelled) { setAdvisory(null); setReleases([]); }
       }
     }
     run();
@@ -111,7 +115,7 @@ export function FirmwareUpdateProvider({ children }: { children: React.ReactNode
   const bannerVisible = !!advisory || (!!available && available.version !== dismissedVersion);
 
   return (
-    <FirmwareUpdateContext.Provider value={{ available, advisory, bannerVisible, dismiss }}>
+    <FirmwareUpdateContext.Provider value={{ available, advisory, releases, bannerVisible, dismiss }}>
       {children}
     </FirmwareUpdateContext.Provider>
   );

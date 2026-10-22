@@ -727,6 +727,7 @@ export default {
   stOtaCurrentVersions: "Aktuelle Versionen",
   stOtaNoDevices: "Keine Geräte verbunden",
   stOtaMowerFirmware: "Mäher-Firmware",
+  stOtaNotesTitle: "Neu seit {{version}}",
   stOtaChargerFirmware: "Ladestation-Firmware",
   stOtaNoVersions: "Keine Firmware-Versionen registriert",
   stOtaNoVersionsHint: "Laden Sie Firmware-Dateien in das Verzeichnis firmware/ des Servers hoch.",

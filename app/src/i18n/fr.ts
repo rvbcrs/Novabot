@@ -727,6 +727,7 @@ export default {
   stOtaCurrentVersions: "Versions actuelles",
   stOtaNoDevices: "Aucun appareil connecté",
   stOtaMowerFirmware: "Firmware de la tondeuse",
+  stOtaNotesTitle: "Nouveau depuis {{version}}",
   stOtaChargerFirmware: "Firmware de la station de charge",
   stOtaNoVersions: "Aucune version de firmware enregistrée",
   stOtaNoVersionsHint: "Téléversez les fichiers de firmware dans le dossier firmware/ du serveur.",
