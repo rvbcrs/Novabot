@@ -1,6 +1,39 @@
 {
   "releases": [
     {
+      "version": "2026.1022.1742",
+      "date": "2026-10-22",
+      "sections": {
+        "app": [
+          "The OTA screen shows what the builds since the mower's own bring (Novabot-up6e)",
+          "Provisioning marks only the device the server saw as online (Novabot-8fw0, GH #160)"
+        ],
+        "admin": [
+          "Mower debug fetches extended_commands.log and downloads a fetched log (Novabot-3qcv)"
+        ],
+        "firmware": [
+          "The banner shows what the builds since the mower's own bring (Novabot-up6e)",
+          "The broker resolver follows both mDNS names, like the discovery (Novabot-8fw0, GH #160)",
+          "The mower helpers follow a server that moved to a new IP (Novabot-8fw0, GH #160)",
+          "Dock measurement margins leave room for the native docker; an RTK stop names its cause (Novabot-4zi6, GH #158)"
+        ],
+        "server": [
+          "The app wizard keeps supervising through a lost pulse (Novabot-gnxv, GH #158)",
+          "The source measurement docks back on the saved dock heading (Novabot-gnxv, GH #158)",
+          "Tell the owner when a rain go home does not reach the dock (Novabot-8cbh, GH #156)",
+          "Read a rain session's paused_at as UTC (Novabot-8cbh, GH #156)",
+          "Each RTK or localization stop says its own cause and next step (Novabot-4zi6, GH #158)",
+          "The dashboard wizard keeps supervising through a lost pulse (Novabot-gnxv, GH #158)",
+          "Dock back on the saved dock heading and give the dock measurement its own freshness margin (Novabot-gnxv, GH #158)",
+          "A verified install ends the failed map-apply banner, whoever reported it (Novabot-1hqp, GH #162)",
+          "A mower that lost its whole-garden raster gets one before the per-zone grids (Novabot-c8c9, GH #161)",
+          "A failed patrol round no longer ends the night; the next slot starts once the mower charges on the dock",
+          "A raster the mower rewrote at the same size reads back as written (Novabot-e2ki, GH #159)",
+          "One address change is no client_id fight; Docker's NAT gateway is not the device address (Novabot-cpw3)"
+        ]
+      }
+    },
+    {
       "version": "2026.1021.1715",
       "date": "2026-10-21",
       "sections": {
@@ -200,31 +233,6 @@
           "Cut the edge right after the mow instead of after a trip to the dock",
           "A finished edge cut drives home, and only real mowing arms the next one",
           "Deleting or editing a schedule in the Novabot app works again"
-        ]
-      }
-    },
-    {
-      "version": "2026.1008.1626",
-      "date": "2026-10-08",
-      "sections": {
-        "dashboard": [
-          "Notifications panel above the status bar again",
-          "Send the login token, make BLE provisioning honest, unbreak the mobile map",
-          "Measured nudge for own zones and obstacles, drag-to-move removed"
-        ],
-        "app": [
-          "BLE provisioning sends every step again and only reports what was not confirmed"
-        ],
-        "firmware": [
-          "Stock departure and dock light, longer hotspot wait, no camera stop or map reload during a task"
-        ],
-        "server": [
-          "Edge cut after every mow, and the edge obstacle level in the real dashboard settings",
-          "Push rain_paused as a live change so a stale rain popup cannot appear",
-          "Honest progress for a stock-to-custom update, and a way out",
-          "Close path traversal, shell injection and gate bypass found in the repo review",
-          "Refuse a mower update while the mower is off its dock",
-          "Fill an empty map database from the mower itself"
         ]
       }
     }
