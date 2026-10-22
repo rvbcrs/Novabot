@@ -62,6 +62,17 @@ export function recallDockedPose(sn: string, revision: number): DockPose | undef
   return entry && entry.revision === revision ? entry.pose : undefined;
 }
 
+/**
+ * The charge pose to dock back at after a departure. The mower reports its yaw
+ * on the dock before the departure initializes its heading, so that yaw can
+ * miss the docking axis (GH #158). Its x/y are in the current frame; saved dock
+ * x/y may be shifted against it, but a re-anchor only shifts the origin, so the
+ * saved dock heading holds in every frame. Without one, the departure pose stays.
+ */
+export function returnChargePose(departure: DockPose, savedOrientation: number | undefined): DockPose {
+  return Number.isFinite(savedOrientation) ? { x: departure.x, y: departure.y, yaw: savedOrientation! } : departure;
+}
+
 /** Shared by source measurement, own-dock reanchoring and camera return. Native watchdog owns the actual stop. */
 export async function guardedDockMove(sn: string, operation: MowerMapOperation,
   input: { action: 'reverse' | 'dock'; distance: number; fromDock: boolean; signature: string; chargePose?: DockPose },

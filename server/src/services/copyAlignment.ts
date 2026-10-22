@@ -150,13 +150,14 @@ export function getCopyAlignment(alignmentId: string, targetSn: string, sourceSn
 /** Consume only after native install, runtime verification and the server commit succeed. */
 export function consumeCopyAlignment(alignmentId: string): void { sessions.delete(alignmentId); }
 
-export function freshCapture(frame: { capture_started: number; capture_finished: number }, startedAt: number, maximumSpan: number, label: string): void {
+export function freshCapture(frame: { capture_started: number; capture_finished: number }, startedAt: number, maximumSpan: number, label: string,
+  maximumOutside = 10): void {
   const span = frame.capture_finished - frame.capture_started;
   const elapsed = (performance.now() - startedAt) / 1000;
   // The command UUID binds a newly collected window to this request. Mower and
   // server wall clocks need not agree. All time outside the observed window is
   // conservatively counted as age, including startup, transport and later awaits.
-  if (span < 5 || span > maximumSpan || span > elapsed + .75 || elapsed - span > 10) {
+  if (span < 5 || span > maximumSpan || span > elapsed + .75 || elapsed - span > maximumOutside) {
     fail(`The ${label} measurement is stale.`);
   }
 }
@@ -166,7 +167,8 @@ function newCapture(s: Session, side: CopyAlignmentSide, started: number): void 
   if (previous !== undefined && started <= previous) fail('The measurement is stale or repeats an earlier mower capture. Start the dock measurements again.');
 }
 
-export function runtimeObservation(value: unknown, startedAt: number): RuntimeFrameObservation {
+/** `maximumOutside`: seconds of the request allowed outside the window (see freshCapture). */
+export function runtimeObservation(value: unknown, startedAt: number, maximumOutside?: number): RuntimeFrameObservation {
   const raw = record(value);
   const fields = ['x', 'y', 'spread_m', 'sample_count', 'unique_stamps', 'max_pair_dt_s', 'capture_started', 'capture_finished'] as const;
   if (fields.some(k => !finite(raw[k]))) return fail('The runtime frame measurement is incomplete.');
@@ -176,7 +178,7 @@ export function runtimeObservation(value: unknown, startedAt: number): RuntimeFr
       frame.spread_m < 0 || frame.spread_m > RUNTIME_TOLERANCE_M) {
     return fail('The runtime frame measurement is not stable or exactly synchronized.');
   }
-  freshCapture(frame, startedAt, 15, 'runtime frame');
+  freshCapture(frame, startedAt, 15, 'runtime frame', maximumOutside);
   return frame;
 }
 

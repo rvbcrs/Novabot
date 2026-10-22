@@ -31,7 +31,7 @@ import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameU
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
 import { frameSnapshotSignature } from '../services/copyAlignment.js';
-import { guardedDockMove, rememberDockedPose, settleDockMotion, DockMotionError, type DockPose } from '../services/dockMotion.js';
+import { guardedDockMove, rememberDockedPose, returnChargePose, settleDockMotion, DockMotionError, type DockPose } from '../services/dockMotion.js';
 import { assertReanchorFiles, measureReanchorDock, REANCHOR_TOLERANCE_M, type Origin } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
@@ -3370,11 +3370,12 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
           });
         setReanchor(sn, cycle, 'relock', M`De maaier rijdt begrensd achteruit om de richting te initialiseren. Blijf bij de maaier.`);
         const left = await move('reverse');
-        rememberDockedPose(sn, left.startPose!, cycle.revision);
+        const dockPose = returnChargePose(left.startPose!, savedDock.orientation);
+        rememberDockedPose(sn, dockPose, cycle.revision);
         const outside = await settleDockMotion(sn, false, check);
         if (afterWrite && Math.hypot(outside.x - anchor.x, outside.y - anchor.y) < .4) throw new ReanchorError(M`Na de oorsprongwijziging is geen verse gelokaliseerde positie minstens 40 cm van het dock gemeten.`);
         setReanchor(sn, cycle, 'dock', M`De maaier keert met de camera terug op het eigen dock. Blijf toezicht houden.`);
-        await move('dock', left.startPose);
+        await move('dock', dockPose);
         await settleDockMotion(sn, true, check);
         const current = await readMowerMapSnapshot(sn, operation);
         assertReanchorFiles(snapshot, current);

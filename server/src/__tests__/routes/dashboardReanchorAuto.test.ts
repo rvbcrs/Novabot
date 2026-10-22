@@ -86,11 +86,11 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 }));
 
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, markMapInstallPending, clearMapInstallPending, getPendingReanchor, setPendingReanchor, loadFrameValidationFromDb } from '../../services/frameValidation.js';
+import { markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, markMapInstallPending, clearMapInstallPending, getPendingReanchor, setPendingReanchor, loadFrameValidationFromDb, getFrameRevision } from '../../services/frameValidation.js';
 import { frameSnapshotSignature } from '../../services/copyAlignment.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { mapRepo } from '../../db/repositories/index.js';
-import { guardedDockMove, settleDockMotion, DockMotionError, readableDockMotionError } from '../../services/dockMotion.js';
+import { guardedDockMove, settleDockMotion, DockMotionError, readableDockMotionError, recallDockedPose, type DockPose } from '../../services/dockMotion.js';
 import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
 import { publishToDevice, publishToExtended, onExtendedResponse, offExtendedResponse } from '../../mqtt/mapSync.js';
 
@@ -114,8 +114,14 @@ let cycleId: string | undefined;
 const SN = 'LFIN_REANCHOR_TEST';
 const data = { battery_state: 'CHARGING', recharge_status: 9, rtk_fix_quality: 4, rtk_latitude: 52.1234567, rtk_longitude: 4.7654321, map_position_x: 0.13, map_position_y: -0.52, localization_state: 'RUNNING' };
 const anchor = { x: 0.13, y: -0.52 };
+// The saved dock heading (map_info.json and charging_station.yaml).
+const DOCK_YAW = 1.5;
 // The pose the mower reports it left from, in its own current frame.
-const LEFT_FROM = { x: anchor.x, y: anchor.y, yaw: 1.5 };
+const LEFT_FROM = { x: anchor.x, y: anchor.y, yaw: DOCK_YAW };
+let leftFrom: DockPose;
+// The return docks at the departure position with the saved dock heading.
+const returnPose = () => ({ x: leftFrom.x, y: leftFrom.y, yaw: DOCK_YAW });
+let measureDelay: number;
 const handlers = new Set<(data: Record<string, unknown>) => void>();
 let loadedOrigin: { x: number; y: number; z: number; utm_zone: number };
 let runtimeOverride: Record<string, unknown>;
@@ -131,8 +137,8 @@ let moveResult: number;
 function snapshot() {
   return { result: 0, snapshot_consistent: true, x3_csv_files: {}, map_files_b64: {}, map_files_text: {}, csv_files: {
     'map0tocharge_unicom.csv': '0.13,-0.52\n0.2,-0.4\n',
-    'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: 1.5 } }),
-  }, charging_station_yaml: `charging_pose: [${snapshotConflict ? 2 : anchor.x}, ${anchor.y}, 1.5]`, pos_json: JSON.stringify({ utm_origin: loadedOrigin }) };
+    'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: DOCK_YAW } }),
+  }, charging_station_yaml: `charging_pose: [${snapshotConflict ? 2 : anchor.x}, ${anchor.y}, ${DOCK_YAW}]`, pos_json: JSON.stringify({ utm_origin: loadedOrigin }) };
 }
 let lastFeed: Record<string, unknown> = {};
 function feed(fields: Record<string, unknown> = {}) { lastFeed = fields; for (let i = 7; i >= 0; i--) ingestPositionTelemetry(SN, { ...data, rtk_sample_id: String(Date.now() - i * 100), ...fields }, Date.now() - i * 100); }
@@ -153,10 +159,10 @@ beforeEach(() => {
     if (input.action === 'reverse') {
       expect(input.distance).toBe(1.15);
       feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - 1 });
-      return { startPose: LEFT_FROM };
+      return { startPose: leftFrom };
     }
-    // The return is bounded by the pose measured at departure, never by saved files.
-    expect(input.chargePose).toEqual(LEFT_FROM);
+    // The return is bounded by the position measured at departure, never by saved files.
+    expect(input.chargePose).toEqual(returnPose());
     feed();
     return {};
   });
@@ -164,6 +170,7 @@ beforeEach(() => {
   snapshotConflict = false; requestCount = 0; loadedOrigin = { x: 620859.4, y: 5776239.5, z: 0, utm_zone: 31 };
   motionProtocol = 'dock-measurement-motion-v4'; armResult = 0; moveResult = 0;
   runtimeOverride = {}; rejectWrite = false; measurementCount = 0; corruptAfterWrite = false; slowReadAfterMeasure = false;
+  leftFrom = LEFT_FROM; measureDelay = 6000;
   vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
   for (const row of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(row.map_id);
   mapRepo.create({ map_id: SN, mower_sn: SN, map_type: 'unicom', canonical_name: 'map0tocharge_unicom', map_area: JSON.stringify([anchor, { x: 0.2, y: -0.4 }]) });
@@ -177,8 +184,8 @@ beforeEach(() => {
     if (command === 'dock_measurement_move') {
       expect(isFrameUnvalidated(SN)).toBe(true);
       const docked = params.action === 'dock';
-      if (docked) { expect(params.charge_pose).toEqual(LEFT_FROM); feed(); } else feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - 1 });
-      result = { result: moveResult, protocol: motionProtocol, docked, frame_fingerprint: params.frame_fingerprint, ...(docked ? {} : { start_pose: LEFT_FROM }) };
+      if (docked) { expect(params.charge_pose).toEqual(returnPose()); feed(); } else feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - 1 });
+      result = { result: moveResult, protocol: motionProtocol, docked, frame_fingerprint: params.frame_fingerprint, ...(docked ? {} : { start_pose: leftFrom }) };
     }
     if (command === 'read_map_files' && requestCount && corruptAfterWrite) result.x3_csv_files = { 'map0_work.csv': 'changed' };
     if (command === 'read_map_files' && slowReadAfterMeasure && measurementCount) {
@@ -210,7 +217,7 @@ beforeEach(() => {
         feed({ map_position_x: frame.base?.x ?? base.x, map_position_y: frame.base?.y ?? base.y });
         for (const h of [...handlers]) h({ measure_runtime_frame_respond: { result: 0, protocol: 'runtime-map-frame-v1',
           runtime_frame: frame, frame_fingerprint: signature, operation_id: params.operation_id } });
-      }, 6000);
+      }, measureDelay);
       return;
     }
     for (const h of [...handlers]) h({ [`${command}_respond`]: { ...result, operation_id: params.operation_id } });
@@ -317,6 +324,27 @@ it('initializes heading first, writes once, then repeats the dock cycle and fres
   expect(vi.mocked(guardedDockMove).mock.calls.map(c => c[2].action)).toEqual(['reverse', 'dock', 'reverse', 'dock']);
   expect(vi.mocked(guardedDockMove).mock.calls.map(c => c[2].chargePose)).toEqual([undefined, LEFT_FROM, undefined, LEFT_FROM]);
   expect(publishToDevice).not.toHaveBeenCalled();
+});
+// GH #158: the yaw the mower reports on the dock is read before the departure
+// initializes its heading, so it can miss the docking axis. A re-anchor only
+// shifts the origin: the saved heading holds in every frame, its x/y do not.
+it('docks back at the departure position with the saved dock heading, and remembers that pose', async () => {
+  vi.useFakeTimers(); feed();
+  leftFrom = { x: anchor.x + .3, y: anchor.y - .2, yaw: DOCK_YAW + .6 };
+  await start(); await tick(16_000);
+  expect((await status()).phase).toBe('done');
+  const expected = { x: anchor.x + .3, y: anchor.y - .2, yaw: DOCK_YAW };
+  const docks = vi.mocked(guardedDockMove).mock.calls.filter(c => c[2].action === 'dock');
+  expect(docks.map(c => c[2].chargePose)).toEqual([expected, expected]);
+  // A later camera dock-return uses the same pose.
+  expect(recallDockedPose(SN, getFrameRevision(SN))).toEqual(expected);
+});
+// GH #158: before its window the mower waits up to ~5 s for health and starts
+// ROS; 10 s outside the window stopped healthy re-anchors as stale.
+it('accepts a dock measurement that arrives late but within its command timeout', async () => {
+  vi.useFakeTimers(); feed(); measureDelay = 20_000;
+  await start(); await tick(80_000);
+  expect((await status()).phase).toBe('done'); expect(measurementCount).toBe(2);
 });
 it('a matching frame still requires preparation but no origin write, and new invalidation clears old success', async () => {
   vi.useFakeTimers(); feed(); runtimeOverride = { base: { ...anchor, z: 0, yaw: 1.5 } };

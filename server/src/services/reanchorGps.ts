@@ -7,6 +7,11 @@ import { freshPositionState } from './positionTelemetry.js';
 import { M, TextError } from './serverText.js';
 
 export const REANCHOR_TOLERANCE_M = .05;
+// Before its window the mower waits up to ~5 s for health and starts ROS; the
+// zone copy's 10 s outside the window stopped healthy re-anchors as stale
+// (GH #158). A docked, stationary measurement that replies within this command
+// timeout is accepted; the checks after the reply confirm it still holds.
+const MEASURE_TIMEOUT_MS = 30_000;
 export type Origin = { x: number; y: number; z: number; utm_zone: number };
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
@@ -23,11 +28,11 @@ export function assertReanchorFiles(before: Record<string, unknown>, after: Reco
 export async function measureReanchorDock(sn: string, operation: MowerMapOperation, snapshot: Record<string, unknown>) {
   const signature = frameSnapshotSignature(snapshot);
   const started = performance.now();
-  const response = await operation.command('measure_runtime_frame', {}, 30_000);
+  const response = await operation.command('measure_runtime_frame', {}, MEASURE_TIMEOUT_MS);
   if (response?.result !== 0 || response.protocol !== 'runtime-map-frame-v1' || response.frame_fingerprint !== signature) {
     throw new TextError(M`Geen bevestigde voertuigmeting ontvangen. Controleer de versie van extended_commands.py en de meetkwaliteit.`);
   }
-  const runtime = runtimeObservation(response.runtime_frame, started);
+  const runtime = runtimeObservation(response.runtime_frame, started, MEASURE_TIMEOUT_MS / 1000);
   settledRuntime(runtime);
   const raw = response.runtime_frame as Record<string, unknown>;
   const base = raw.base as { x: number; y: number; z: number; yaw: number } | undefined;
