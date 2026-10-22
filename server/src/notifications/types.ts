@@ -26,7 +26,8 @@ export type EventType =
   | 'firmware_required'      // the custom build the mower runs was withdrawn; update to the newest one
   | 'blade_maintenance'      // mowing hours since the last blade change passed the configured interval
   | 'patrol_detection'       // the night patrol saw a person or an animal at a checkpoint
-  | 'patrol_failed';         // the night patrol stopped before it was done
+  | 'patrol_failed'          // the night patrol stopped before it was done
+  | 'rain_resume_failed';    // the rain is over and the mowing the rain monitor paused cannot continue
 
 /** Coarse groups the app lets a user mute per device (push_tokens.muted). */
 export type EventCategory = 'activity' | 'errors' | 'safety' | 'battery' | 'maintenance' | 'patrol';
@@ -36,6 +37,8 @@ export const CATEGORY_BY_TYPE: Record<EventType, EventCategory> = {
   error: 'errors', error_cleared: 'errors', stuck: 'errors', dock_failed: 'errors',
   map_error: 'errors', initialization_error: 'errors', hardware_fault: 'errors',
   gps_weak: 'errors', connection_lost: 'errors',
+  // Not activity: the owner has to start the mow again, also with the routine pushes muted.
+  rain_resume_failed: 'errors',
   safety: 'safety', pin_locked: 'safety',
   low_battery: 'battery',
   dock_drift: 'maintenance', firmware_required: 'maintenance', blade_maintenance: 'maintenance',

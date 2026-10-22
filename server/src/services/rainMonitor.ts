@@ -18,10 +18,12 @@ import { randomUUID } from 'crypto';
 import { scheduleRepo, mapRepo, rainSettingsRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice, goToChargePayload, getNextCmdNum } from '../mqtt/mapSync.js';
-import { deviceCache } from '../mqtt/sensorData.js';
+import { deviceCache, isDockedByValues } from '../mqtt/sensorData.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { isPatrolDriving } from './patrolRuns.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
+import { dispatchRainDockFailedEvent, dispatchRainResumeFailedEvent, type RainReport } from '../notifications/eventDetector.js';
+import { getRecentEvents } from '../notifications/dispatcher.js';
 import type { RainSessionRow, ScheduleRow } from '../db/repositories/schedules.js';
 
 // ── State ──────────────────────────────────────────────────────────
@@ -31,6 +33,18 @@ const CHECK_INTERVAL = 5 * 60 * 1000; // 5 minuten
 
 // Track welke maaiers al een go_to_charge hebben gekregen (voorkom dubbele commando's)
 const pendingGoCharge = new Set<string>();
+
+/**
+ * How long the go home after a rain pause may take before the owner hears it
+ * did not reach the dock (GH #156). The monitor ticks every 5 minutes, so that
+ * comes 10 to 15 minutes after the go home.
+ */
+export const RAIN_GO_HOME_TIMEOUT_MS = 10 * 60_000;
+
+// Rain sessions whose go home is settled: the mower reached its dock, or the
+// owner heard that it did not. In memory: after a server restart a mower still
+// off its dock is reported once more.
+const goHomeSettled = new Set<string>();
 
 // Per-mower opt-out: user vinkte "Negeer regen deze sessie" aan in StartMowSheet.
 // Geldig tot maaier niet meer mowing rapporteert (auto-clear in checkActiveMowers).
@@ -120,6 +134,65 @@ const MANUAL_SCHEDULE_ID = 'manual';
 function pausedAtMs(session: RainSessionRow): number {
   const at = session.paused_at;
   return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(at) ? at : `${at.replace(' ', 'T')}Z`);
+}
+
+/**
+ * Where the mower is by its last report: on its dock (charging or full, or
+ * recharge_status 9: isDockedByValues), off it, or unknown (no report says).
+ * Not freshPositionState: it counts recharge_status 1 as docked, and on the way
+ * home the mower reports 1 (RETURNING_RECHARGE_STATUS in sensorData.ts).
+ */
+function dockState(sn: string): 'docked' | 'off' | 'unknown' {
+  const sensors = deviceCache.get(sn);
+  if (!sensors || !(sensors.has('battery_state') || sensors.has('recharge_status'))) return 'unknown';
+  return isDockedByValues(sensors) ? 'docked' : 'off';
+}
+
+/**
+ * The mower drives: it mows (again: the stock app's Continue reaches it without
+ * the server knowing) or is still on its way. By the work state alone: a mower
+ * that stopped keeps the recharge state it had (GH #156 ended on
+ * "Work:FAILED Prev work:RECOVER_ERROR_STOP Recharge: ALIGN_PILE").
+ */
+function isUnderWay(sn: string): boolean {
+  return /\bWork:(RUNNING|COVERING|NAVIGATING|BOUNDARY_COVERING|AVOIDING|MOVING|GO_PILE|BACK_CHARGER|DOCKING)\b/
+    .test(deviceCache.get(sn)?.get('msg') ?? '');
+}
+
+/** The mower's last report, for a rain notification. */
+function reportOf(sn: string): RainReport {
+  const s = deviceCache.get(sn);
+  return {
+    msg: s?.get('msg') ?? '',
+    errorStatus: s?.get('error_status') ?? '0',
+    errorMsg: s?.get('error_msg') ?? '',
+    batteryPower: parseInt(s?.get('battery_power') ?? '0', 10) || 0,
+  };
+}
+
+/**
+ * Did the go home of this rain pause reach the dock? RAIN_GO_HOME_TIMEOUT_MS
+ * after it, a mower that stands still off its dock gives one dock_failed: the
+ * reporter's ended in an error stop on the lawn, and nothing said so (GH #156).
+ * Not while it drives (still on its way, or mowing again), and not when the
+ * event detector reported a failed recharge since the go home already.
+ */
+function checkGoHome(session: RainSessionRow): void {
+  if (goHomeSettled.has(session.session_id)) return;
+  const sn = session.mower_sn;
+  const where = dockState(sn);
+  if (where === 'docked') {
+    goHomeSettled.add(session.session_id);
+    return;
+  }
+  const since = pausedAtMs(session);
+  if (where === 'unknown' || Date.now() - since < RAIN_GO_HOME_TIMEOUT_MS || isUnderWay(sn)) return;
+  goHomeSettled.add(session.session_id);
+  if (getRecentEvents(sn, 50).some(e => e.type === 'dock_failed' && e.ts >= since)) return;
+  console.log(`[RainMonitor] ${sn} did not reach its dock after the rain go home (session ${session.session_id})`);
+  dispatchRainDockFailedEvent(sn, {
+    ...reportOf(sn), sessionId: session.session_id, minutes: RAIN_GO_HOME_TIMEOUT_MS / 60_000,
+  });
 }
 
 /** Check of maaier aan het laden is en batterij voldoende is */
@@ -286,6 +359,8 @@ async function checkPausedSessions(): Promise<void> {
       continue;
     }
 
+    checkGoHome(session);
+
     // Check of maaier geladen en klaar is
     if (!isChargedAndReady(session.mower_sn)) continue;
 
@@ -307,7 +382,7 @@ async function checkPausedSessions(): Promise<void> {
       );
 
       if (!stillRaining) {
-        console.log(`[RainMonitor] Regen voorbij voor ${session.mower_sn}, herstart`);
+        console.log(`[RainMonitor] Rain is over for ${session.mower_sn}, resuming`);
         _resumeSession(session);
       }
     } catch (err) {
@@ -341,6 +416,15 @@ export function _resumeSession(session: RainSessionRow): void {
     || /Work:USER_STOP\b/.test(sensors?.get('msg') ?? '');
   if (!parked) {
     cancelSession(session, 'no_parked_task');
+    // The owner expects the mow to go on and heard nothing (GH #156). Not when
+    // it mows again: the owner took over.
+    if (!isUnderWay(session.mower_sn)) {
+      const where = dockState(session.mower_sn);
+      dispatchRainResumeFailedEvent(session.mower_sn, {
+        ...reportOf(session.mower_sn), sessionId: session.session_id,
+        onDock: where === 'unknown' ? null : where === 'docked',
+      });
+    }
     return;
   }
 
@@ -350,6 +434,7 @@ export function _resumeSession(session: RainSessionRow): void {
 
   // Update sessie in DB
   scheduleRepo.resumeRainSession(session.session_id);
+  goHomeSettled.delete(session.session_id);
 
   // Emit event naar dashboard
   emitScheduleEvent('rain:resumed', {
@@ -364,6 +449,7 @@ export function _resumeSession(session: RainSessionRow): void {
 /** Annuleer een rain session */
 function cancelSession(session: RainSessionRow, reason: string): void {
   scheduleRepo.cancelRainSession(session.session_id);
+  goHomeSettled.delete(session.session_id);
 
   emitScheduleEvent('rain:cancelled', {
     sessionId: session.session_id,
@@ -419,6 +505,7 @@ export function onMowingCompleted(mowerSn: string): void {
 
   if (session) {
     scheduleRepo.completeRainSession(session.session_id);
+    goHomeSettled.delete(session.session_id);
 
     emitScheduleEvent('rain:completed', {
       sessionId: session.session_id,

@@ -17,6 +17,7 @@ vi.mock('../../mqtt/broker.js', () => ({
 }));
 vi.mock('../../mqtt/mapSync.js', () => ({
   publishToDevice: mocks.publishToDevice,
+  publishToTopic: vi.fn(),   // the dispatcher's event topic (rain_resume_failed)
   goToChargePayload: vi.fn(),
   getNextCmdNum: vi.fn().mockReturnValue(4242),
 }));

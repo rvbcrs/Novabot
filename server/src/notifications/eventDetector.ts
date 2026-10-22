@@ -7,7 +7,7 @@
  * events (we can't tell a transition from "first seen").
  */
 import { dispatchEvent } from './dispatcher.js';
-import { lookupError } from './errorMap.js';
+import { lookupError, ERROR_MAP } from './errorMap.js';
 import { MowerEvent, EventType } from './types.js';
 import { isPatrolDriving, patrolDockingUnderWay, patrolDockedRecently, patrolDockingFailed, DOCK_FAILED_ERROR_CODES } from '../services/patrolRuns.js';
 
@@ -36,6 +36,7 @@ const TITLE_BY_TYPE: Record<EventType, string> = {
   blade_maintenance:    'Time to check the blades',
   patrol_detection:     'Patrol alert',
   patrol_failed:        'Patrol stopped',
+  rain_resume_failed:   'Mowing not resumed after rain',
 };
 
 interface SnapshotState {
@@ -343,6 +344,66 @@ export function dispatchPatrolDockFailedEvent(
     TITLE_BY_TYPE.dock_failed,
     'Docking after the patrol failed; the mower is standing still in the garden.',
     { msg: d.msg, battery_power: d.batteryPower, error_status: d.errorStatus, patrol: true, run: d.run },
+  ));
+}
+
+/**
+ * What the mower reports, as a sentence for a notification body: its work and
+ * recharge state from the msg, and its error with the stock app's text. Empty
+ * when it reports none of these.
+ */
+export function reportedStateSentence(msg: string, errorStatus: string, errorMsg = ''): string {
+  const states = [/\bWork:(\S+)/.exec(msg)?.[1], /\bRecharge: ?(\S+)/.exec(msg)?.[1]];
+  const parts = [states[0] && `work state ${states[0]}`, states[1] && `recharge state ${states[1]}`].filter(Boolean);
+  let out = parts.length ? ` It reports ${parts.join(', ')}.` : '';
+  const code = parseInt(errorStatus, 10) || 0;
+  if (code) {
+    const text = (ERROR_MAP[code]?.message ?? errorMsg).trim();
+    out += text ? ` Error ${code}: ${text.replace(/[.!]?$/, '.')}` : ` Error ${code}.`;
+  }
+  return out;
+}
+
+/** The fields of the mower's last report a rain notification carries. */
+export interface RainReport { msg: string; errorStatus: string; errorMsg: string; batteryPower: number }
+
+/**
+ * The go home the rain monitor sent did not end on the dock: a while later the
+ * mower stands still off it (GH #156: Work:FAILED after a recover error stop,
+ * and the rain session was later dropped without a word). It is the dock_failed
+ * event, as after a patrol (dispatchPatrolDockFailedEvent): the generic text says
+ * the mower reached the charger, here it may stand anywhere. The data carries
+ * `rain` and the session.
+ */
+export function dispatchRainDockFailedEvent(sn: string, d: RainReport & { sessionId: string; minutes: number }): void {
+  dispatchEvent(makeEvent(
+    sn,
+    'dock_failed',
+    TITLE_BY_TYPE.dock_failed,
+    `The mower was sent home for rain but did not reach its dock within ${d.minutes} minutes.`
+      + reportedStateSentence(d.msg, d.errorStatus, d.errorMsg)
+      + ' Check it in the garden, clear what stopped it, and send it home from the app or the dashboard.',
+    { msg: d.msg, battery_power: d.batteryPower, error_status: d.errorStatus, rain: true, session_id: d.sessionId },
+  ));
+}
+
+/**
+ * The rain is over and the mowing it paused cannot continue: the mower has no
+ * paused task left (rainMonitor._resumeSession). Off its dock the text says what
+ * the mower reports; on it (or unknown, `onDock` null) the task was lost, a
+ * restart for example.
+ */
+export function dispatchRainResumeFailedEvent(sn: string, d: RainReport & { sessionId: string; onDock: boolean | null }): void {
+  const lead = 'The rain is over, but the mowing it paused cannot continue: the mower no longer has a paused task';
+  dispatchEvent(makeEvent(
+    sn,
+    'rain_resume_failed',
+    TITLE_BY_TYPE.rain_resume_failed,
+    d.onDock === false
+      ? `${lead} and is not on its dock.${reportedStateSentence(d.msg, d.errorStatus, d.errorMsg)}`
+        + ' Check it in the garden, clear what stopped it, then send it home or start mowing again from the app or the dashboard.'
+      : `${lead}, for example after a restart. Start mowing again from the app or the dashboard.`,
+    { msg: d.msg, battery_power: d.batteryPower, error_status: d.errorStatus, rain: true, session_id: d.sessionId, on_dock: d.onDock },
   ));
 }
 

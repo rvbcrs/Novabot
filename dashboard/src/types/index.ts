@@ -184,7 +184,7 @@ export type MowerEventType =
   | 'low_battery' | 'stuck' | 'safety' | 'pin_locked' | 'connection_lost'
   | 'gps_weak' | 'map_error' | 'initialization_error' | 'hardware_fault'
   | 'dock_failed' | 'dock_drift' | 'firmware_required'
-  | 'patrol_detection' | 'patrol_failed';
+  | 'patrol_detection' | 'patrol_failed' | 'rain_resume_failed';
 
 export interface MowerEvent {
   sn: string;

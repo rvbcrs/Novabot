@@ -136,7 +136,10 @@ Settings → **Rain detection**: pause mowing when rain is forecast and resume
 when it is dry, with a threshold. When you start a mow with rain expected
 within a few hours the app asks first, and lets you ignore rain for that
 session. A mower that came home for rain shows why, with *Ignore rain &
-resume*.
+resume*. A mower that does not reach its dock within 10 minutes of being sent
+home for rain, or a mow that cannot be resumed when it is dry, sends a
+notification with what the mower reports and what to do (see
+[Notifications](../guide/notifications.md)).
 
 ## Schedule
 

@@ -970,7 +970,7 @@ export function getDockPose(sn: string): DockPose | null {
   return dockPoseBySn.get(sn) ?? null;
 }
 
-function isDockedByValues(snValues: Map<string, string>): boolean {
+export function isDockedByValues(snValues: Map<string, string>): boolean {
   const rs = snValues.get('recharge_status') ?? '';
   // recharge_status raw is numeric — '9' = docked / charging finished.
   // Catch both raw and translated forms so this works regardless of

@@ -197,7 +197,9 @@ height and direction. Then the parts that make it useful:
 - **Pause on rain**: the server watches the forecast for your location and
   pauses a run when rain is expected, with a threshold in mm/h or chance, and
   how many hours ahead to look. The mower returns to the dock and resumes
-  when it is dry; you can override per session.
+  when it is dry; you can override per session. When it is not on its dock
+  10 minutes after that go home, or the mow cannot be resumed when it is dry,
+  you get a notification that says what the mower reports and what to do.
 - **Skip next run**, and a timeline of what will run when.
 - Overlapping schedules are flagged.
 
