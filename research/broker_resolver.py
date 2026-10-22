@@ -9,7 +9,8 @@ call resolve_broker() before every connect.
 
 Candidates, in order; the first that accepts a TCP connect on the MQTT port
 within a short timeout wins:
-  1. opennova.local      mDNS, follows the server when it moves
+  1. opennova.local      mDNS, follows the server when it moves (then the
+                         legacy opennovabot.local, like opennova_discovery.py)
   2. mqtt.lfibot.com     the DNS redirect of the stock cloud name
   3. json_config.json    the configured mqtt address
   4. server_ip.txt       the last server set_server_urls.sh found
@@ -24,7 +25,9 @@ import socket
 
 CONFIG_FILE = "/userdata/lfi/json_config.json"
 LAST_KNOWN_FILE = "/userdata/lfi/server_ip.txt"
-MDNS_NAME = "opennova.local"
+# The names opennova_discovery.py follows (its HOSTNAMES); older servers only
+# advertise opennovabot.local.
+MDNS_NAMES = ("opennova.local", "opennovabot.local")
 DNS_NAME = "mqtt.lfibot.com"
 DEFAULT_ADDR = "127.0.0.1"
 DEFAULT_PORT = 1883
@@ -72,7 +75,7 @@ def resolve_broker(config_file=CONFIG_FILE, last_known_file=LAST_KNOWN_FILE,
     configured, port = configured_broker(config_file)
     last_known = last_known_server(last_known_file)
     candidates = []
-    for addr in (lookup(MDNS_NAME), lookup(DNS_NAME), configured, last_known):
+    for addr in (*(lookup(name) for name in MDNS_NAMES), lookup(DNS_NAME), configured, last_known):
         if addr and addr not in candidates:
             candidates.append(addr)
     for addr in candidates:

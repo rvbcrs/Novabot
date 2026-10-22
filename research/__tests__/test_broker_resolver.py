@@ -86,6 +86,11 @@ write_cfg(OLD)
 got, _ = resolve({"opennova.local": NEW}, {f"{NEW}:1883"})
 check("opennova.local answers -> that broker", got == (NEW, 1883), got)
 
+# The same two names opennova_discovery.py follows: older servers only
+# advertise opennovabot.local.
+got, _ = resolve({"opennovabot.local": NEW}, {f"{NEW}:1883", f"{OLD}:1883"})
+check("only the legacy opennovabot.local answers -> that broker", got == (NEW, 1883), got)
+
 got, _ = resolve({"mqtt.lfibot.com": NEW}, {f"{NEW}:1883", f"{OLD}:1883"})
 check("the issue: mDNS silent, DNS points at the new server, config at the old -> the new one",
       got == (NEW, 1883), got)
