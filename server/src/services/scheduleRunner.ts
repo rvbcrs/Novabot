@@ -757,21 +757,19 @@ function triggerSchedule(row: ScheduleRow, warning?: Msg) {
 }
 
 /**
- * Why a later round of a patrol window is not started now, or null. The night
- * stops after a round of this schedule tonight that failed, was stopped or did
- * not dock; a round still out, a mower not charging on the dock, or a battery
- * under the patrol minimum skip this slot only. (spec 9)
+ * Why a later round of a patrol window is not started now, or null. A round
+ * still out, a mower not charging on the dock, or a battery under the patrol
+ * minimum skip this slot only. A round that failed, was stopped or did not dock
+ * does not end the night: a mower back on the dock goes out again, one that is
+ * not stays where it is. (spec 9)
  * 'unknown': the mower's battery state has not reached the server yet, so the
  * slot is neither skipped nor started and waits for the next tick.
  */
 function roundSkipReason(row: ScheduleRow, slot: PatrolSlot): Msg | 'unknown' | null {
   const last = patrolRunsRepo.get(row.mower_sn);
-  if (last && last.schedule_id === row.schedule_id && last.started_at >= slot.windowStart.getTime()) {
-    const at = wallTime(row, new Date(last.started_at));
-    if (last.dock_failed_at != null) return M`rest van de nacht overgeslagen: de ronde van ${at} kon niet docken`;
-    if (last.ended_phase === 'error') return M`rest van de nacht overgeslagen: de ronde van ${at} is mislukt`;
-    if (last.ended_phase === 'stopped') return M`rest van de nacht overgeslagen: de ronde van ${at} is gestopt`;
-    if (last.ended_phase === null) return M`de ronde van ${at} is nog onderweg`;
+  if (last && last.schedule_id === row.schedule_id && last.started_at >= slot.windowStart.getTime()
+      && last.ended_phase === null) {
+    return M`de ronde van ${wallTime(row, new Date(last.started_at))} is nog onderweg`;
   }
   const snap = getDeviceSnapshot(row.mower_sn);
   // No snapshot at all (empty cache after a server start), or one with the position stream

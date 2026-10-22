@@ -425,15 +425,12 @@ describe('patrol schedules', () => {
     }
   });
 
-  it('the night stops after a round that failed, was stopped or did not dock; another schedule or an older night does not count', async () => {
-    const cases: Array<[Parameters<typeof lastRun>[0], string | null]> = [
-      [{ ended_phase: 'error' }, 'the round of 23:00 failed'],
-      [{ ended_phase: 'stopped' }, 'the round of 23:00 was stopped'],
-      [{ ended_phase: 'done', dock_failed_at: NOW.getTime() + 1 }, 'the round of 23:00 could not dock'],
-      [{ ended_phase: 'error', schedule_id: 'other' }, null],
-      [{ ended_phase: 'error', started_at: NOW.getTime() - 86_400_000 }, null],
-    ];
-    for (const [over, stopped] of cases) {
+  // Walter, 2026-10-21: one round that failed at a channel ended the whole night.
+  // A mower back on the dock, charging, goes out again at the next slot.
+  it('a round that failed, was stopped or did not dock does not end the night: the next slot starts on the dock', async () => {
+    for (const over of [
+      { ended_phase: 'error' }, { ended_phase: 'stopped' }, { ended_phase: 'done', dock_failed_at: NOW.getTime() + 1 },
+    ]) {
       db.prepare('DELETE FROM dashboard_schedules').run();
       vi.clearAllMocks();
       windowed('w-23');
@@ -444,12 +441,7 @@ describe('patrol schedules', () => {
       startScheduleRunner();
       await flush();
       stopScheduleRunner();
-      expect(startPatrol, JSON.stringify(over)).toHaveBeenCalledTimes(stopped ? 0 : 1);
-      if (stopped) {
-        const row = scheduleRepo.findById('w-23')!;
-        expect(row.last_result).toBe('skipped');
-        expect(renderScheduleReason('en', row.last_result_reason)).toBe(`rest of the night skipped: ${stopped}`);
-      }
+      expect(startPatrol, JSON.stringify(over)).toHaveBeenCalledTimes(1);
     }
   });
 

@@ -134,12 +134,13 @@ So there is nothing to finish. We build it from parts that do work:
    normal patrol run. The weekday rule applies to the day the window starts.
    A later slot of the night is **skipped** (logged on the schedule, never an
    error) when: the previous round of this schedule tonight is still out; the
-   mower is not charging on the dock; the battery is below the patrol minimum
-   (50 %); or **the night has stopped**: a round of this schedule tonight ended
-   in `error`, was `stopped`, or did not dock (`patrol_runs.dock_failed_at`).
-   The night stops for good then: a stranded mower is not sent out again, and
-   the notification of that round already went out. A new window is a clean
-   slate. The first slot of a window keeps today's rules (the start guards
+   mower is not charging on the dock; or the battery is below the patrol minimum
+   (50 %). A round that ended in `error`, was `stopped`, or did not dock does
+   **not** end the night (changed 2026-10-22, Walter: one round that failed at a
+   channel ended the night at 22:00): a mower back on the dock goes out again at
+   the next slot, a stranded one fails the dock check and stays where it is. A
+   failure every round sends its notification every round; switching the
+   schedule off ends the night. The first slot of a window keeps today's rules (the start guards
    only). A slot missed because the server was down is logged `missed` once,
    like a single start.
 10. **Guards before a start:** online, OpenNova firmware whose

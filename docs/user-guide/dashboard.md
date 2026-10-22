@@ -291,9 +291,10 @@ others.
   time (an end at or before the start means the next morning). The server
   starts them by itself, so no app needs to be open. A later round is skipped,
   and the schedule says why, when the previous round is still out, the mower is
-  not charging on the dock, or its battery is under 50 %. After a round that
-  failed, was stopped, or did not dock, the night stops: the mower is not sent
-  out again until the next window. Patrol schedules do not appear in the
+  not charging on the dock, or its battery is under 50 %. A round that failed
+  or was stopped does not end the night: once the mower charges on the dock
+  again, the next round starts. A mower that did not get back on the dock is
+  not sent out. To end the night, switch the schedule off. Patrol schedules do not appear in the
   Schedule tab or in the stock app's plans. *No mowing after dark* does not
   hold them back; *No mowing in frost* does (Settings → Weather & time). Rain
   does not pause them.

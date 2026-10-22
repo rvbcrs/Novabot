@@ -1175,23 +1175,7 @@ export const CATALOG: Catalog = {
     fr: "une patrouille de nuit est en cours ; arrêtez-la d'abord",
     de: "eine Nachtpatrouille läuft; stoppen Sie sie zuerst",
   },
-  // A round of a patrol window that is not started (scheduleRunner.roundSkipReason). The first
-  // three end the night: a stranded mower is not sent out again.
-  "rest van de nacht overgeslagen: de ronde van {0} kon niet docken": {
-    en: "rest of the night skipped: the round of {0} could not dock",
-    fr: "reste de la nuit ignoré : la ronde de {0} n'a pas pu rejoindre le dock",
-    de: "Rest der Nacht übersprungen: die Runde von {0} konnte nicht andocken",
-  },
-  "rest van de nacht overgeslagen: de ronde van {0} is mislukt": {
-    en: "rest of the night skipped: the round of {0} failed",
-    fr: "reste de la nuit ignoré : la ronde de {0} a échoué",
-    de: "Rest der Nacht übersprungen: die Runde von {0} ist fehlgeschlagen",
-  },
-  "rest van de nacht overgeslagen: de ronde van {0} is gestopt": {
-    en: "rest of the night skipped: the round of {0} was stopped",
-    fr: "reste de la nuit ignoré : la ronde de {0} a été arrêtée",
-    de: "Rest der Nacht übersprungen: die Runde von {0} wurde gestoppt",
-  },
+  // A round of a patrol window that is not started (scheduleRunner.roundSkipReason).
   "de ronde van {0} is nog onderweg": {
     en: "the round of {0} is still out",
     fr: "la ronde de {0} est encore en cours",

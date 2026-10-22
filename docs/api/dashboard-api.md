@@ -466,8 +466,9 @@ answer is 409. A patrol schedule follows its own rules:
   the list carries `intervalMin` (always `0` for a mowing schedule).
 - A later round of the night is skipped, and the schedule says why, when the
   previous round is still out, the mower is not charging on the dock, or its
-  battery is under 50 %. After a round that failed, was stopped, or did not
-  dock, the night stops until the next window.
+  battery is under 50 %. A round that failed, was stopped, or did not dock
+  does not end the night: the next slot starts once the mower charges on the
+  dock again.
 
 ```json title="Request (night patrol schedule)"
 {
