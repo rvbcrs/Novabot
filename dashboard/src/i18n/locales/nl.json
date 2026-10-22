@@ -62,7 +62,8 @@
     "detail": "(de maaier draait {{current}})",
     "action": "Updaten",
     "fetching": "De update wordt naar deze server gedownload…",
-    "fetchFailed": "De update kon niet naar deze server worden gedownload. Probeer het later opnieuw, of gebruik het tabblad Firmware in het admin-paneel."
+    "fetchFailed": "De update kon niet naar deze server worden gedownload. Probeer het later opnieuw, of gebruik het tabblad Firmware in het admin-paneel.",
+    "notesTitle": "Nieuw sinds {{current}}"
   },
   "drawer": {
     "dockDrift": {

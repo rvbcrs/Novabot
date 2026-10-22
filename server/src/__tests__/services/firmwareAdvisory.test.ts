@@ -37,6 +37,25 @@ describe('firmware advisory', () => {
     expect(adviseVersion('v6.0.2-custom-44', null).required).toBe(false);
   });
 
+  // The banner shows what changes before the owner updates: every build after
+  // the mower's own up to the offered one, newest first (2026-10-22).
+  it('lists the release notes of every build between the mower and the offer', () => {
+    const notes: Manifest = { firmwares: [
+      { version: 'v6.0.2-custom-50', device_type: 'mower', url: 'u', description: '- Night patrol\n- Headlight 1 while docking\n' },
+      { version: 'v6.0.2-custom-49', device_type: 'mower', url: 'u', description: '- An edge cut starts beside the lawn' },
+      { version: 'v6.0.2-custom-48', device_type: 'mower', url: 'u' },
+      { version: 'v6.0.2-custom-45', device_type: 'mower', url: 'u', description: '- older' },
+      { version: 'v0.4.0', device_type: 'charger', url: 'u', description: '- charger' },
+    ] };
+    expect(adviseVersion('v6.0.2-custom-45', notes).releases).toEqual([
+      { version: 'v6.0.2-custom-50', notes: ['Night patrol', 'Headlight 1 while docking'] },
+      { version: 'v6.0.2-custom-49', notes: ['An edge cut starts beside the lawn'] },
+      { version: 'v6.0.2-custom-48', notes: [] },
+    ]);
+    expect(adviseVersion('v6.0.2-custom-50', notes).releases).toEqual([]);
+    expect(adviseVersion('v6.0.2', notes).releases).toEqual([]);
+  });
+
   it('offers a newer custom build as optional; never to stock, never a downgrade', () => {
     const a = adviseVersion('v6.0.2-custom-40', manifest);
     expect(a).toMatchObject({ required: false, updateAvailable: true, reason: null });

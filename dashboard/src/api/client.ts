@@ -1669,6 +1669,8 @@ export interface FirmwareAdvisoryDto {
   current: string | null;
   reason: string | null;
   target: { version: string; description: string; downloaded: boolean; versionId: number | null } | null;
+  /** every build after the mower's own up to the target, newest first (older servers send none) */
+  releases?: { version: string; notes: string[] }[];
 }
 export async function fetchFirmwareAdvisory(sn: string): Promise<FirmwareAdvisoryDto> {
   return (await get(`${BASE}/firmware-advisory/${encodeURIComponent(sn)}`)).json() as Promise<FirmwareAdvisoryDto>;

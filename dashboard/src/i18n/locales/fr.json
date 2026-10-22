@@ -1328,7 +1328,8 @@
     "detail": "(la tondeuse utilise {{current}})",
     "action": "Mettre à jour",
     "fetching": "Téléchargement de la mise à jour sur ce serveur…",
-    "fetchFailed": "La mise à jour n'a pas pu être téléchargée sur ce serveur. Réessayez plus tard, ou utilisez l'onglet Firmware du panneau d'administration."
+    "fetchFailed": "La mise à jour n'a pas pu être téléchargée sur ce serveur. Réessayez plus tard, ou utilisez l'onglet Firmware du panneau d'administration.",
+    "notesTitle": "Nouveau depuis {{current}}"
   },
   "drawer": {
     "dockDrift": {

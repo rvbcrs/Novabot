@@ -45,6 +45,8 @@ export interface FirmwareAdvisory {
   reason: string | null;
   /** newest custom build in the manifest; versionId once it is on this server */
   target: { version: string; description: string; downloaded: boolean; versionId: number | null } | null;
+  /** every build after the mower's own up to the target, newest first, to read before updating */
+  releases: { version: string; notes: string[] }[];
 }
 
 let cache: { manifest: Manifest; at: number } | null = null;
@@ -83,19 +85,24 @@ export async function getManifest(force = false): Promise<Manifest | null> {
   }
 }
 
-function newestMower(manifest: Manifest): ManifestEntry | null {
+function mowerBuilds(manifest: Manifest): ManifestEntry[] {
   const mowers = manifest.firmwares.filter(f => f.device_type === 'mower' && customBuildNumber(f.version) != null);
-  mowers.sort((a, b) => (customBuildNumber(b.version) ?? 0) - (customBuildNumber(a.version) ?? 0));
-  return mowers[0] ?? null;
+  return mowers.sort((a, b) => (customBuildNumber(b.version) ?? 0) - (customBuildNumber(a.version) ?? 0));
+}
+
+/** The build's release notes: the manifest description is a "- " bullet per line. */
+function notesOf(entry: ManifestEntry): string[] {
+  return (entry.description ?? '').split('\n').map(l => l.replace(/^\s*-\s*/, '').trim()).filter(Boolean);
 }
 
 /** Pure: the verdict for one reported version against a manifest. */
 export function adviseVersion(version: string | null, manifest: Manifest | null): FirmwareAdvisory {
-  const none: FirmwareAdvisory = { required: false, updateAvailable: false, current: version, reason: null, target: null };
+  const none: FirmwareAdvisory = { required: false, updateAvailable: false, current: version, reason: null, target: null, releases: [] };
   const build = customBuildNumber(version);
   if (!version || !manifest || build == null) return none;
   const reason = manifest.withdrawn?.[version] ?? null;
-  const target = newestMower(manifest);
+  const builds = mowerBuilds(manifest);
+  const target = builds[0] ?? null;
   if (!target || target.version === version) return none;
   const newer = (customBuildNumber(target.version) ?? 0) > build;
   if (!reason && !newer) return none;
@@ -103,6 +110,7 @@ export function adviseVersion(version: string | null, manifest: Manifest | null)
   return {
     required: !!reason, updateAvailable: newer, current: version, reason,
     target: { version: target.version, description: target.description ?? '', downloaded: !!local, versionId: local?.id ?? null },
+    releases: builds.filter(b => (customBuildNumber(b.version) ?? 0) > build).map(b => ({ version: b.version, notes: notesOf(b) })),
   };
 }
 
@@ -163,7 +171,7 @@ export async function ensureTargetDownloaded(entry: ManifestEntry): Promise<bool
 export async function runFirmwareAdvisorySweep(): Promise<void> {
   const manifest = await getManifest();
   if (!manifest || !manifest.withdrawn || Object.keys(manifest.withdrawn).length === 0) return;
-  const target = newestMower(manifest);
+  const target = mowerBuilds(manifest)[0] ?? null;
   for (const eq of equipmentRepo.listAll() as Array<{ mower_sn: string | null; nick_name?: string | null }>) {
     const sn = eq.mower_sn;
     if (!sn) continue;

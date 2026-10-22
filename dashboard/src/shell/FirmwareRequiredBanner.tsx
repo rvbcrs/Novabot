@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ArrowUpCircle, ShieldAlert, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { fetchFirmwareAdvisory, fetchFirmwareUpdate, triggerOta, type FirmwareAdvisoryDto } from '../api/client';
+import { fetchFirmwareAdvisory, fetchFirmwareUpdate, triggerOta, type FirmwareAdvisoryDto, type ReleaseNotesEntry } from '../api/client';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
 import { betaFirmwareWarningLines } from '../utils/betaFirmware';
 import { otaFinished, type OtaProgress } from '../hooks/useDevices';
 import { useNow, otaElapsed, useOtaPhaseLabel } from '../utils/otaPhase';
@@ -39,6 +40,7 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
   const [state, setState] = useState<'idle' | 'fetching' | 'sending' | 'started' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [, setDismissTick] = useState(0);
+  const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
     if (!sn) { setAdv(null); return; }
@@ -62,6 +64,9 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
   if (!sn || !adv?.target) return null;
   const target = adv.target;
   const required = adv.required;
+  // What the builds since the mower's own bring, to read before updating; the
+  // popup puts the "v" in front of a version itself.
+  const notes: ReleaseNotesEntry[] = (adv.releases ?? []).map(r => ({ version: r.version.replace(/^v/, ''), date: '', sections: { firmware: r.notes } }));
   if (!required && (!adv.updateAvailable || (state === 'idle' && dismissedVersion(sn) === target.version))) return null;
   const pct = otaProgress?.percentage ?? null;
   const flashing = session
@@ -107,6 +112,14 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
             {state === 'fetching' && <span className="block text-violet-200/90 text-xs mt-0.5">{t('firmwareUpdate.fetching')}</span>}
             {state === 'error' && error && <span className="block text-red-300 text-xs mt-0.5">{error}</span>}
           </span>
+          {notes.length > 0 && (
+            <button
+              onClick={() => setShowNotes(true)}
+              className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium whitespace-nowrap transition-colors"
+            >
+              {t('releaseNotes.title')}
+            </button>
+          )}
           {!flashing && (
             <button
               onClick={() => setConfirm(true)}
@@ -137,6 +150,14 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
           {state === 'error' && error && <span className="block text-red-300 text-xs mt-0.5">{error}</span>}
           {!target.downloaded && <span className="block text-red-300 text-xs mt-0.5">{t('firmwareRequired.downloading')}</span>}
         </span>
+        {notes.length > 0 && (
+          <button
+            onClick={() => setShowNotes(true)}
+            className="px-3 py-1 rounded bg-red-800/70 hover:bg-red-700/70 text-white text-xs font-medium whitespace-nowrap"
+          >
+            {t('releaseNotes.title')}
+          </button>
+        )}
         {!flashing && (
           <button
             onClick={() => setConfirm(true)}
@@ -147,6 +168,13 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
           </button>
         )}
       </div>
+      )}
+      {showNotes && (
+        <ReleaseNotesModal
+          releases={notes}
+          title={t('firmwareUpdate.notesTitle', { current: adv.current })}
+          onClose={() => setShowNotes(false)}
+        />
       )}
       <ConfirmDialog
         open={confirm}
