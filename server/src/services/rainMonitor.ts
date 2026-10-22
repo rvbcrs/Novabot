@@ -111,6 +111,17 @@ const DEFAULT_RAIN_PROB = 50;
 const DEFAULT_RAIN_HOURS = 0.5; // lookahead window while mowing
 const MANUAL_SCHEDULE_ID = 'manual';
 
+/**
+ * When the session was paused, in ms. SQLite writes paused_at with
+ * datetime('now'): UTC without a zone, which new Date() reads as local time.
+ * In the container's Europe/Amsterdam a pause looked two hours old the moment
+ * it began; west of UTC the timeouts came hours late.
+ */
+function pausedAtMs(session: RainSessionRow): number {
+  const at = session.paused_at;
+  return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(at) ? at : `${at.replace(' ', 'T')}Z`);
+}
+
 /** Check of maaier aan het laden is en batterij voldoende is */
 function isChargedAndReady(mowerSn: string): boolean {
   const sensors = deviceCache.get(mowerSn);
@@ -269,8 +280,7 @@ async function checkPausedSessions(): Promise<void> {
     // Check of maaier online is
     if (!isDeviceOnline(session.mower_sn)) {
       // Als maaier > 2 uur offline is, annuleer de sessie
-      const pausedAt = new Date(session.paused_at).getTime();
-      if (Date.now() - pausedAt > 2 * 60 * 60 * 1000) {
+      if (Date.now() - pausedAtMs(session) > 2 * 60 * 60 * 1000) {
         cancelSession(session, 'mower_offline_timeout');
       }
       continue;
@@ -305,8 +315,7 @@ async function checkPausedSessions(): Promise<void> {
     }
 
     // Auto-cancel na 6 uur pauze (te lang gewacht, niet meer zinvol)
-    const pausedAt = new Date(session.paused_at).getTime();
-    if (Date.now() - pausedAt > 6 * 60 * 60 * 1000) {
+    if (Date.now() - pausedAtMs(session) > 6 * 60 * 60 * 1000) {
       cancelSession(session, 'timeout_6h');
     }
   }
