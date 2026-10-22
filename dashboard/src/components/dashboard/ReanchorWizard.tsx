@@ -3,6 +3,7 @@ import { Anchor, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { reanchorAction, fetchReanchorStatus, type ReanchorStatus } from '../../api/client';
 import { ManualControlPanel } from './ManualControlPanel';
+import { afterPulse, pulseOutcome, REANCHOR_PULSE_MS } from '../../utils/reanchorPulse';
 
 interface Props { sn: string; online: boolean; sensors?: Record<string, string>; onClose: () => void; }
 
@@ -14,6 +15,7 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
   const [confirmed, setConfirmed] = useState(false);
   const [starting, setStarting] = useState(false);
   const owned = useRef<string | null>(null);
+  const misses = useRef(0);
   const generation = useRef(0);
   useEffect(() => {
     const session = ++generation.current;
@@ -25,10 +27,12 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
       const id = owned.current;
       try {
         if (id) {
-          try {
-            const pulse = await reanchorAction(sn, 'pulse', { cycleId: id });
-            if (!cancelled && owned.current === id && !pulse.ok) owned.current = null;
-          } catch { if (!cancelled && owned.current === id) owned.current = null; }
+          // Only the server's refusal, or a window that has certainly expired, ends supervision.
+          const outcome = await pulseOutcome(() => reanchorAction(sn, 'pulse', { cycleId: id }));
+          if (!cancelled && owned.current === id) {
+            const next = afterPulse(misses.current, outcome);
+            if (next === null) owned.current = null; else misses.current = next;
+          }
         }
         if (cancelled) return;
         const s = await fetchReanchorStatus(sn);
@@ -45,7 +49,7 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
     };
     document.addEventListener('visibilitychange', hide);
     void tick();
-    const timer = setInterval(tick, 1000);
+    const timer = setInterval(tick, REANCHOR_PULSE_MS);
     return () => {
       generation.current = session + 1; cancelled = true; clearInterval(timer);
       document.removeEventListener('visibilitychange', hide);
@@ -60,7 +64,7 @@ export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
       const result = await reanchorAction(sn, 'auto', { mode: 'supervised-v2', ownDockUnmoved: confirmed });
       if (!result.ok || !result.cycleId) throw new Error(result.error || t('reanchor.startFailed'));
       if (attempt !== generation.current || document.hidden) { await reanchorAction(sn, 'stop', { cycleId: result.cycleId }); return; }
-      owned.current = result.cycleId;
+      owned.current = result.cycleId; misses.current = 0;
       const s = await fetchReanchorStatus(sn);
       if (attempt === generation.current) setStatus(s);
     } catch (e) { if (attempt === generation.current) setErr(e instanceof Error ? e.message : String(e)); }
