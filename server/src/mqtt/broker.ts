@@ -1369,6 +1369,9 @@ export async function startMqttBroker(): Promise<void> {
               changes.set(k, sv);
             };
             set('mow_zone_phase', body.phase);
+            // When it was said: a start shortly after `starting` is the app's
+            // fallback, not a new mow (isDuplicateZoneStart). Cache only.
+            cache.set('mow_zone_phase_at', String(Date.now()));
             set('mow_zone_map', body.map);
             // Keep the reason. Without it a stalled start looked like nothing
             // happening at all: the orchestrator reported phase "error" with

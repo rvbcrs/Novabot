@@ -169,6 +169,11 @@ ARRIVE_POLL_S = 0.5
 # between (Walter, 2026-10-22 22:28:17, followpath_aborted_status_5).
 ARRIVE_END_S = 5.0
 ARRIVE_SETTLE_S = 0.5
+# A channel's FollowPath that comes back CANCELED without this drive asking is
+# driven once more after this pause, from where the mower stands: the same race
+# with a cancel nav2 sends while it winds a goal down, in case it outlasts the
+# waits above (Walter, three rounds on 2026-10-22/23).
+CHANNEL_RETRY_SETTLE_S = 1.0
 
 # Afstand tussen opeenvolgende punten in het pad dat naar FollowPath gaat. Een
 # opgenomen kanaal is vaak maar twee punten over een paar meter, en Pure Pursuit
@@ -1775,8 +1780,14 @@ def _drive_channel_hop(drv, base, fname, robot, hop, total):
         if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
             pts = list(reversed(pts))
             pts = _trim_to_nearest(pts, robot)
-    pts = densify(_lead_in(pts, robot))
-    ok, msg = drv.follow_path(pts)
+    ok, msg = drv.follow_path(densify(_lead_in(pts, robot)))
+    if msg == "followpath_aborted_status_5":
+        # CANCELED, and not by this drive: a stop kills the drive first. nav2
+        # cancelled it while winding down the goal before it (CHANNEL_RETRY_SETTLE_S).
+        log(f"transit hop {hop + 1}/{total} ({fname}): nav2 cancelled the channel, driving it once more")
+        time.sleep(CHANNEL_RETRY_SETTLE_S)
+        robot = drv.robot_xy() or robot
+        ok, msg = drv.follow_path(densify(_lead_in(_trim_to_nearest(pts, robot), robot)))
     if not ok:
         log(f"transit hop {hop + 1}/{total} ({fname}) failed: {msg}")
         return False, msg, robot

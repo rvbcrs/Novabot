@@ -43,6 +43,22 @@ export function endsZoneDrive(command: Record<string, unknown>, mowZonePhase: st
     && (ZONE_DRIVE_PHASES.has(mowZonePhase ?? '') || PATROL_DRIVE_PHASES.has(patrolPhase ?? ''));
 }
 
+/** How long after mow_zone_drive's last phase report a start counts as the app's own fallback. */
+export const ZONE_START_DUPLICATE_MS = 30_000;
+
+/** A start (start_navigation, start_run) while mow_zone_drive said `starting` or
+ *  `localizing` within ZONE_START_DUPLICATE_MS (`phaseAt`, ms): the OpenNova
+ *  app's fallback for a mow_zone whose first phase it missed. Sending it killed
+ *  the drive that had just started (endsZoneDrive) and the mow ran without it
+ *  (Walter, 2026-10-23: the mower docked between the mow and its edge cut). An
+ *  older `starting` is a drive that never said more, and a start goes through. */
+export function isDuplicateZoneStart(command: Record<string, unknown>, phase: string | undefined, phaseAt: number, now: number): boolean {
+  const name = Object.keys(command)[0];
+  return (name === 'start_navigation' || name === 'start_run')
+    && (phase === 'starting' || phase === 'localizing')
+    && Number.isFinite(phaseAt) && now - phaseAt < ZONE_START_DUPLICATE_MS;
+}
+
 export interface DriveStopPublish {
   /** An unencrypted message on any topic (here led_set on novabot/cmd/<SN>, led_bridge.py). */
   toTopic: (topic: string, message: Record<string, unknown>) => void;

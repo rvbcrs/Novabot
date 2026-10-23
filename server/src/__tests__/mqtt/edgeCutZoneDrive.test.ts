@@ -4,7 +4,7 @@
  * Every ending command must also kill that drive (stop_mow_zone).
  */
 import { describe, it, expect } from 'vitest';
-import { endsZoneDrive, stopDriveBeforeEnding, PATROL_DRIVE_PHASES } from '../../services/edgeCutGuard.js';
+import { endsZoneDrive, stopDriveBeforeEnding, PATROL_DRIVE_PHASES, isDuplicateZoneStart, ZONE_START_DUPLICATE_MS } from '../../services/edgeCutGuard.js';
 
 describe('endsZoneDrive', () => {
   it('kills the drive for a stop, pause, go home or new start while it drives', () => {
@@ -94,5 +94,31 @@ describe('stopDriveBeforeEnding', () => {
   it('nothing for a command that ends nothing, or once the patrol has ended', () => {
     expect(gate({ set_para_info: {} }, undefined, 'patrolling')).toEqual({ fired: false, out: [] });
     expect(gate({ go_to_charge: {} }, undefined, 'done')).toEqual({ fired: false, out: [] });
+  });
+});
+
+// Walter, 2026-10-23 10:50 and 11:06: the OpenNova app sent mow_zone, missed its
+// first phase and sent start_navigation 5 s later as its fallback. That start
+// killed the drive that had just said `starting`; the mow ran without it and the
+// mower docked before its edge cut.
+describe('isDuplicateZoneStart', () => {
+  const NOW = 1_000_000;
+  const start = { start_navigation: { area: 100 } };
+
+  it('a start within the window after starting or localizing is the app\'s own fallback', () => {
+    for (const phase of ['starting', 'localizing']) {
+      expect(isDuplicateZoneStart(start, phase, NOW - 5_000, NOW)).toBe(true);
+      expect(isDuplicateZoneStart({ start_run: {} }, phase, NOW - 1, NOW)).toBe(true);
+    }
+  });
+
+  it('a phase older than the window, a later phase, an unknown time or another command is not', () => {
+    expect(isDuplicateZoneStart(start, 'starting', NOW - ZONE_START_DUPLICATE_MS, NOW)).toBe(false);
+    for (const phase of ['following_unicom', 'entering_zone', 'covering', 'done', 'stopped', 'error', '', undefined]) {
+      expect(isDuplicateZoneStart(start, phase, NOW - 1_000, NOW)).toBe(false);
+    }
+    expect(isDuplicateZoneStart(start, 'starting', NaN, NOW)).toBe(false);
+    expect(isDuplicateZoneStart({ stop_navigation: {} }, 'starting', NOW - 1_000, NOW)).toBe(false);
+    expect(isDuplicateZoneStart({ go_to_charge: {} }, 'starting', NOW - 1_000, NOW)).toBe(false);
   });
 });

@@ -106,7 +106,8 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
 }));
 
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { publishToDevice, publishToExtended } from '../../mqtt/mapSync.js';
+import { publishToDevice, publishToExtended, publishRawToDevice } from '../../mqtt/mapSync.js';
+import { deviceCache } from '../../mqtt/sensorData.js';
 import { publishExtendedCommand } from '../../mqtt/extendedCommands.js';
 import { startPatrol, stopPatrol, readPatrolSettings } from '../../services/patrolService.js';
 import { buildPatrolZones, PATROL_INSET_M } from '../../services/patrolRoute.js';
@@ -469,5 +470,32 @@ describe('patrol plan and report routes', () => {
       patrolRunsRepo.setEndError(PSN, '9001', 'not_localized');
       expect((await runs())[0]).toMatchObject({ run: '9001', frames: [], endedPhase: 'error', error: 'not_localized' });
     });
+  });
+});
+
+// Walter, 2026-10-23 10:50: the app's fallback start_navigation, 5 s after its
+// mow_zone, killed the zone drive that had just said `starting`.
+describe('the command route while a zone drive has just started', () => {
+  const start = { command: { start_navigation: { mapName: 'test', cutterhigh: 5, area: 100, cmd_num: 1 } } };
+  beforeEach(() => { vi.clearAllMocks(); fw.supported = true; });
+
+  it('drops the app\'s fallback start instead of killing the drive', async () => {
+    deviceCache.set(SN, new Map([['mow_zone_phase', 'starting'], ['mow_zone_phase_at', String(Date.now() - 5_000)]]));
+    const res = await request(server).post(`${B}/command/${SN}`).send(start);
+    deviceCache.delete(SN);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, ignored: 'zone_drive_starting' });
+    expect(publishToExtended).not.toHaveBeenCalled();
+    expect(publishRawToDevice).not.toHaveBeenCalled();
+    expect(publishToDevice).not.toHaveBeenCalled();
+  });
+
+  it('a starting reported long ago still lets the start through, and stops that drive first', async () => {
+    deviceCache.set(SN, new Map([['mow_zone_phase', 'starting'], ['mow_zone_phase_at', String(Date.now() - 120_000)]]));
+    const res = await request(server).post(`${B}/command/${SN}`).send(start);
+    deviceCache.delete(SN);
+    expect(res.body.ignored).toBeUndefined();
+    expect(publishToExtended).toHaveBeenCalledWith(SN, { stop_mow_zone: {} });
+    expect(publishRawToDevice).toHaveBeenCalled();
   });
 });

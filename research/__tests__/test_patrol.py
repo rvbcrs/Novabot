@@ -292,6 +292,46 @@ def test_drive_hops_restores_the_controller_params_also_on_failure():
     assert drv.params[-1] == [(n, d) for (n, _r, d) in mzd.TRANSIT_PARAMS]
 
 
+class CancelledOnceDriver(HopDriver):
+    """nav2 cancels the channel's FollowPath `times` times before it drives it."""
+
+    def __init__(self, times=1, status=5):
+        super().__init__()
+        self.times, self.status, self.paths = times, status, 0
+
+    def follow_path(self, pts):
+        self.paths += 1
+        if self.paths <= self.times:
+            return False, f"followpath_aborted_status_{self.status}"
+        return super().follow_path(pts)
+
+
+# Walter (LFIN2231000367), 2026-10-22/23: three rounds ended on a channel with
+# followpath_aborted_status_5. nav2 cancelled the FollowPath we had just sent
+# while it wound down the goal before it; the path itself was fine. A cancel
+# the drive did not ask for gets one more try; any other end does not.
+def test_a_channel_cancelled_by_nav2_is_driven_once_more():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    real_settle, mzd.CHANNEL_RETRY_SETTLE_S = mzd.CHANNEL_RETRY_SETTLE_S, 0
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            once = CancelledOnceDriver(times=1)
+            ok, msg, robot = mzd._drive_hops(once, mzd._csv_base(), (9.0, 5.0),
+                                             [("channel", "map0tomap6_0_unicom.csv", "map6")])
+            twice = CancelledOnceDriver(times=2)
+            ok2, msg2, _ = mzd._drive_hops(twice, mzd._csv_base(), (9.0, 5.0),
+                                           [("channel", "map0tomap6_0_unicom.csv", "map6")])
+            aborted = CancelledOnceDriver(times=1, status=6)
+            ok3, msg3, _ = mzd._drive_hops(aborted, mzd._csv_base(), (9.0, 5.0),
+                                           [("channel", "map0tomap6_0_unicom.csv", "map6")])
+    finally:
+        mzd.CHANNEL_RETRY_SETTLE_S = real_settle
+    assert ok and once.paths == 2 and robot[0] > 30, (ok, msg, once.paths, robot)
+    assert not ok2 and msg2 == "followpath_aborted_status_5" and twice.paths == 2, (ok2, msg2, twice.paths)
+    assert not ok3 and msg3 == "followpath_aborted_status_6" and aborted.paths == 1, (ok3, msg3, aborted.paths)
+
+
 def test_drive_hops_drives_a_channel_and_reports_where_it_ended():
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})

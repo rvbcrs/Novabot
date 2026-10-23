@@ -26,7 +26,7 @@ import os from 'os';
 import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason, isScheduleWarning } from '../services/scheduleRunner.js';
-import { stopDriveBeforeEnding } from '../services/edgeCutGuard.js';
+import { stopDriveBeforeEnding, isDuplicateZoneStart } from '../services/edgeCutGuard.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { verifyPinOnMower, pinVerifyMessage } from '../services/pinVerify.js';
@@ -3511,6 +3511,16 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   const { force } = req.query as { force?: string };
   if (!force && !isDemoMode(sn) && !isDeviceOnline(sn)) {
     res.status(404).json({ error: T`Apparaat is offline` });
+    return;
+  }
+
+  // The OpenNova app's fallback start for a mow_zone whose first phase it
+  // missed: the drive has just started, so it is not sent (and does not kill
+  // the drive or disarm the edge watcher). See isDuplicateZoneStart.
+  const zoneCache = deviceCache.get(sn);
+  if (isDuplicateZoneStart(command, zoneCache?.get('mow_zone_phase'), Number(zoneCache?.get('mow_zone_phase_at')), Date.now())) {
+    console.log(`[DASHBOARD] ${sn}: ${Object.keys(command)[0]} dropped, mow_zone_drive started ${zoneCache?.get('mow_zone_phase')} just now`);
+    res.json({ ok: true, ignored: 'zone_drive_starting' });
     return;
   }
 
