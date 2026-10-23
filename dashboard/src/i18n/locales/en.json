@@ -1449,7 +1449,8 @@
         "turn_over": "it turned over",
         "mower_restarted": "the mower restarted during the patrol",
         "blade_guard_failed": "it could not make sure the blades were off",
-        "drive_script_missing": "the drive script is missing on the mower"
+        "drive_script_missing": "the drive script is missing on the mower",
+        "camera_frozen": "its camera stopped delivering images, also after a restart; switch the mower off and on before the next round"
       }
     },
     "title": {

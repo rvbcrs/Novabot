@@ -147,7 +147,8 @@
         "turn_over": "hij sloeg om",
         "mower_restarted": "de maaier herstartte tijdens de patrouille",
         "blade_guard_failed": "hij kon niet zeker stellen dat de messen uit stonden",
-        "drive_script_missing": "het rijscript ontbreekt op de maaier"
+        "drive_script_missing": "het rijscript ontbreekt op de maaier",
+        "camera_frozen": "zijn camera leverde geen beelden meer, ook niet na een herstart; zet de maaier uit en aan voor de volgende ronde"
       }
     },
     "title": {

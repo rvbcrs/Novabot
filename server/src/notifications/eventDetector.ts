@@ -301,6 +301,7 @@ export function patrolStopReason(reason: string): string {
     no_route: 'no recorded channel leads to a chosen zone',
     no_route_home: "no recorded channel leads back to the dock's zone",
     busy_mowing: 'it was already on a task',
+    camera_frozen: 'its camera stopped delivering images, also after a restart; switch the mower off and on before the next round',
     push_button: 'the STOP button was pressed',
     no_pin_code: 'the PIN lock engaged',
     upraise: 'it was lifted',

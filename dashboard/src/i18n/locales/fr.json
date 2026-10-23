@@ -1413,7 +1413,8 @@
         "turn_over": "elle s'est retournée",
         "mower_restarted": "la tondeuse a redémarré pendant la patrouille",
         "blade_guard_failed": "elle n'a pas pu s'assurer que les lames étaient arrêtées",
-        "drive_script_missing": "le script de conduite est absent de la tondeuse"
+        "drive_script_missing": "le script de conduite est absent de la tondeuse",
+        "camera_frozen": "sa caméra ne fournissait plus d'images, même après un redémarrage ; éteignez puis rallumez la tondeuse avant la prochaine ronde"
       }
     },
     "title": {

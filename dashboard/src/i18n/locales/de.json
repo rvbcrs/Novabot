@@ -1413,7 +1413,8 @@
         "turn_over": "er hat sich überschlagen",
         "mower_restarted": "der Mäher wurde während der Patrouille neu gestartet",
         "blade_guard_failed": "er konnte nicht sicherstellen, dass die Messer aus waren",
-        "drive_script_missing": "das Fahrskript fehlt auf dem Mäher"
+        "drive_script_missing": "das Fahrskript fehlt auf dem Mäher",
+        "camera_frozen": "seine Kamera lieferte keine Bilder mehr, auch nicht nach einem Neustart; schalten Sie den Mäher vor der nächsten Runde aus und wieder ein"
       }
     },
     "title": {

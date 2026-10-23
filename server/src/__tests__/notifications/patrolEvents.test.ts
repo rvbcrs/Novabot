@@ -39,6 +39,14 @@ describe('patrol events', () => {
     expect(ev.data).toMatchObject({ reason: 'checkpoints_unreachable', went_home: true });
   });
 
+  // Walter, 2026-10-23 00:15: the camera repeated one frame for a whole round
+  // and the docking failed on it. The push names the cause and what fixes it.
+  it('a frozen camera says so, and that switching the mower off and on brings it back', () => {
+    dispatchPatrolFailedEvent('LFIN1', 'camera_frozen', true);
+    const ev = vi.mocked(dispatchEvent).mock.calls[0][0];
+    expect(ev.message).toBe('The night patrol stopped: its camera stopped delivering images, also after a restart; switch the mower off and on before the next round. The mower is being sent to its dock.');
+  });
+
   it('a docking that failed after a patrol is a dock_failed that says the mower stands in the garden', () => {
     dispatchPatrolDockFailedEvent('LFIN1', {
       run: '1700', msg: 'Mode:COVERAGE Work:MOVING Recharge: FAILED', errorStatus: '126', batteryPower: 41,

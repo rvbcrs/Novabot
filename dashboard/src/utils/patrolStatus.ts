@@ -68,7 +68,7 @@ export function patrolClock(ms: number, locale: string, tf: '12h' | '24h'): stri
 const REASONS = new Set([
   'checkpoints_unreachable', 'frame_not_settled', 'not_localized', 'no_dock_zone', 'no_route', 'no_route_home',
   'busy_mowing', 'push_button', 'no_pin_code', 'upraise', 'tile', 'turn_over',
-  'mower_restarted', 'blade_guard_failed', 'drive_script_missing',
+  'mower_restarted', 'blade_guard_failed', 'drive_script_missing', 'camera_frozen',
 ]);
 
 /**

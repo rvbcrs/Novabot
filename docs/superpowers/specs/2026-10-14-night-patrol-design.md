@@ -99,7 +99,14 @@ So there is nothing to finish. We build it from parts that do work:
 7. **Looking.** At each checkpoint: perception re-asserted (idempotent), dwell
    `dwell_s` seconds (default 6) collecting points_labeled messages, per class the
    count reached in at least two messages ("steady count"), then one photo
-   (`photo_topic`, default `front`).
+   (`photo_topic`, default `front`). A photo taken before the dwell that the one
+   after it repeats byte for byte is a frozen camera (a live one never gives the
+   same JPEG twice; camera_stream keeps serving the last frame of a frozen one):
+   the drive switches that camera off and on (`start_camera` false, true), waits
+   3 s and looks at the checkpoint again. Still frozen: the round ends with
+   `camera_frozen`, without an upload for that checkpoint (Walter, 2026-10-23
+   00:15: one frame after the camera's start, eleven identical photos, error 113
+   at the dock).
 8. **Reporting.** The mower POSTs every checkpoint (photo or empty body, scores,
    frame count, pose) to `/api/nova-file-server/patrol/uploadFrame`. The server
    keeps the last 30 runs (two nights of half-hour rounds) under `STORAGE_PATH/patrol/<sn>/<run>/`. A score at or

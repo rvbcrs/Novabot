@@ -421,12 +421,22 @@ class PatrolDriver(HopDriver):
     def watch_labels(self, seconds):
         return {"person": [0, 60, 70], "animal": [0, 0, 0]}, 3
 
+    def restart_camera(self, topic):
+        self.calls.append(("restart_camera", topic))
+        return True
 
-def run_patrol(drv, zones):
+
+def live_camera():
+    """fetch_snapshot as a live camera answers: never the same bytes twice."""
+    shots = iter(range(1, 10 ** 6))
+    return lambda topic, timeout=25.0: b"\xff\xd8%d" % next(shots)
+
+
+def run_patrol(drv, zones, snapshot=None):
     seen, uploads = [], []
     real = (mzd.phase, mzd.fetch_snapshot, mzd.upload_checkpoint)
     mzd.phase = lambda *a: seen.append(a) or drv.events.append(("phase",) + a)
-    mzd.fetch_snapshot = lambda topic, timeout=25.0: b"\xff\xd8x"
+    mzd.fetch_snapshot = snapshot or live_camera()
     mzd.upload_checkpoint = (lambda url, seq, xy, scores, frames, jpeg, timeout=20.0:
                              uploads.append((seq, scores, frames, jpeg is not None)) or True)
     buf = io.StringIO()
@@ -478,6 +488,69 @@ def test_patrol_and_transit_goals_end_within_reach():
     hop._loc = (5.0, 5.0)
     mzd._drive_hops(hop, mzd._csv_base(), (5.0, 5.0), [("channel", "map0tomap6_0_unicom.csv", "map6")])
     assert hop.arrive == [mzd.ARRIVE_M] * 2, hop.arrive               # the touch step, the lead-in
+
+
+# Walter (LFIN2231000367), 2026-10-23 00:15: after its start the front camera
+# gave one frame and then nothing. camera_stream kept serving that frame: eleven
+# photos of the same 9837 bytes, 0 perception frames, and error 113 at the dock.
+# A live camera never gives the same JPEG across a checkpoint's dwell.
+def frozen_then(after_restart):
+    """fetch_snapshot as a camera that repeats one frame until restart_camera, then `after_restart`."""
+    state = {"restarted": False}
+    live = live_camera()
+
+    def shot(topic, timeout=25.0):
+        if not state["restarted"]:
+            return b"\xff\xd8frozen"
+        return live(topic) if after_restart == "live" else b"\xff\xd8still"
+    return state, shot
+
+
+class FrozenCameraDriver(PatrolDriver):
+    def __init__(self, state, **kw):
+        super().__init__(**kw)
+        self.state = state
+
+    def restart_camera(self, topic):
+        self.state["restarted"] = True
+        return super().restart_camera(topic)
+
+
+def test_a_frozen_camera_is_restarted_once_and_the_checkpoint_looked_at_again():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    state, shot = frozen_then("live")
+    drv = FrozenCameraDriver(state, at=(5.0, 5.0))
+    real_settle, mzd.CAMERA_SETTLE_S = mzd.CAMERA_SETTLE_S, 0
+    try:
+        rc, seen, uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [7, 7]]}], shot)
+    finally:
+        mzd.CAMERA_SETTLE_S = real_settle
+    assert rc == 0, (rc, seen)
+    assert [c for c in drv.calls if c[0] == "restart_camera"] == [("restart_camera", "front")]
+    assert [u[0] for u in uploads] == [1, 2] and all(u[3] for u in uploads), uploads
+
+
+def test_a_camera_still_frozen_after_its_restart_ends_the_round():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    state, shot = frozen_then("still")
+    drv = FrozenCameraDriver(state, at=(5.0, 5.0))
+    real_settle, mzd.CAMERA_SETTLE_S = mzd.CAMERA_SETTLE_S, 0
+    try:
+        rc, seen, uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3], [7, 7]]}], shot)
+    finally:
+        mzd.CAMERA_SETTLE_S = real_settle
+    assert rc == 1 and ("error", "camera_frozen") in seen, seen
+    assert len([c for c in drv.calls if c[0] == "restart_camera"]) == 1, drv.calls
+    assert uploads == [], uploads                                       # no frozen photo as a look
+    assert ("nav_to", 7, 7) not in drv.calls, drv.calls                 # the round ends there
+
+
+def test_a_missing_photo_is_not_a_frozen_camera():
+    with_maps({"map0_work.csv": SQ0, "map0tocharge_unicom.csv": DOCK})
+    drv = PatrolDriver(at=(5.0, 5.0))
+    rc, seen, uploads, out = run_patrol(drv, [{"zone": "map0", "points": [[3, 3]]}],
+                                        lambda topic, timeout=25.0: None)
+    assert rc == 0 and "restart_camera" not in [c[0] for c in drv.calls], (rc, drv.calls)
 
 
 def test_patrol_ends_when_the_frame_never_settles():
@@ -1285,6 +1358,32 @@ class ServiceNode:
             def call_async(self, req):
                 return Done(types.SimpleNamespace(success=True))
         return Client()
+
+
+def test_a_camera_restart_switches_the_camera_behind_the_topic_off_then_on():
+    sent = []
+
+    class RecordingNode(ServiceNode):
+        def create_client(self, srv_type, name):
+            client = super().create_client(srv_type, name)
+            call = client.call_async
+            client.call_async = lambda req: sent.append((name, req.data)) or call(req)
+            return client
+    real = (mzd.SetBool, getattr(mzd.rclpy, "spin_until_future_complete", None))
+    mzd.SetBool = types.SimpleNamespace(Request=lambda: types.SimpleNamespace(data=None))
+    mzd.rclpy.spin_until_future_complete = lambda node, fut, timeout_sec=None: None
+    try:
+        drv = mzd.Driver(RecordingNode())
+        assert drv.restart_camera("front") is True
+        assert drv.restart_camera("tof_gray") is True
+    finally:
+        mzd.SetBool = real[0]
+        if real[1] is None:
+            del mzd.rclpy.spin_until_future_complete
+        else:
+            mzd.rclpy.spin_until_future_complete = real[1]
+    assert sent == [("/camera/preposition/start_camera", False), ("/camera/preposition/start_camera", True),
+                    ("/camera/tof/start_camera", False), ("/camera/tof/start_camera", True)], sent
 
 
 def test_stop_task_and_quit_mapping_mode_reuse_the_clients_made_at_the_start():

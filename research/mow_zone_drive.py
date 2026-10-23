@@ -369,6 +369,17 @@ def steady_count(per_frame):
     return sorted(per_frame)[-2]
 
 
+# A live camera never gives the same JPEG twice across a checkpoint's dwell
+# (sensor noise); a frozen one repeats its last frame, which camera_stream keeps
+# serving (Walter, LFIN2231000367, 2026-10-23 00:15: one frame after the
+# camera's start, eleven photos of the same 9837 bytes, 0 perception frames,
+# error 113 at the dock). The patrol restarts it once and looks again.
+CAMERA_SETTLE_S = 3.0
+CAMERA_SERVICES = {"front": "/camera/preposition/start_camera",
+                   "front_hd": "/camera/preposition/start_camera",
+                   "tof_gray": "/camera/tof/start_camera"}
+
+
 def fetch_snapshot(topic, timeout=25.0):
     """One JPEG from camera_stream.py; None when the camera gave nothing."""
     import urllib.request
@@ -1325,6 +1336,17 @@ class Driver:
         req.value = 2   # detection: person, animal, obstacle, ...
         return self._call(SetUint8, "/perception/set_infer_model", req) and ok
 
+    def restart_camera(self, topic):
+        """The camera behind a photo topic off and on again (CAMERA_SERVICES).
+        True when both calls were answered."""
+        name = CAMERA_SERVICES.get(topic, CAMERA_SERVICES["front"])
+        ok = True
+        for on in (False, True):
+            req = SetBool.Request()
+            req.data = on
+            ok = self._call(SetBool, name, req) and ok
+        return ok
+
     def watch_labels(self, seconds):
         """Patrol counts per points_labeled message for `seconds`.
         Returns ({"person": [...], "animal": [...]}, number_of_messages)."""
@@ -2239,16 +2261,30 @@ def upload_checkpoint(url, seq, xy, scores, frames, jpeg, timeout=20.0):
         return False
 
 
-def _patrol_look(drv, params, seq, xy):
-    """Dwell at a checkpoint: perception on, count, one photo, upload."""
+def _patrol_look(drv, params, seq, xy, restarted=False):
+    """Dwell at a checkpoint: perception on, count, one photo, upload. A photo
+    before the dwell that the one after it repeats byte for byte is a frozen
+    camera: it is restarted once and the checkpoint looked at again. False when
+    it is still frozen then; nothing is uploaded for it."""
+    topic = params.get("photo_topic", "front")
     drv.ensure_perception()
+    before = fetch_snapshot(topic)
     per_frame, frames = drv.watch_labels(float(params.get("dwell_s", 6)))
+    jpeg = fetch_snapshot(topic)
+    if before is not None and jpeg == before:
+        if restarted:
+            log(f"patrol: checkpoint {seq}: the {topic} camera is still frozen after its restart")
+            return False
+        log(f"patrol: checkpoint {seq}: the {topic} camera repeats one frame, restarting it")
+        drv.restart_camera(topic)
+        time.sleep(CAMERA_SETTLE_S)
+        return _patrol_look(drv, params, seq, xy, restarted=True)
     scores = {name: steady_count(per_frame[name]) for name in PATROL_LABELS.values()}
-    jpeg = fetch_snapshot(params.get("photo_topic", "front"))
     sent = upload_checkpoint(params["upload"], seq, xy, scores, frames, jpeg)
     print("CHECKPOINT", json.dumps({"seq": seq, "x": round(xy[0], 2), "y": round(xy[1], 2),
                                      "frames": frames, "photo": bool(jpeg), "sent": sent,
                                      **scores}), flush=True)
+    return True
 
 
 def _poly_centroid(poly):
@@ -2481,7 +2517,9 @@ def do_patrol(drv, params):
                     continue
                 fails = 0
                 reached += 1
-                _patrol_look(drv, params, seq, robot)
+                if not _patrol_look(drv, params, seq, robot):
+                    error = "camera_frozen"
+                    break
             if error:
                 break
     except Exception as e:
