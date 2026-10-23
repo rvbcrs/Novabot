@@ -1305,5 +1305,38 @@ def armed_status_of_robot_decision():
 scenario("while armed, a status with merged 1 but a work_status other than 10 is robot_decision's and counts",
          armed_status_of_robot_decision)
 
+def run_mow_zone(lines, rc=0, stopped=False, proc_class=FakeProc):
+    """handle_mow_zone with the drive as `proc_class`; the mow_zone_status bodies it sent."""
+    sent = []
+    real = {k: getattr(ec, k, MISSING) for k in ("kill_stale_mow_drives", "_ros_env")}
+    real_popen, real_thread, real_isfile = ec.subprocess.Popen, ec.threading.Thread, ec.os.path.isfile
+    ec.kill_stale_mow_drives = lambda timeout=5.0: []
+    ec._ros_env = lambda: {}
+    ec.subprocess.Popen = lambda argv, **kw: proc_class(lines, rc, stopped)
+    ec.threading.Thread = SyncThread
+    ec.os.path.isfile = lambda p: True     # the drive script on the mower
+    try:
+        quietly(lambda: ec.handle_mow_zone({"map": "map2"}, lambda n, b: sent.append((n, b))))
+    finally:
+        ec.subprocess.Popen, ec.threading.Thread, ec.os.path.isfile = real_popen, real_thread, real_isfile
+        restore(real)
+        reset_mow_state()
+    return [b for n, b in sent if n == "mow_zone_status"]
+
+
+# Walter (LFIN2231000367), 2026-10-23 10:50: the app's start_navigation killed a mow_zone
+# that had only said `starting`. Its exit code read 0 (SIGCHLD ignored), so no end went out,
+# the server kept mow_zone_phase `starting`, held the zone drive for busy and let the mower
+# dock between the mow and its edge cut instead of cutting the edge straight after.
+phases = lambda bodies: [b["phase"] for b in bodies]
+check("a mow_zone killed by stop reports stopped, also when its exit code reads 0",
+      phases(run_mow_zone([], rc=0, stopped=True)) == ["starting", "stopped"])
+check("a mow_zone taken over by a newer drive reports stopped, also with exit code 0",
+      phases(run_mow_zone([], rc=0, proc_class=TakenOverProc)) == ["starting", "stopped"])
+check("a mow_zone that died without its end reports an error, also with exit code 0",
+      run_mow_zone([], rc=0)[-1] == {"phase": "error", "map": "map2", "error": "drive_exit_0"})
+check("a mow_zone that ended itself reports only its own end",
+      phases(run_mow_zone(["PHASE covering", "PHASE done"], rc=0)) == ["starting", "covering", "done"])
+
 print(f"\n{sum(checks)}/{len(checks)} checks ok")
 raise SystemExit(0 if all(checks) else 1)

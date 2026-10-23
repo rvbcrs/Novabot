@@ -2030,9 +2030,13 @@ def handle_mow_zone(params, respond):
                 else:
                     log(f"mow_zone_drive: {line}")
             proc.wait()
+            superseded = _drive_superseded(proc)
             stopped = _unregister_mow_drive(proc)
-            if proc.returncode != 0 and not terminal_seen:
-                if stopped:
+            # Not gated on the exit code: main() ignores SIGCHLD, so a killed drive
+            # reads 0 too (as in handle_patrol). Without an end the server kept
+            # `starting` and held the zone drive for busy (Walter, 2026-10-23).
+            if not terminal_seen:
+                if stopped or superseded:
                     # Bewust afgebroken via stop_mow_zone: geen fout, wel een
                     # terminale fase zodat de app niet in een timeout hangt.
                     respond("mow_zone_status", {"phase": "stopped", "map": to_slot})
