@@ -1,6 +1,20 @@
 {
   "releases": [
     {
+      "version": "2026.1024.0808",
+      "date": "2026-10-24",
+      "sections": {
+        "firmware": [
+          "A killed mow_zone drive reports its end whatever its exit code reads",
+          "After ending a goal itself, the drive waits for nav2 to wind it down before the next one (Novabot-m8rg)"
+        ],
+        "server": [
+          "The app's fallback start no longer kills a zone drive that just started; a channel nav2 cancels is driven once more",
+          "A frozen camera is restarted once, and a round with a camera that stays frozen ends as camera_frozen (Novabot-66xt)"
+        ]
+      }
+    },
+    {
       "version": "2026.1022.2232",
       "date": "2026-10-22",
       "sections": {
@@ -185,55 +199,6 @@
         ],
         "firmware": [
           "An edge cut reaches a zone that touches the last one"
-        ]
-      }
-    },
-    {
-      "version": "2026.1011.0006",
-      "date": "2026-10-10",
-      "sections": {
-        "dashboard": [
-          "Choose the zones of an edge cut",
-          "No rain warning on start or resume when rain pause is off",
-          "Dock channel in Settings, Recovery",
-          "Warn when a drawn or edited obstacle lies in the dock exit lane",
-          "Translate the time-left value and read elapsed as minutes",
-          "Show why a map edit was refused"
-        ],
-        "app": [
-          "Warn before recording a channel between touching or close zones",
-          "Label the zone estimate and the live time left differently",
-          "Measure zone gaps and treat touching zones as connected"
-        ],
-        "firmware": [
-          "Mow_zone drives to a zone and cuts its edge",
-          "The STOP button, a PIN lock or a lifted mower ends an edge cut",
-          "Free the start-camera client after each call",
-          "Verify_pin says when the motor board does not answer, drop the unused ROS2 PIN script",
-          "Restart the camera when its frames stop while someone watches"
-        ],
-        "server": [
-          "Edge cut of chosen zones, one after another",
-          "Only a plain serial number gets a saved-trail file",
-          "Keep the last session's trail until the next mow, also across a restart",
-          "A change inside HA_THROTTLE_MS is sent later instead of dropped",
-          "A stop or \"go home\" during an edge cut stops the edge goal first",
-          "Show on the schedule card when a run started without the weather check",
-          "Show the headlight as on for any stored value above 0",
-          "Add rainPauseEnabled, which the rain forecast route already uses",
-          "Say so when a run starts without the weather guards",
-          "Restart dnsmasq when it exits or stops answering",
-          "Warn when an obstacle lies in the dock exit lane",
-          "Publish cov_ratio as a percentage",
-          "Cov_work_time is minutes, not seconds",
-          "Remote PIN verify waits for the mower and says why it failed",
-          "Create a missing dock channel from the saved dock pose",
-          "Refuse to delete the zone that carries the dock channel",
-          "Say why a map push was refused instead of sync_failed",
-          "Login lifetime from JWT_EXPIRES_IN",
-          "Send soft_restart to extended_commands, where its handler lives",
-          "Reverse into the middle of the docking window when re-anchoring",
-          "… plus 2 kleinere wijzigingen"
         ]
       }
     }
