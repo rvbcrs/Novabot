@@ -81,6 +81,11 @@ export const CATALOG: Catalog = {
     fr: "Un composant du logiciel de la tondeuse n'a pas répondu. Redémarrez la tondeuse et réessayez.",
     de: "Ein Teil der Mähersoftware hat nicht reagiert. Starten Sie den Mäher neu und versuchen Sie es erneut.",
   },
+  "De maaier kreeg niet op tijd stabiel laadcontact, daarom stopte de controle. Controleer of de laadcontacten schoon zijn en niets de maaier tegenhoudt.": {
+    en: "The mower did not get stable charging contact in time, so the check stopped. Check that the charging contacts are clean and nothing holds the mower back.",
+    fr: "La tondeuse n'a pas obtenu de contact de charge stable à temps, le contrôle s'est donc arrêté. Vérifiez que les contacts sont propres et que rien ne bloque la tondeuse.",
+    de: "Der Mäher hat nicht rechtzeitig stabilen Ladekontakt bekommen, deshalb wurde die Prüfung beendet. Prüfen Sie, ob die Ladekontakte sauber sind und nichts den Mäher aufhält.",
+  },
   "De maaier bevestigde niet dat hij gestopt is. Druk voor de zekerheid op de STOP-knop van de maaier.": {
     en: "The mower did not confirm that it stopped. Press the mower's STOP button to be safe.",
     fr: "La tondeuse n'a pas confirmé son arrêt. Appuyez par sécurité sur le bouton STOP de la tondeuse.",

@@ -56,7 +56,7 @@ it.each(['dock-measurement-motion-v3', 'dock-measurement-motion-v4'])('docking r
   } else {
     await move;
     // The visual approach took 35s live; the native lease allows 120s.
-    expect(h.command).toHaveBeenLastCalledWith('dock_measurement_move', expect.objectContaining({ recovery: true, charge_pose: LEFT_FROM }), 100_000);
+    expect(h.command).toHaveBeenLastCalledWith('dock_measurement_move', expect.objectContaining({ recovery: true, charge_pose: LEFT_FROM }), 135_000);
     expect(beforeMove).toHaveBeenCalledOnce();
   }
   expect(h.publish).toHaveBeenLastCalledWith('source', { dock_measurement_control: { action: 'stop', motion_id: expect.any(String) } });

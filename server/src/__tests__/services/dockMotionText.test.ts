@@ -38,6 +38,15 @@ describe('readableDockMotionError', () => {
     expect(new Set([fixed, stale, localization, en('RTK corrections or localization lost during motion')]).size).toBe(4);
     for (const text of [fixed, stale, localization]) expect(text).not.toMatch(/quality|status \d|age \d/);
   });
+  // A docking timeout is not an unconfirmed stop: the firmware already
+  // cancelled the docker. Only a refused cancel or no answer asks for STOP.
+  it('reads a docking timeout as missing contact, not as a STOP request', () => {
+    const timeout = 'stop or dock contact was not confirmed before timeout';
+    expect(renderMsg('en', readableDockMotionError(timeout, 'dock'))).toMatch(/^The mower did not get stable charging contact in time/);
+    expect(renderMsg('en', readableDockMotionError(timeout, 'reverse'))).toMatch(/did not confirm that it stopped/);
+    expect(renderMsg('en', readableDockMotionError(`${timeout}; visual docking cancellation not confirmed; use the mower STOP button`, 'dock'))).toMatch(/STOP button/);
+    expect(renderMsg('en', readableDockMotionError('stop not confirmed', 'dock'))).toMatch(/STOP button/);
+  });
   it('never shows a ROS topic for a known reason, and keeps an unknown one visible', () => {
     expect(en('motion telemetry stale: /robot_decision/map_position')).not.toMatch(/\//);
     expect(en('something new')).toBe('The check stopped on the mower (something new).');

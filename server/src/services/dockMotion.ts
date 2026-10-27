@@ -16,7 +16,7 @@ export class DockMotionError extends TextError {
  * screen and meant nothing to anyone (Aaron, Oct 2026). The wizard adds its
  * own "return it to the dock and restart" hint underneath.
  */
-export function readableDockMotionError(raw: string): Msg {
+export function readableDockMotionError(raw: string, action?: 'reverse' | 'dock'): Msg {
   const r = raw.toLowerCase();
   // Every movement needs RTK Fixed with fresh corrections; waiting does not
   // help when it stays without (Aaron: "RTK: ?" on the dock, Oct 2026).
@@ -48,6 +48,11 @@ export function readableDockMotionError(raw: string): Msg {
   if (r.includes('without charging contact')) return M`De maaier reed naar het laadstation maar maakte geen laadcontact. Controleer of de laadcontacten schoon zijn en niets de maaier tegenhoudt.`;
   if (r.includes('reverse distance')) return M`De maaier kwam niet ver genoeg achteruit. Misschien slipten de wielen of stond er iets achter hem.`;
   if (r.includes('not stationary') || r.includes('dock contact at movement start')) return M`De maaier stond niet stil of niet op de verwachte plek toen de beweging moest beginnen.`;
+  // A docking that ran out of time without stable contact: the firmware has
+  // already cancelled the docker (a failed cancel adds "STOP button" below).
+  if (action === 'dock' && r.includes('dock contact was not confirmed') && !r.includes('stop button')) {
+    return M`De maaier kreeg niet op tijd stabiel laadcontact, daarom stopte de controle. Controleer of de laadcontacten schoon zijn en niets de maaier tegenhoudt.`;
+  }
   if (/not confirmed|stop button/.test(r)) return M`De maaier bevestigde niet dat hij gestopt is. Druk voor de zekerheid op de STOP-knop van de maaier.`;
   if (/unavailable|rejected|did not confirm/.test(r)) return M`Een onderdeel van de maaiersoftware reageerde niet. Herstart de maaier en probeer het opnieuw.`;
   if (/lease expired|heartbeat expired/.test(r)) return M`De verbinding met de server viel even weg tijdens de beweging, daarom stopte de maaier. Houd deze pagina open tijdens de controle.`;
@@ -109,15 +114,18 @@ export async function guardedDockMove(sn: string, operation: MowerMapOperation,
     if (stopped) throw stopped;
     if (armed?.result !== 0 || armed?.protocol !== DOCK_MOTION_PROTOCOL) throw new TextError(M`Deze controle heeft nieuwere maaierfirmware nodig. Werk de firmware van de maaier bij en probeer het opnieuw.`);
     beforeMove();
-    // A visual dock took 35 s live; the native lease allows 120 s.
+    // A visual dock took 35 s live. The mower ends a dock by its 120 s lease
+    // (counted from the arm) and then needs up to ~8 s to cancel the docker and
+    // switch the detector off. Waiting only 100 s turned such a stop into "no
+    // answer" and lost the mower's own reason.
     const result = await operation.command('dock_measurement_move', { action: input.action, distance_m: input.distance,
       from_dock: input.fromDock, recovery: operation.reanchor === true, motion_id: id, frame_fingerprint: input.signature,
-      ...(input.chargePose ? { charge_pose: input.chargePose } : {}) }, input.action === 'dock' ? 100_000 : 60_000);
+      ...(input.chargePose ? { charge_pose: input.chargePose } : {}) }, input.action === 'dock' ? 135_000 : 60_000);
     if (result?.result !== 0 || result.protocol !== armed.protocol || result.frame_fingerprint !== input.signature ||
         (input.action === 'dock' && result.docked !== true)) {
       const raw = typeof result?.error === 'string' ? result.error : 'stop not confirmed';
       console.warn(`[DOCK-MOTION] ${sn}: ${input.action} stopped on the mower: ${raw}`);
-      throw new DockMotionError(readableDockMotionError(raw), raw);
+      throw new DockMotionError(readableDockMotionError(raw, input.action), raw);
     }
     if (input.fromDock && !isPose(result.start_pose)) throw new DockMotionError(M`Deze controle heeft nieuwere maaierfirmware nodig. Werk de firmware van de maaier bij en probeer het opnieuw.`, 'no start_pose');
     if (stopped) throw stopped;
