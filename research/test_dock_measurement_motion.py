@@ -311,13 +311,13 @@ class MotionTest(unittest.TestCase):
         self.assertEqual(results[0]['protocol'], PROTOCOL)
         self.assertTrue(results[0]['docked'])
         self.assertAlmostEqual(sim.x, 0.)
-        self.assertEqual(sim.lights, [255, 0])
+        self.assertEqual(sim.lights, [30, 0])
         for failure in ('missing-pattern', 'distant-pattern', 'no-contact', 'stop', 'heartbeat', 'pattern-lost', 'goal-rejected', 'no-action-server', 'native-fail-early'):
             with self.subTest(failure=failure):
                 sim, results = self.run_motion('dock', failure, recovery=True)
                 self.assertFalse(results)
                 self.assertFalse(sim.homing)
-                self.assertEqual(sim.lights, [255, 0])
+                self.assertEqual(sim.lights, [30, 0])
         sim, results = self.run_motion('dock', 'lamp-unavailable', recovery=True)
         self.assertFalse(results)
         self.assertEqual(sim.lights, [])

@@ -5528,8 +5528,8 @@ def handle_dock_measurement_control(params, respond):
 
 def _dock_motion_lease(state):
     now = time.monotonic()
-    # 120s covers a 1.2m departure and a full visual dock (35s live) under the
-    # server's 100s command timeout; the heartbeat stops anything earlier.
+    # 120s covers a 1.2m departure and a full visual dock (35s live); the
+    # server waits past it for the reply, and the heartbeat stops anything earlier.
     if state["cancelled"] or now - state["heartbeat"] > _DOCK_MOTION_HEARTBEAT_TIMEOUT or now - state["created"] > 120:
         state["cancelled"] = True
         raise ValueError("dock measurement stopped or heartbeat expired")
@@ -5609,6 +5609,12 @@ def _dock_marker_forward(marker):
 # approach directly; nearer it steps back first (MOVE_ROBOT_FAIL on this chassis),
 # farther it navigates in the map frame. Keep a margin on all three limits.
 _DOCK_START_MIN, _DOCK_START_MAX, _DOCK_START_ANGLE = .95, 1.40, .40
+# Headlight while the camera reads the dock pattern. Full light (255) blew the
+# printed pattern out white about 1 m in front of the dock: 100 was unreadable
+# and 30 readable live on LFIN2230700238 (2026-10-15), and re-anchors stopped
+# on "dock pattern" (Arron, Oct 2026). The stock docker itself lights only
+# when dark, at level 1. /led_set is 0..100.
+_DOCK_PATTERN_LIGHT = 30
 
 
 def _dock_start_window(dock, pose):
@@ -5904,7 +5910,7 @@ def handle_dock_measurement_move(params, respond):
             # below needs to see it before any goal is sent.
             if lamp.get_subscription_count() == 0:
                 raise ValueError("dock approach lamp unavailable")
-            lamp.publish(UInt8(data=255))
+            lamp.publish(UInt8(data=_DOCK_PATTERN_LIGHT))
             lamp_on = True
             spin(.1)
             detector_attempted = True
