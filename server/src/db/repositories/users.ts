@@ -49,6 +49,7 @@ export class UserRepository {
   private _setDashboardAccess = db.prepare('UPDATE users SET dashboard_access = ? WHERE app_user_id = ?');
   private _count = db.prepare('SELECT COUNT(*) as count FROM users');
   private _isAdmin = db.prepare('SELECT is_admin FROM users WHERE app_user_id = ?');
+  private _countAdmins = db.prepare('SELECT COUNT(*) as count FROM users WHERE is_admin = 1');
   private _hasDashboardAccess = db.prepare('SELECT is_admin, dashboard_access FROM users WHERE app_user_id = ?');
   private _updatePasswordByEmail = db.prepare('UPDATE users SET password = ? WHERE email = ?');
   private _listWithEquipmentSummary = db.prepare(`
@@ -101,6 +102,10 @@ export class UserRepository {
 
   count(): number {
     return (this._count.get() as { count: number }).count;
+  }
+
+  countAdmins(): number {
+    return (this._countAdmins.get() as { count: number }).count;
   }
 
   isAdmin(appUserId: string): boolean {

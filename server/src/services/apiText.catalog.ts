@@ -596,6 +596,21 @@ export const CATALOG: Catalog = {
     fr: "La station de charge n'a pas répondu (délai dépassé)",
     de: "Die Ladestation hat nicht geantwortet (Zeitüberschreitung)",
   },
+  "Er moet minstens één beheerder blijven": {
+    en: "At least one admin must remain",
+    fr: "Au moins un administrateur doit rester",
+    de: "Mindestens ein Administrator muss bleiben",
+  },
+  "Ongeldig e-mailadres": {
+    en: "Invalid email address",
+    fr: "Adresse e-mail invalide",
+    de: "Ungültige E-Mail-Adresse",
+  },
+  "Dit e-mailadres heeft al een account": {
+    en: "This email address already has an account",
+    fr: "Cette adresse e-mail a déjà un compte",
+    de: "Diese E-Mail-Adresse hat bereits ein Konto",
+  },
   "Het wachtwoord moet minstens 6 tekens hebben": {
     en: "Password must be at least 6 characters",
     fr: "Le mot de passe doit comporter au moins 6 caractères",

@@ -2,6 +2,12 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-11-12 - appUserInfo says whether the account is an admin
+
+- `GET /api/nova-user/appUser/appUserInfo` also returns `isAdmin` (boolean).
+  The stock app ignores the extra field; the dashboard uses it to show user
+  management only to an admin (GH #164). No other field changed.
+
 ## 2026-10-14 - patrol checkpoints uploaded by the mower
 
 - New `POST /api/nova-file-server/patrol/uploadFrame` (mower patrol mode,

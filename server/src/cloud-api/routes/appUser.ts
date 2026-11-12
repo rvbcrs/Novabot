@@ -204,6 +204,9 @@ appUserRouter.get('/appUserInfo', authMiddleware, (req: AuthRequest, res: Respon
     email: user.email,
     username: user.username,
     machineToken: user.machine_token,
+    // OpenNova extra (the stock app ignores it): the dashboard shows the
+    // user management only to an admin (GH #164).
+    isAdmin: user.is_admin === 1,
   }));
 });
 

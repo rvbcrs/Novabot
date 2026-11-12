@@ -21,6 +21,8 @@ export interface UserRow {
   password: string;
   username: string | null;
   machine_token: string | null;
+  is_admin: number;
+  dashboard_access: number;
   created_at: string;
 }
 

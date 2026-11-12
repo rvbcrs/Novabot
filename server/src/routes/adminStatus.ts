@@ -189,7 +189,8 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
 
 // GET /api/admin-status/users — all users with their equipment
 adminStatusRouter.get('/users', (_req: AuthRequest, res: Response) => {
-  const users = userRepo.listWithEquipmentSummary();
+  // Never the password hash or the machine token: this goes to a browser.
+  const users = userRepo.listWithEquipmentSummary().map(({ password: _p, machine_token: _t, ...u }) => u);
 
   // Also get all equipment (including unbound)
   const allEquipment = equipmentRepo.listAll();
@@ -559,10 +560,36 @@ adminStatusRouter.post('/set-role', (req: AuthRequest, res: Response) => {
     return;
   }
 
+  // The last admin keeps the role: without one nobody can manage users (GH #164).
+  if (role === 'is_admin' && !enabled && userRepo.isAdmin(userId) && userRepo.countAdmins() <= 1) {
+    res.status(400).json({ error: T`Er moet minstens één beheerder blijven` });
+    return;
+  }
+
   userRepo.setRole(userId, role as 'is_admin' | 'dashboard_access', enabled);
 
   console.log(`[ADMIN] Set ${role}=${enabled ? 1 : 0} for user ${userId}`);
   res.json({ ok: true });
+});
+
+// POST /api/admin-status/create-user — admin adds a local account (GH #164)
+adminStatusRouter.post('/create-user', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
+  const { email, password, isAdmin, dashboardAccess } = req.body as
+    { email?: unknown; password?: unknown; isAdmin?: unknown; dashboardAccess?: unknown };
+  const normalized = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!/^[^\s@]+@[^\s@]+$/.test(normalized)) { res.status(400).json({ error: T`Ongeldig e-mailadres` }); return; }
+  if (typeof password !== 'string' || password.length < 6) {
+    res.status(400).json({ error: T`Het wachtwoord moet minstens 6 tekens hebben` }); return;
+  }
+  if (userRepo.findByEmailNormalized(normalized)) { res.status(409).json({ error: T`Dit e-mailadres heeft al een account` }); return; }
+
+  const appUserId = uuidv4();
+  userRepo.create(appUserId, normalized, bcrypt.hashSync(password, 10), '', isAdmin === true);
+  if (dashboardAccess === true) userRepo.setRole(appUserId, 'dashboard_access', true);
+
+  console.log(`[ADMIN] Created user ${normalized} (${appUserId}) admin=${isAdmin === true} dashboard=${dashboardAccess === true}`);
+  res.json({ ok: true, userId: appUserId });
 });
 
 // POST /api/admin-status/delete-user — admin can delete a user
