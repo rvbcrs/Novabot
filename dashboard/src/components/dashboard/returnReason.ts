@@ -77,6 +77,16 @@ export const RETURN_REASON_TEXT: Record<Exclude<ReturnReason, null>, { title: [s
 };
 
 /**
+ * The mower came back from an off-dock state and is now on the dock. A pause in
+ * the field is not a return: right after leaving the dock for an edge cut the
+ * firmware reports Work:USER_STOP for a moment, and the modal popped up "sent
+ * home manually" while the mower drove on (GH #163).
+ */
+export function backOnDock(prev: string | null, activity: string | null): boolean {
+  return activity === 'charging' && (prev === 'mowing' || prev === 'edge_cutting' || prev === 'returning');
+}
+
+/**
  * Decides when the modal pops and when the chip is offered.
  *
  * Only after we saw the mower come back from an off-dock state in THIS browser
@@ -110,7 +120,7 @@ export function useReturnReason(
       // Only when the mower came back from an off-dock state in THIS browser
       // session. On a page load with an already-docked mower `prev` is null, so
       // a stale popup never ambushes the user after a refresh.
-      const cameFromOffDock = prev === 'mowing' || prev === 'edge_cutting' || prev === 'returning';
+      const cameFromOffDock = backOnDock(prev, activity);
       const fresh = cameFromOffDock && reason != null && reason !== seen.reason;
       setSeen({ activity, reason: fresh ? reason : seen.reason });
       if (cameFromOffDock && reason) {

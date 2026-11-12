@@ -185,8 +185,14 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // Cleared by the user (server error_ack): hidden until the mower reports
   // another code. The mower itself resets it at its next start or return.
   const errorAcked = errorStatusRaw > 0 && s.error_ack === String(errorStatusRaw);
+  // Error 140 while the server's map push restarts novabot_mapping and the
+  // coverage planner: robot_decision raises it for any missing monitored
+  // process and clears it once they are back (GH #171). Part of the push, not
+  // a crash; the dashboard has the same exception (deriveHasError).
+  const ownMapRestart = errorStatusRaw === 140
+    && ['syncing', 'regenerating', 'settling'].includes(s.map_apply_phase ?? '');
   const hasError = Boolean(
-    !errorAcked && errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
+    !errorAcked && !ownMapRestart && errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
   );
   const errorBlocksStart = errorKind(errorStatusRaw) === 'pin' || errorKind(errorStatusRaw) === 'restart';
   const batteryState = s.battery_state?.toUpperCase() ?? '';
@@ -891,8 +897,11 @@ export default function HomeScreen() {
     // UI when we just transitioned here from an off-dock state DURING this app
     // session. On a cold app open of an already-docked mower `prev` is null, so
     // we never ambush the user with a stale popup/chip that "survives" a restart.
-    const cameFromOffDock =
-      prev === 'mowing' || prev === 'edge_cutting' || prev === 'returning';
+    // Only once it is ON the dock: right after leaving for an edge cut the
+    // firmware reports Work:USER_STOP for a moment, which popped "sent home
+    // manually" while the mower drove on (GH #163).
+    const cameFromOffDock = effectiveActivity === 'charging' &&
+      (prev === 'mowing' || prev === 'edge_cutting' || prev === 'returning');
     if (cameFromOffDock && returnReason) {
       setLiveReturn(true);
       if (returnReason !== lastShownReasonRef.current) {
