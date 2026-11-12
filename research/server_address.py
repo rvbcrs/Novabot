@@ -20,8 +20,10 @@ Candidates, in this order: the mDNS names the server advertises
 stock cloud names (mqtt.lfibot.com, app.lfibot.com), then server_ip.txt. A
 candidate only counts when its MQTT port accepts a connect AND one of its HTTP
 ports answers /api/setup/health as OpenNova: the public cloud, a reverse proxy
-without a broker, or the ESP32 setup AP never do. When nothing counts, nothing
-is written: the files keep the last server that did.
+without a broker, or the ESP32 setup AP never do. A public address is never
+a candidate and never written, not even as a fallback: that is the LFI cloud.
+When nothing counts, nothing is written: the files keep the last server that
+did.
 
 The address is always the IP, never the hostname: mDNS only reaches the mower
 on the same subnet and when the server advertises at all (not from a Docker
@@ -33,6 +35,7 @@ Stdlib only. build_custom_firmware.sh copies it next to the helpers in
 once (set_server_urls.sh at boot and after sync_map); opennova_discovery.py
 imports it and checks every 60 s.
 """
+import ipaddress
 import json
 import os
 import socket
@@ -60,6 +63,19 @@ def lookup(name):
     except (OSError, UnicodeError):
         return None
     return None if ip.startswith('127.') else ip
+
+
+def is_local(ip):
+    """True for a LAN/VPN address (private, link-local, CGNAT/Tailscale).
+
+    A public address is never written anywhere: that is the LFI cloud
+    (app.lfibot.com 47.253.145.99, mqtt.lfibot.com 47.253.162.193), which is
+    what a stock name resolves to without a DNS redirect.
+    """
+    try:
+        return not ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
 
 
 def accepts_connect(ip, port, timeout=CONNECT_TIMEOUT_S):
@@ -204,7 +220,7 @@ def find_server(state, lookup=lookup, reachable=accepts_connect, opennova=answer
     """(ip, http_port) of the OpenNova server to use, or None when none answers."""
     candidates = []
     for ip in [lookup(n) for n in MDNS_NAMES + DNS_NAMES] + [state['server_ip']]:
-        if ip and ip not in candidates:
+        if ip and is_local(ip) and ip not in candidates:
             candidates.append(ip)
     for ip in candidates:
         if not reachable(ip, state['mqtt_port']):
@@ -238,6 +254,8 @@ def write_server(ip, http_port):
     stays. An unreadable one is left alone (set_server_urls.sh restores it
     from its backups) and the other two are still written.
     """
+    if not is_local(ip):
+        raise ValueError('refusing to write public address %s (the LFI cloud never goes in a file)' % ip)
     state = read_state()
     changed = differences(ip, http_port, state)
     if 'mqtt_addr' in changed:

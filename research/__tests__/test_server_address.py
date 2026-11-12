@@ -87,8 +87,11 @@ setup(server_ip=LOCAL)
 got, asked, _ = find({"mqtt.lfibot.com": "47.253.162.193", "app.lfibot.com": CLOUD},
                      brokers={"47.253.162.193", LOCAL}, opennova={LOCAL + ":80"})
 check("the public cloud never counts -> the last server found", got == (LOCAL, 80), got)
-check("  ... the cloud was asked, but did not answer as OpenNova",
-      any(a.startswith("47.253.162.193:") for a in asked), asked)
+check("  ... the cloud is not even asked", not any(a.startswith("47.253.") for a in asked), asked)
+
+got, _, _ = find({"mqtt.lfibot.com": "47.253.162.193"}, brokers={"47.253.162.193"},
+                 opennova={"47.253.162.193:80"})
+check("a public address never counts, even one that would answer as OpenNova", got is None, got)
 
 got, _, _ = find({"mqtt.lfibot.com": LOCAL, "app.lfibot.com": PROXY}, brokers={LOCAL}, opennova={PROXY + ":80"})
 check("a reverse proxy without a broker (app.lfibot.com -> NPM) does not count", got is None, got)
@@ -138,6 +141,18 @@ setup(addr="mqtt.lfibot.com")
 sa.write_server(LOCAL, 80)
 check("the stock name is replaced by the server's IP",
       json.loads(sa.JSON_PATH.read_text())["mqtt"]["value"]["addr"] == LOCAL)
+
+setup(addr=LOCAL, http=LOCAL + ":80", server_ip=LOCAL)
+try:
+    sa.write_server(CLOUD, 80)
+    refused = False
+except ValueError:
+    refused = True
+check("write_server refuses the LFI cloud: no public address in any file",
+      refused and sa.read_state() == {"mqtt_addr": LOCAL, "mqtt_port": 1883, "http": LOCAL + ":80", "server_ip": LOCAL},
+      sa.read_state())
+check("CGNAT/Tailscale (100.64/10) and LAN count as local, the cloud does not",
+      sa.is_local("100.101.1.2") and sa.is_local("10.0.0.5") and not sa.is_local(CLOUD) and not sa.is_local("47.253.162.193"))
 
 sa.JSON_PATH.write_text("{broken")
 sa.HTTP_ADDR_PATH.write_text(CLOUD + ":80")
