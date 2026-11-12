@@ -11,7 +11,11 @@ Candidates, in order; the first that accepts a TCP connect on the MQTT port
 within a short timeout wins:
   1. opennova.local      mDNS, follows the server when it moves (then the
                          legacy opennovabot.local, like opennova_discovery.py)
-  2. mqtt.lfibot.com     the DNS redirect of the stock cloud name
+  2. mqtt.lfibot.com     the DNS redirect of the stock cloud name, only when
+                         it points at a non-public address: without a
+                         redirect it is the real cloud, whose broker refuses
+                         the mower (CONNACK 5) while the configured local one
+                         answers (GH #169)
   3. json_config.json    the configured mqtt address
   4. server_ip.txt       the last server set_server_urls.sh found
 When none answers, the configured address is returned, so the caller's retry
@@ -20,6 +24,7 @@ loop keeps trying the address it was given.
 Stdlib only. build_custom_firmware.sh copies it next to the helpers in
 /root/novabot/scripts/.
 """
+import ipaddress
 import json
 import socket
 
@@ -61,6 +66,14 @@ def lookup(name):
         return None
 
 
+def is_redirect(addr):
+    """True for a LAN/VPN address: a DNS redirect to OpenNova, not the public cloud."""
+    try:
+        return not ipaddress.ip_address(addr).is_global
+    except ValueError:
+        return False
+
+
 def accepts_connect(addr, port, timeout=CONNECT_TIMEOUT_S):
     try:
         socket.create_connection((addr, port), timeout).close()
@@ -75,7 +88,10 @@ def resolve_broker(config_file=CONFIG_FILE, last_known_file=LAST_KNOWN_FILE,
     configured, port = configured_broker(config_file)
     last_known = last_known_server(last_known_file)
     candidates = []
-    for addr in (*(lookup(name) for name in MDNS_NAMES), lookup(DNS_NAME), configured, last_known):
+    redirect = lookup(DNS_NAME)
+    if redirect and not is_redirect(redirect):
+        redirect = None
+    for addr in (*(lookup(name) for name in MDNS_NAMES), redirect, configured, last_known):
         if addr and addr not in candidates:
             candidates.append(addr)
     for addr in candidates:

@@ -95,6 +95,14 @@ got, _ = resolve({"mqtt.lfibot.com": NEW}, {f"{NEW}:1883", f"{OLD}:1883"})
 check("the issue: mDNS silent, DNS points at the new server, config at the old -> the new one",
       got == (NEW, 1883), got)
 
+# GH #169: no DNS redirect on the mower, so mqtt.lfibot.com is the real cloud.
+got, probed = resolve({"mqtt.lfibot.com": "47.253.162.193"}, {"47.253.162.193:1883", f"{OLD}:1883"})
+check("mqtt.lfibot.com at a public address (the cloud) is skipped -> the configured broker",
+      got == (OLD, 1883) and "47.253.162.193:1883" not in probed, (got, probed))
+
+got, _ = resolve({"mqtt.lfibot.com": "100.101.1.2"}, {"100.101.1.2:1883", f"{OLD}:1883"})
+check("a redirect to a CGNAT/Tailscale address still counts", got == ("100.101.1.2", 1883), got)
+
 got, _ = resolve({"opennova.local": NEW, "mqtt.lfibot.com": "10.0.0.9"},
                  {f"{NEW}:1883", "10.0.0.9:1883"})
 check("mDNS beats DNS when both answer", got == (NEW, 1883), got)
