@@ -42,6 +42,7 @@ tmp = Path(tempfile.mkdtemp())
 sa.JSON_PATH = tmp / "json_config.json"
 sa.HTTP_ADDR_PATH = tmp / "http_address.txt"
 sa.SERVER_IP_PATH = tmp / "server_ip.txt"
+sa.SENSOR_JSON_PATH = tmp / "sensor.json"
 
 
 def setup(addr, server_ip, http):
@@ -92,6 +93,18 @@ d.poll_once(state)
 check("a stale http_address.txt next to a correct broker is fixed", addresses() == (NEW, NEW + ":80", NEW), addresses())
 check("  ... mqtt_node restarts (it reads http_address.txt at start), the helpers do not",
       events == ["kill_mqtt_node"], events)
+
+# ── Only autosys_monitor's broker (sensor.json) still the cloud ─────────────
+events.clear()
+setup(NEW, NEW, NEW + ":80")
+sa.SENSOR_JSON_PATH.write_text('{"mqttServer": "tcp://47.253.57.111:1883"}')
+found((NEW, 80))
+state = d.new_state()
+d.poll_once(state)
+d.poll_once(state)
+check("sensor.json is pointed at the server too", NEW in sa.SENSOR_JSON_PATH.read_text(), sa.SENSOR_JSON_PATH.read_text())
+check("  ... without restarting mqtt_node or the helpers (autosys_monitor reads it at boot)", events == [], events)
+sa.SENSOR_JSON_PATH.unlink()
 
 # ── No server answers ───────────────────────────────────────────────────────
 events.clear()

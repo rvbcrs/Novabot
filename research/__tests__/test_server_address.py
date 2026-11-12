@@ -37,6 +37,7 @@ sa.JSON_PATH = tmp / "json_config.json"
 sa.HTTP_ADDR_PATH = tmp / "http_address.txt"
 sa.SERVER_IP_PATH = tmp / "server_ip.txt"
 sa.PORT_OVERRIDE_PATH = tmp / "server_port_override.txt"
+sa.SENSOR_JSON_PATH = tmp / "sensor.json"
 
 LOCAL, CLOUD, PROXY = "192.168.178.228", "47.253.145.99", "192.168.0.248"
 
@@ -149,7 +150,7 @@ try:
 except ValueError:
     refused = True
 check("write_server refuses the LFI cloud: no public address in any file",
-      refused and sa.read_state() == {"mqtt_addr": LOCAL, "mqtt_port": 1883, "http": LOCAL + ":80", "server_ip": LOCAL},
+      refused and sa.read_state() == {"mqtt_addr": LOCAL, "mqtt_port": 1883, "http": LOCAL + ":80", "server_ip": LOCAL, "sensor": None},
       sa.read_state())
 check("CGNAT/Tailscale (100.64/10) and LAN count as local, the cloud does not",
       sa.is_local("100.101.1.2") and sa.is_local("10.0.0.5") and not sa.is_local(CLOUD) and not sa.is_local("47.253.162.193"))
@@ -160,6 +161,26 @@ changed = sa.write_server(LOCAL, 80)
 check("an unreadable json_config.json is left alone, the others are still written",
       sa.JSON_PATH.read_text() == "{broken" and sa.HTTP_ADDR_PATH.read_text() == LOCAL + ":80"
       and "mqtt_addr" not in changed, (sa.JSON_PATH.read_text(), changed))
+
+# autosys_monitor's stock broker is the LFI cloud too.
+STOCK_SENSOR = """{
+    "enable": true,
+    "reportTopic":"monitor/report_info/", 
+    "mqttServer": "tcp://47.253.57.111:1883",
+    "systemCheckTimer": 60000
+}
+"""
+setup(addr=LOCAL, port=1884, http=LOCAL + ":80", server_ip=LOCAL)
+sa.SENSOR_JSON_PATH.write_text(STOCK_SENSOR)
+check("the cloud broker in sensor.json counts as a difference", sa.differences(LOCAL, 80, sa.read_state()) == ["sensor"],
+      sa.differences(LOCAL, 80, sa.read_state()))
+changed = sa.write_server(LOCAL, 80)
+check("  ... it points at the server's broker, port included",
+      changed == ["sensor"] and '"mqttServer": "tcp://%s:1884"' % LOCAL in sa.SENSOR_JSON_PATH.read_text(), changed)
+check("  ... and the rest of the stock file stays byte for byte",
+      sa.SENSOR_JSON_PATH.read_text() == STOCK_SENSOR.replace("tcp://47.253.57.111:1883", "tcp://%s:1884" % LOCAL))
+sa.SENSOR_JSON_PATH.unlink()
+check("no sensor.json: nothing to point, no difference", sa.differences(LOCAL, 80, sa.read_state()) == [])
 
 # ── --once ───────────────────────────────────────────────────────────────────
 setup(addr=LOCAL, http=CLOUD + ":80", server_ip=LOCAL)

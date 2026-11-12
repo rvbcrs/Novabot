@@ -8,12 +8,15 @@ broker_resolver.py on every reconnect). They drifted apart: on LFIN2231000451
 the broker was the local server while http_address.txt still said the cloud
 (47.253.145.99:80), so sync_map fetched the ZIP from the cloud and failed.
 
-Now one rule finds the server and one function writes all three, always to
+Now one rule finds the server and one function writes all of them, always to
 the same IP:
   json_config.json   mqtt.value.addr   mqtt_node's broker; the helpers read it too
   http_address.txt   <ip>:<http port>  mqtt_node HTTP, sync_map, terrain_scan
   server_ip.txt      <ip>              the last server found, tried when the
                                        names give nothing
+  sensor.json        mqttServer        autosys_monitor's broker; stock it is
+                                       the LFI cloud (47.253.57.111), read at
+                                       its start
 
 Candidates, in this order: the mDNS names the server advertises
 (opennova.local, then the legacy opennovabot.local), the DNS redirect of the
@@ -38,6 +41,7 @@ imports it and checks every 60 s.
 import ipaddress
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -49,6 +53,10 @@ JSON_PATH = Path('/userdata/lfi/json_config.json')
 HTTP_ADDR_PATH = Path('/userdata/lfi/http_address.txt')
 SERVER_IP_PATH = Path('/userdata/lfi/server_ip.txt')
 PORT_OVERRIDE_PATH = Path('/userdata/lfi/server_port_override.txt')
+# Stock config of autosys_monitor (the system-health watchdog): its own broker,
+# hardcoded to the LFI cloud (tcp://47.253.57.111:1883). Read at its start.
+SENSOR_JSON_PATH = Path('/root/novabot/install/config/sensor.json')
+SENSOR_SERVER_RE = re.compile(r'("mqttServer"\s*:\s*")([^"]*)(")')
 MDNS_NAMES = ('opennova.local', 'opennovabot.local')
 DNS_NAMES = ('mqtt.lfibot.com', 'app.lfibot.com')
 HTTP_PORTS = (80, 8080, 443)
@@ -192,8 +200,11 @@ def read_state():
     for prefix in ('http://', 'https://'):
         if http.startswith(prefix):
             http = http[len(prefix):]
+    sensor = SENSOR_SERVER_RE.search(_read(SENSOR_JSON_PATH))
     return {'mqtt_addr': addr, 'mqtt_port': port, 'http': http.rstrip('/'),
-            'server_ip': _read(SERVER_IP_PATH) or None}
+            'server_ip': _read(SERVER_IP_PATH) or None,
+            # None when the file is absent: nothing to point anywhere.
+            'sensor': sensor.group(2) if sensor else None}
 
 
 def http_ports(ip, state, srv=srv_port):
@@ -234,7 +245,9 @@ def find_server(state, lookup=lookup, reachable=accepts_connect, opennova=answer
 def differences(ip, http_port, state):
     """Which of the three addresses do not point at (ip, http_port)."""
     want = {'mqtt_addr': ip, 'http': '%s:%d' % (ip, http_port), 'server_ip': ip}
-    return [k for k, v in want.items() if state[k] != v]
+    if state.get('sensor') is not None:
+        want['sensor'] = 'tcp://%s:%d' % (ip, state['mqtt_port'])
+    return [k for k, v in want.items() if state.get(k) != v]
 
 
 def _atomic_write(path, content):
@@ -278,6 +291,11 @@ def write_server(ip, http_port):
         _atomic_write(HTTP_ADDR_PATH, '%s:%d' % (ip, http_port))
     if 'server_ip' in changed:
         _atomic_write(SERVER_IP_PATH, ip + '\n')
+    if 'sensor' in changed:
+        # Only the value: the rest of the stock file stays byte for byte.
+        text = SENSOR_JSON_PATH.read_text()
+        _atomic_write(SENSOR_JSON_PATH, SENSOR_SERVER_RE.sub(
+            lambda m: m.group(1) + 'tcp://%s:%d' % (ip, state['mqtt_port']) + m.group(3), text, count=1))
     return changed
 
 

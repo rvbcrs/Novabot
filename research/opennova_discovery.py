@@ -4,8 +4,8 @@
 Every 60 s it asks server_address.find_server() which server answers (mDNS
 opennova.local first, then the DNS redirect of the stock names, then the last
 server found; only one that answers as OpenNova counts) and compares that with
-ALL three addresses: json_config.json's broker, http_address.txt and
-server_ip.txt. When any of them differs for 2 consecutive polls, they are all
+ALL the addresses: json_config.json's broker, http_address.txt,
+server_ip.txt and autosys_monitor's sensor.json. When any of them differs for 2 consecutive polls, they are all
 rewritten together (server_address.write_server), mqtt_node is killed so
 mqtt_node_monitor.sh respawns it with the new files, and when the broker
 moved the OpenNova MQTT helpers are restarted the way run_novabot.sh starts
@@ -183,8 +183,11 @@ def poll_once(state):
     except Exception:
         LOG.exception('rewrite failed — leaving the addresses alone')
         return
-    LOG.warning('addresses now %s:%d (rewrote %s) — restarting mqtt_node', found[0], found[1], ', '.join(changed))
-    kill_mqtt_node()
+    LOG.warning('addresses now %s:%d (rewrote %s)', found[0], found[1], ', '.join(changed))
+    # mqtt_node reads json_config and http_address.txt at start; sensor.json
+    # alone (autosys_monitor, next boot) and server_ip.txt need no restart.
+    if 'mqtt_addr' in changed or 'http' in changed:
+        kill_mqtt_node()
     if 'mqtt_addr' in changed:
         restart_helpers()
 
