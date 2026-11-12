@@ -87,6 +87,24 @@ describe('confirmed verbatim apply', () => {
     expect(readMowerMapSnapshot).not.toHaveBeenCalled();
   });
 
+  // GH #175: a long read_map_files outlasts the 10 s dock-telemetry freshness.
+  it('still writes when dock telemetry went stale during a long read', async () => {
+    vi.mocked(readMowerMapSnapshot).mockImplementationOnce(async () => {
+      clearPositionTelemetry('A'); ingestPositionTelemetry('A', { battery_state: 'CHARGING' }, Date.now() - 40_000);
+      return snapshot();
+    });
+    expect((await applyVerbatimToMower('A', files(), operation)).pushed).toBe(true);
+  });
+
+  it('aborts before writing when a fresh reading during the read says off the dock', async () => {
+    vi.mocked(readMowerMapSnapshot).mockImplementationOnce(async () => {
+      ingestPositionTelemetry('A', { battery_state: 'DISCHARGING' });
+      return snapshot();
+    });
+    expect((await applyVerbatimToMower('A', files(), operation)).error).toBe('mower_not_docked');
+    expect(command).not.toHaveBeenCalledWith('write_map_files', expect.anything(), expect.anything());
+  });
+
   it('verifies exact CSV, separate x3 and raster sets plus unchanged pos.json', async () => {
     expect(await applyVerbatimToMower('A', files(), operation)).toMatchObject({ pushed: true });
     expect(command.mock.calls[0][1]).toMatchObject({ x3_csv_files: files().x3CsvFiles, restart_mapping: false });

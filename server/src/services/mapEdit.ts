@@ -195,7 +195,8 @@ function isMowerBusy(sn: string): boolean {
   // Fallback alleen bij een ACTIEVE taak (task_mode===1). Een idle maaier houdt
   // "Mode:COVERAGE" als laatst-gekozen modus-label, wat 'm anders onterecht als
   // bezig markeerde en Apply blokkeerde. Gelijkgetrokken met isCoverageActive.
-  if (taskMode === 1 && msg.includes('Mode:COVERAGE') && !msg.includes('Work:STANDBY') && !msg.includes('Work:IDLE')) return true;
+  // A finished task keeps task_mode 1 too: CANCELLED/FINISHED/FAILED is not busy (GH #173).
+  if (taskMode === 1 && msg.includes('Mode:COVERAGE') && !/Work:\s*(STANDBY|IDLE|CANCELLED|FINISHED|FAILED)/.test(msg)) return true;
   return false;
 }
 

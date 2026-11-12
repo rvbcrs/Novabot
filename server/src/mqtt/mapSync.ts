@@ -839,7 +839,11 @@ export async function applyVerbatimToMower(
   // Correlated read proves firmware capability BEFORE the destructive write.
   const before = await readMowerMapSnapshot(sn, operation);
   if (!before || before.result !== 0 || before.snapshot_consistent !== true) return fail('snapshot_unavailable');
-  if (!isDeviceOnline(sn) || !freshPositionState(sn).docked) return fail('mower_not_docked');
+  // The read can outlast the 10 s telemetry freshness (GH #175): only a fresh
+  // reading that says off-dock aborts now; docked was proven before the read.
+  const dock = freshPositionState(sn);
+  if (!isDeviceOnline(sn)) return fail('mower_offline');
+  if (dock.dockKnown && !dock.docked) return fail('mower_not_docked');
   markMapInstallPending(sn);
   // Like sync_map: only a new origin or dock file changes the frame. pos.json
   // is never written (the readback below demands it unchanged); while the

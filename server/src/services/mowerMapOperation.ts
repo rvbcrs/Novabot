@@ -85,7 +85,10 @@ export async function awaitExtended(
       const response = data[`${cmd}_respond`] as Record<string, unknown> | undefined;
       if (response?.operation_id === operationId) finish(response);
     };
-    const timer = setTimeout(() => finish(null), timeoutMs);
+    const timer = setTimeout(() => {
+      console.warn(`[MAP-OP] ${sn}: ${cmd} timed out after ${timeoutMs} ms (operation_id ${operationId})`);
+      finish(null);
+    }, timeoutMs);
     onExtendedResponse(sn, handler);
     try {
       publishToExtended(sn, { [cmd]: { ...params, operation_id: operationId } });
@@ -103,5 +106,6 @@ export async function awaitExtended(
 export async function readMowerMapSnapshot(sn: string, operation?: MowerMapOperation): Promise<Record<string, unknown> | null> {
   if (!operation) return withMowerMapOperation(sn, lease => readMowerMapSnapshot(sn, lease));
   assertMowerMapOperation(sn, operation);
-  return operation.command('read_map_files', {}, 30_000);
+  // A large snapshot (~1.7 MB) took 34 s on a real mower (GH #174).
+  return operation.command('read_map_files', {}, 90_000);
 }

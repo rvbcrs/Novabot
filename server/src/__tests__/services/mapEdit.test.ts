@@ -256,6 +256,13 @@ describe('mapEdit service: apply + revert', () => {
     expect(res.reason).toBe('busy');
   });
 
+  it('apply: geannuleerde taak (task_mode 1, Work:CANCELLED) is niet bezig (GH #173)', async () => {
+    deviceCache.set(sn, new Map([['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:COVERING Recharge: CANCELLED'], ['task_mode', '1'], ['battery_state', 'DISCHARGED']]));
+    saveDraft(sn, { canonical: 'map0_0_obstacle', deleted: true });
+    const res = await applyEdits(sn);
+    expect(res.reason).not.toBe('busy');
+  });
+
   it('apply: maaier op dock aan het laden (gepauzeerde taak) blokkeert NIET', async () => {
     // Battery-low recharge houdt task_mode op 1 + Mode:COVERAGE, maar docked+charging
     // is veilig om map-edits toe te passen (obstakel plaatsen terwijl-ie laadt).
