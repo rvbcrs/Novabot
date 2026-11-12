@@ -11,6 +11,9 @@ import { lookupError, ERROR_MAP } from './errorMap.js';
 import { MowerEvent, EventType } from './types.js';
 import { isPatrolDriving, patrolDockingUnderWay, patrolDockedRecently, patrolDockingFailed, DOCK_FAILED_ERROR_CODES } from '../services/patrolRuns.js';
 
+/** map_apply_phase values while the server's map push runs (mapApplyStatus.ts). */
+const MAP_APPLY_BUSY = new Set(['syncing', 'regenerating', 'settling']);
+
 const LOW_BATTERY_THRESHOLD = parseInt(process.env.LOW_BATTERY_THRESHOLD ?? '20', 10);
 
 // Friendlier titles per category — keeps notification banners short
@@ -45,6 +48,7 @@ interface SnapshotState {
   rechargeStatus: string;
   batteryPower: number;
   batteryState: string;
+  mapApplyPhase: string;
   initialised: boolean;        // false until first frame seen — suppresses startup events
 }
 
@@ -69,6 +73,7 @@ const stateBySn = new Map<string, SnapshotState>();
 function readSnapshot(snValues: Map<string, string>): SnapshotState {
   return {
     errorStatus: snValues.get('error_status') ?? '0',
+    mapApplyPhase: snValues.get('map_apply_phase') ?? '',
     msg: snValues.get('msg') ?? '',
     rechargeStatus: snValues.get('recharge_status') ?? '0',
     batteryPower: parseInt(snValues.get('battery_power') ?? '0', 10) || 0,
@@ -119,7 +124,12 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
       // notifications while charging are almost always stale state from
       // the previous session and just pollute the user's lockscreen.
       const onDock = next.batteryState === 'CHARGING' || next.batteryState === 'FINISHED';
-      if (SUPPRESSED_ERROR_CODES.has(code) || onDock) {
+      // Error 140 while our own map push restarts novabot_mapping and the
+      // coverage planner: robot_decision raises it for any missing monitored
+      // process and clears it once they are back (GH #171), so it is part of
+      // the push, not a crash. Same exception as the dashboard (deriveHasError).
+      const ownRestart = code === 140 && MAP_APPLY_BUSY.has(next.mapApplyPhase);
+      if (SUPPRESSED_ERROR_CODES.has(code) || onDock || ownRestart) {
         // Skip dispatch — we still mutate stateBySn above so the next
         // genuine transition is detected.
       } else {

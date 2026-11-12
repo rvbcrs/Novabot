@@ -53,6 +53,18 @@ describe('eventDetector', () => {
     expect(after).toBe(before);
   });
 
+  // GH #171: robot_decision raises 140 for any monitored process that is
+  // missing, also while our own map push restarts mapping and the planner.
+  it('SUPPRESSES 140 while the server pushes a map, not outside a push', () => {
+    const before = getRecentEvents(SN, 50).length;
+    detectAndDispatch(SN, snap({ error_status: '0', msg: '', battery_power: '90', recharge_status: '0', battery_state: 'FULL', map_apply_phase: 'settling' }));
+    detectAndDispatch(SN, snap({ error_status: '140', msg: '', battery_power: '90', recharge_status: '0', battery_state: 'FULL', map_apply_phase: 'settling', error_msg: 'Process crashed' }));
+    expect(getRecentEvents(SN, 50).length).toBe(before);
+    detectAndDispatch(SN, snap({ error_status: '0', msg: '', battery_power: '90', recharge_status: '0', battery_state: 'DISCHARGED' }));
+    detectAndDispatch(SN, snap({ error_status: '140', msg: '', battery_power: '90', recharge_status: '0', battery_state: 'DISCHARGED', error_msg: 'Process crashed' }));
+    expect(getRecentEvents(SN, 1)[0].data.error_status).toBe('140');
+  });
+
   it('SUPPRESSES any error while on dock (CHARGING)', () => {
     const before = getRecentEvents(SN, 50).length;
     detectAndDispatch(SN, snap({ error_status: '0', msg: '', battery_power: '90', recharge_status: '0', battery_state: 'CHARGING' }));
