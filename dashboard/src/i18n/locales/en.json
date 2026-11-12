@@ -1985,5 +1985,14 @@
     "emptyTitle": "No map found",
     "emptyBody": "OpenNova could not get a map from the mower. Have a backup? Restore it in the admin panel under Maps. No backup? Create a new map with Mapping.",
     "openAdmin": "Open admin panel"
+  },
+  "winterSleep": {
+    "title": "Winter sleep",
+    "toggle": "Winter sleep",
+    "help": "No schedule starts: mowing, night patrol and edge cuts. Your schedules stay as they are and run again when winter sleep ends. Mowing by hand keeps working.",
+    "wakeOn": "Wake up on (optional)",
+    "banner": "Winter sleep. No schedule runs; you can still mow by hand.",
+    "bannerUntil": "Winter sleep until {{date}}. No schedule runs; you can still mow by hand.",
+    "wake": "Wake up"
   }
 }

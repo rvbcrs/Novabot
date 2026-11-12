@@ -6,6 +6,7 @@
  * controleert het weer via Open-Meteo, en stuurt start_run als het droog is.
  */
 
+import { hibernatingMowers, isHibernating } from './hibernation.js';
 import { scheduleRepo, mapRepo, rainSettingsRepo, deviceSettingsRepo, patrolRunsRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice } from '../mqtt/mapSync.js';
@@ -460,6 +461,9 @@ function checkEdgeWatchers(): void {
 
 function checkSchedules() {
   const now = new Date();
+  // Ends every winter sleep whose wake date has come, also for a mower
+  // without schedules (Home Assistant and the dashboard show the state).
+  hibernatingMowers(now);
 
   // Haal ALLE enabled schedules op — de runner handelt alles af
   const rows = scheduleRepo.findEnabled();
@@ -529,6 +533,14 @@ function checkSchedules() {
       if (row.skip_date < todayKey) {
         scheduleRepo.update(row.schedule_id, { skip_date: null });
       }
+    }
+
+    // Winter sleep: no scheduled task starts. Stamped and logged once per
+    // occurrence, so the schedule's history says why it did not run.
+    if (isHibernating(row.mower_sn, now)) {
+      scheduleRepo.updateLastTriggered(row.schedule_id);
+      logScheduleDecision(row, false, 'SKIPPED', M`winterslaap`);
+      continue;
     }
 
     // Check of maaier online is

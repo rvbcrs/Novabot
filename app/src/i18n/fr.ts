@@ -955,4 +955,11 @@ export default {
   msRestartSub: "Redémarre le logiciel de la tondeuse (pas un reboot). Débloque des états comme l'erreur 140. Uniquement à l'arrêt ou en charge.",
   msReanchorTitle: "Réancrer le cadre",
   msReanchorSub: "Marque le cadre de localisation comme invalide pour que vous puissiez le réancrer. À utiliser quand la position de la tondeuse dérive de la station, puis réancrez depuis l'invite de l'écran d'accueil.",
+  winterSleepTitle: "Hivernage",
+  winterSleepSub: "Aucun planning ne démarre : tonte, patrouille de nuit et bordures. Tes plannings restent et reprennent à la fin ; la tonte manuelle reste possible.",
+  winterSleepWakeOn: "Réveil le",
+  winterSleepNoDate: "Pas de date",
+  winterSleepBanner: "Hivernage : aucun planning ne tourne.",
+  winterSleepBannerUntil: "Hivernage jusqu’au {{date}} : aucun planning ne tourne.",
+  winterSleepWake: "Réveiller",
 };

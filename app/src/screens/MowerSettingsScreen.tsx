@@ -39,6 +39,7 @@ import * as Localization from 'expo-localization';
 import { getSocket } from '../services/socket';
 import { ApiClient, isUnsupportedFirmwareError } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { nextWakeDates, formatWakeDate } from '../utils/wakeDates';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 
 // Cutting height: 20-90 in steps of 10 (displayed as 2-9 cm, matches Flutter slider)
@@ -96,7 +97,7 @@ function heightToMm(raw: string | undefined): number | undefined {
 export default function MowerSettingsScreen() {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
@@ -145,6 +146,8 @@ export default function MowerSettingsScreen() {
   const [edgeAlways, setEdgeAlways] = useState(false);
   const [seamFixEnabled, setSeamFixEnabled] = useState(false);
   const [seamFixMargin, setSeamFixMargin] = useState(15);
+  // Winter sleep (server hibernation.ts): no schedule starts while it is on.
+  const [winter, setWinter] = useState<{ enabled: boolean; until: string | null }>({ enabled: false, until: null });
 
   const { activeMower: mower, activeMowerSn } = useActiveMower();
   const mowerSn = activeMowerSn ?? '';
@@ -386,6 +389,29 @@ export default function MowerSettingsScreen() {
       } catch { /* ignore */ }
     })();
   }, [mowerSn]);
+
+  useEffect(() => {
+    if (!mowerSn) return;
+    void (async () => {
+      const url = await getServerUrl();
+      if (!url) return;
+      try {
+        const w = await new ApiClient(url).getHibernation(mowerSn);
+        setWinter({ enabled: w.enabled === true, until: w.until ?? null });
+      } catch { /* keep the default */ }
+    })();
+  }, [mowerSn]);
+
+  const saveWinter = async (enabled: boolean, until: string | null) => {
+    const url = await getServerUrl();
+    if (!url || !mowerSn) return;
+    try {
+      const w = await new ApiClient(url).setHibernation(mowerSn, enabled, enabled ? until : null);
+      setWinter({ enabled: w.enabled === true, until: w.until ?? null });
+    } catch (e) {
+      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : String(e));
+    }
+  };
 
   // Load border seam-fix config (server-side, per-mower)
   useEffect(() => {
@@ -800,6 +826,48 @@ export default function MowerSettingsScreen() {
                       onPress={() => void saveRain({ frostThresholdC: v })}
                     >
                       <Text style={[styles.chipText, frostC === v && styles.chipTextActive]}>{v} °C</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+
+        {/* ── WINTERSLAAP: no schedule starts ── */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('winterSleepTitle')}</Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.optionRow}
+              onPress={() => void saveWinter(!winter.enabled, winter.until)}
+              activeOpacity={0.7}
+              testID="winter-sleep-toggle"
+            >
+              <Ionicons name="snow-outline" size={20} color={winter.enabled ? colors.emerald : colors.textMuted} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.optionLabel}>{t('winterSleepTitle')}</Text>
+                <Text style={styles.optionSub}>{t('winterSleepSub')}</Text>
+              </View>
+              <View style={[styles.toggle, winter.enabled && styles.toggleActive]}>
+                <View style={[styles.toggleThumb, winter.enabled && styles.toggleThumbActive]} />
+              </View>
+            </TouchableOpacity>
+            {winter.enabled && (
+              <>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>{t('winterSleepWakeOn')}</Text>
+                </View>
+                <View style={styles.chipGrid}>
+                  {[null, ...nextWakeDates()].map((d) => (
+                    <TouchableOpacity
+                      key={d ?? 'none'}
+                      style={[styles.chip, winter.until === d && styles.chipActive]}
+                      onPress={() => void saveWinter(true, d)}
+                    >
+                      <Text style={[styles.chipText, winter.until === d && styles.chipTextActive]}>
+                        {d ? formatWakeDate(d, language) : t('winterSleepNoDate')}
+                      </Text>
                     </TouchableOpacity>
                   ))}
                 </View>

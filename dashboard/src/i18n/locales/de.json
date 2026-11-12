@@ -1985,5 +1985,14 @@
     "emptyTitle": "Keine Karte gefunden",
     "emptyBody": "OpenNova konnte keine Karte vom Mäher holen. Haben Sie ein Backup? Stellen Sie es im Admin-Bereich unter Karten wieder her. Kein Backup? Erstellen Sie eine neue Karte mit Kartierung.",
     "openAdmin": "Admin-Bereich öffnen"
+  },
+  "winterSleep": {
+    "title": "Winterschlaf",
+    "toggle": "Winterschlaf",
+    "help": "Es startet kein Zeitplan: Mähen, Nachtpatrouille und Kantenschnitt. Deine Zeitpläne bleiben, wie sie sind, und laufen wieder, sobald der Winterschlaf endet. Manuelles Mähen funktioniert weiterhin.",
+    "wakeOn": "Aufwachen am (optional)",
+    "banner": "Winterschlaf. Kein Zeitplan läuft; manuell mähen geht weiterhin.",
+    "bannerUntil": "Winterschlaf bis {{date}}. Kein Zeitplan läuft; manuell mähen geht weiterhin.",
+    "wake": "Aufwecken"
   }
 }

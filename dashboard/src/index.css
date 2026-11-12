@@ -126,3 +126,30 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .patrol-mark--current { animation: none; }
 }
+
+/* Winter sleep (WinterSleep.tsx): three depths of snow, near flakes fewer,
+   larger and faster. Only transform and opacity animate. */
+.winter-snow { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 1100; }
+.winter-snow::before {
+  /* frost along the top edge */
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 90px;
+  background: linear-gradient(to bottom, rgba(214, 236, 255, 0.10), rgba(214, 236, 255, 0));
+}
+.winter-flake {
+  position: absolute; top: -12px; border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 1) 0%, rgba(232, 244, 255, 0.85) 55%, rgba(232, 244, 255, 0) 100%);
+  /* a faint dark halo keeps a flake visible over bright satellite imagery */
+  box-shadow: 0 0 3px rgba(12, 28, 48, 0.35);
+  animation: winter-fall var(--fall) linear var(--delay) infinite;
+  will-change: transform;
+}
+@keyframes winter-fall {
+  0%   { transform: translate3d(0, -12px, 0); opacity: 0; }
+  10%  { opacity: var(--alpha); }
+  50%  { transform: translate3d(var(--drift), 50vh, 0); }
+  90%  { opacity: var(--alpha); }
+  100% { transform: translate3d(calc(var(--drift) * -0.4), 102vh, 0); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .winter-flake { display: none; }
+}

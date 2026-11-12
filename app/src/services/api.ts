@@ -847,6 +847,15 @@ export class ApiClient {
 
   // ── Device Info ──────────────────────────────────────────────────────
 
+  /** Winter sleep: no schedule starts while it is on (server hibernation.ts). */
+  async getHibernation(sn: string): Promise<{ enabled: boolean; until: string | null }> {
+    return this.request('GET', `/api/dashboard/hibernate/${enc(sn)}`);
+  }
+
+  async setHibernation(sn: string, enabled: boolean, until: string | null): Promise<{ enabled: boolean; until: string | null }> {
+    return this.request('PUT', `/api/dashboard/hibernate/${enc(sn)}`, { body: { enabled, until } });
+  }
+
   async getDevices(): Promise<Array<{
     sn: string;
     deviceType: string;

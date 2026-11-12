@@ -1102,4 +1102,11 @@ export default {
   stValUnknownParent: "Unknown work map {{map}}",
   stValOutsideWork: "Obstacle extends outside {{map}}",
   stValidationFailed: "Validation failed",
+  winterSleepTitle: "Winter sleep",
+  winterSleepSub: "No schedule starts: mowing, night patrol and edge cuts. Your schedules stay and run again when it ends; mowing by hand keeps working.",
+  winterSleepWakeOn: "Wake up on",
+  winterSleepNoDate: "No date",
+  winterSleepBanner: "Winter sleep: no schedule runs.",
+  winterSleepBannerUntil: "Winter sleep until {{date}}: no schedule runs.",
+  winterSleepWake: "Wake up",
 };

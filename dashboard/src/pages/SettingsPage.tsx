@@ -5,7 +5,7 @@ import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
   CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, Bug, ExternalLink, Box,
-  Image as ImageIcon, Upload, Trash2, Copy, Route, Users,
+  Image as ImageIcon, Upload, Trash2, Copy, Route, Users, Snowflake,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -14,6 +14,7 @@ import {
   fetchRainSettings, updateRainSettings, type RainSettings,
   setMaxSpeed, setChargeThreshold, rebootMower, fetchDeviceSettings,
   previewDockChannelRepair, applyDockChannelRepair, getToken,
+  fetchHibernation, saveHibernation, type Hibernation,
 } from '../api/client';
 import { readWeekStart, writeWeekStart, type WeekStart } from '../utils/weekStart';
 import { readTimeFormat, writeTimeFormat, type TimeFormat } from '../utils/timeFormat';
@@ -51,6 +52,7 @@ export function SettingsPage({ mower }: Props) {
         <AutoMapCard />
         <ExperimentalCard />
         <RainAutoPauseCard key={`rain-${mower.sn}`} sn={mower.sn} />
+        <WinterSleepCard key={`winter-${mower.sn}`} sn={mower.sn} />
         <NotificationsCard />
         {/* Only when logged in (from outside): on the LAN the dashboard knows no user. */}
         {getToken() && (
@@ -1172,6 +1174,53 @@ function HelpCard({ mower }: { mower: DeviceState }) {
         </span>
         <ExternalLink className="w-4 h-4 text-gray-500 flex-shrink-0" />
       </button>
+    </SettingCard>
+  );
+}
+
+// ── Winter sleep: no schedule starts while it is on (server hibernation.ts) ──
+
+function WinterSleepCard({ sn }: { sn: string }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const [state, setState] = useState<Hibernation | null>(null);
+  const [until, setUntil] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    fetchHibernation(sn).then((s) => { setState(s); setUntil(s.until ?? ''); }, () => setState({ enabled: false, until: null }));
+  }, [sn]);
+  // Tomorrow at the earliest: a wake date of today ends it at once.
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+
+  const save = async (enabled: boolean, date: string) => {
+    setBusy(true);
+    try {
+      const s = await saveHibernation(sn, enabled, enabled && date ? date : null);
+      setState(s); setUntil(s.until ?? '');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : t('common.failed'), 'error');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <SettingCard icon={Snowflake} title={t('winterSleep.title', 'Winter sleep')}
+      help={t('winterSleep.help', 'No schedule starts: mowing, night patrol and edge cuts. Your schedules stay as they are and run again when winter sleep ends. Mowing by hand keeps working.')}>
+      {!state ? <Loader2 className="w-4 h-4 animate-spin text-zinc-500" /> : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-zinc-200">{t('winterSleep.toggle', 'Winter sleep')}</span>
+            <Toggle on={state.enabled} onChange={(v) => { if (!busy) void save(v, until); }} />
+          </div>
+          {state.enabled && (
+            <label className="flex items-center justify-between gap-3 text-sm text-zinc-300">
+              <span>{t('winterSleep.wakeOn', 'Wake up on (optional)')}</span>
+              <input type="date" value={until} min={tomorrow} disabled={busy}
+                onChange={(e) => { setUntil(e.target.value); void save(true, e.target.value); }}
+                className="bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 outline-none focus:border-emerald-500 [color-scheme:dark]" />
+            </label>
+          )}
+        </div>
+      )}
     </SettingCard>
   );
 }

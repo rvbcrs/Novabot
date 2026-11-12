@@ -1720,3 +1720,24 @@ export async function changeOwnPassword(oldPassword: string, newPassword: string
   const body = await res.json().catch(() => null) as { success?: boolean; message?: string } | null;
   if (!body?.success) throw new Error(body?.message || `${res.status}`);
 }
+
+// ── Winter sleep: no schedule starts while it is on ─────────────────────────
+
+export interface Hibernation { enabled: boolean; until: string | null }
+
+export async function fetchHibernation(sn: string): Promise<Hibernation> {
+  const d = await (await get(`${BASE}/hibernate/${encodeURIComponent(sn)}`)).json() as Hibernation;
+  return { enabled: d.enabled === true, until: d.until ?? null };
+}
+
+export async function saveHibernation(sn: string, enabled: boolean, until: string | null): Promise<Hibernation> {
+  const res = await apiFetch(`${BASE}/hibernate/${encodeURIComponent(sn)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, until }),
+  });
+  const d = await res.json().catch(() => ({})) as Partial<Hibernation> & { error?: string };
+  if (!res.ok) throw new Error(d.error || `${res.status}`);
+  const state = { enabled: d.enabled === true, until: d.until ?? null };
+  // The shell's banner and snow follow the settings card at once.
+  try { window.dispatchEvent(new CustomEvent('novabot:hibernation', { detail: { sn, state } })); } catch { /* SSR */ }
+  return state;
+}

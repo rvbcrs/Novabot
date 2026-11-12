@@ -39,6 +39,7 @@ import { flushPendingMapSync } from '../services/pendingMapSync';
 import { DemoBanner } from '../components/DemoBanner';
 import { HealthBanner } from '../components/HealthBanner';
 import { FirmwareUpdateBanner } from '../components/FirmwareUpdateBanner';
+import { WinterSleepBanner } from '../components/WinterSleepBanner';
 import { MowingProgressMap } from '../components/MowingProgressMap';
 import { resolveMowingMapSelection, gateCoverTelemetry, type CoverTelemetryBaseline } from '../utils/mowingMapSelection';
 import HistoryScreen from './HistoryScreen';
@@ -1946,6 +1947,7 @@ export default function HomeScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <FirmwareUpdateBanner />
+      <WinterSleepBanner />
       {/* A plain View everywhere but Android, where it is the blur source for
           the action pill below. */}
       <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>

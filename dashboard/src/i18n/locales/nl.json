@@ -1985,5 +1985,14 @@
     "emptyTitle": "Geen kaart gevonden",
     "emptyBody": "OpenNova kon geen kaart uit de maaier halen. Heb je een backup? Zet die terug in het beheerpaneel onder Kaarten. Geen backup? Maak een nieuwe kaart met Karteren.",
     "openAdmin": "Beheerpaneel openen"
+  },
+  "winterSleep": {
+    "title": "Winterslaap",
+    "toggle": "Winterslaap",
+    "help": "Er start geen enkel schema: maaien, nachtpatrouille en randmaaien. Je schema's blijven zoals ze zijn en lopen weer zodra de winterslaap stopt. Handmatig maaien blijft werken.",
+    "wakeOn": "Wakker worden op (optioneel)",
+    "banner": "Winterslaap. Er draait geen schema; handmatig maaien kan nog.",
+    "bannerUntil": "Winterslaap tot {{date}}. Er draait geen schema; handmatig maaien kan nog.",
+    "wake": "Wakker maken"
   }
 }

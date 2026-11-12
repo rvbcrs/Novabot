@@ -7,6 +7,7 @@
 import mqtt, { MqttClient } from 'mqtt';
 import { SENSORS, SensorDef, deviceCache, parseCommand } from './sensorData.js';
 import { deriveMowerActivity, isInterruptedCoverage, type MowerActivity } from './mowerActivity.js';
+import { getHibernation, hibernatingMowers, onHibernationChange, setHibernation } from '../services/hibernation.js';
 // LET OP: mowingService/scheduleRunner/mapSync worden LAZY geïmporteerd in
 // handleLawnMowerCommand. Eager zou een module-cyclus sluiten
 // (broker → homeassistant → mowingService → broker) die afhankelijk van de
@@ -124,6 +125,9 @@ function publishOnlineDiscoveryConfig(sn: string): void {
 // Herpubliceer alle discovery configs (na reconnect met HA)
 function publishAllDiscoveryConfigs(): void {
   publishedConfigs.clear();
+  // Every known mower gets the winter-sleep switch, online or not.
+  const sleeping = new Set(hibernatingMowers());
+  for (const sn of new Set([...deviceCache.keys(), ...sleeping])) publishHibernateState(sn, sleeping.has(sn));
   for (const [sn, fields] of deviceCache.entries()) {
     publishOnlineDiscoveryConfig(sn);
     publishMapImageDiscoveryConfig(sn);
@@ -209,6 +213,49 @@ function publishMapImageUrl(sn: string): void {
 // (we are a bridge CLIENT there, so we simply subscribe).
 
 const HA_CMD_TOPIC_RE = /^novabot\/([A-Z0-9]+)\/set\/(start_mowing|pause|dock)$/;
+const HA_HIBERNATE_TOPIC_RE = /^novabot\/(LFIN[A-Z0-9]+)\/set\/hibernate$/;
+
+// Winter sleep as a switch (services/hibernation.ts). Its availability is the
+// bridge only, not the mower: in winter the mower is often off, and the switch
+// must still work then.
+function publishHibernateDiscoveryConfig(sn: string): void {
+  if (!haClient || !connected || !sn.startsWith('LFIN')) return;
+  const configKey = `${sn}:hibernate`;
+  if (publishedConfigs.has(configKey)) return;
+  const objectId = `novabot_${sn}_hibernate`;
+  const config = {
+    name: 'Winter sleep',
+    unique_id: objectId,
+    object_id: objectId,
+    icon: 'mdi:snowflake',
+    state_topic: `novabot/${sn}/hibernate`,
+    command_topic: `novabot/${sn}/set/hibernate`,
+    payload_on: 'ON', payload_off: 'OFF', state_on: 'ON', state_off: 'OFF',
+    device: makeDevice(sn),
+    availability: { topic: 'novabot/bridge/status', payload_available: 'online', payload_not_available: 'offline' },
+  };
+  haClient.publish(`${HA_DISCOVERY_PREFIX}/switch/${objectId}/config`, JSON.stringify(config), { retain: true, qos: 1 }, (err) => {
+    if (!err) publishedConfigs.add(configKey);
+    else console.error(`${TAG} hibernate discovery fout voor ${objectId}: ${err.message}`);
+  });
+}
+
+function publishHibernateState(sn: string, enabled: boolean): void {
+  if (!haClient || !connected || !sn.startsWith('LFIN')) return;
+  publishHibernateDiscoveryConfig(sn);
+  haClient.publish(`novabot/${sn}/hibernate`, enabled ? 'ON' : 'OFF', { retain: true });
+}
+onHibernationChange((sn, state) => publishHibernateState(sn, state.enabled));
+
+/** HA's winter-sleep switch was flipped. True when the topic was ours. */
+export function handleHibernateCommand(topic: string, payload: string): boolean {
+  const h = topic.match(HA_HIBERNATE_TOPIC_RE);
+  if (!h) return false;
+  const on = payload.trim().toUpperCase() === 'ON';
+  // Switching on from HA keeps a wake date set in the dashboard or app.
+  setHibernation(h[1], on, on ? getHibernation(h[1]).until : null);
+  return true;
+}
 
 function publishLawnMowerDiscoveryConfig(sn: string): void {
   if (!haClient || !connected) return;
@@ -499,7 +546,8 @@ export function startHomeAssistantBridge(): void {
     publishAllDiscoveryConfigs();
   });
 
-  haClient.on('message', (topic) => {
+  haClient.on('message', (topic, payload) => {
+    if (handleHibernateCommand(topic, payload.toString())) return;
     const m = topic.match(HA_CMD_TOPIC_RE);
     if (!m) return;
     handleLawnMowerCommand(m[1], m[2] as 'start_mowing' | 'pause' | 'dock').catch((err) => {

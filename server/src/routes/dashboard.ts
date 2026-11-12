@@ -56,6 +56,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { v4 as uuidv4 } from 'uuid';
 import { createFirstAdmin } from '../services/firstAdmin.js';
+import { getHibernation, setHibernation } from '../services/hibernation.js';
 import { mirrorScheduleToPlan, removePlanForSchedule } from '../services/scheduleMirror.js';
 import { getActiveAdvertisement, getCompetingServers } from '../services/mdnsAdvertiser.js';
 import { getDeviceHealth } from '../services/deviceHealth.js';
@@ -4684,6 +4685,21 @@ dashboardRouter.post('/charge-threshold/:sn', (req: Request, res: Response) => {
   if (threshold == null) { res.status(400).json({ ok: false, error: 'threshold required' }); return; }
   publishToDevice(req.params.sn, { auto_charge_threshold: { threshold } });
   res.json({ ok: true, command: 'auto_charge_threshold' });
+});
+
+// GET/PUT /api/dashboard/hibernate/:sn — winter sleep: no schedule starts
+// while it is on; optional wake date YYYY-MM-DD (services/hibernation.ts).
+dashboardRouter.get('/hibernate/:sn', (req: Request, res: Response) => {
+  res.json({ ok: true, ...getHibernation(req.params.sn) });
+});
+dashboardRouter.put('/hibernate/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
+  const { enabled, until } = req.body as { enabled?: unknown; until?: unknown };
+  if (typeof enabled !== 'boolean') { res.status(400).json({ ok: false, error: T`enabled moet true of false zijn` }); return; }
+  if (until != null && (typeof until !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(until))) {
+    res.status(400).json({ ok: false, error: T`Ongeldige wekdatum` }); return;
+  }
+  res.json({ ok: true, ...setHibernation(req.params.sn, enabled, (until as string | null | undefined) ?? null) });
 });
 
 // POST /api/dashboard/max-speed/:sn — stel max navigatie snelheid in

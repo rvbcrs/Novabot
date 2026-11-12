@@ -1985,5 +1985,14 @@
     "emptyTitle": "Aucune carte trouvée",
     "emptyBody": "OpenNova n’a pas pu récupérer de carte depuis la tondeuse. Vous avez une sauvegarde ? Restaurez-la dans le panneau d'administration, sous Cartes. Pas de sauvegarde ? Créez une nouvelle carte avec Cartographie.",
     "openAdmin": "Ouvrir le panneau d'administration"
+  },
+  "winterSleep": {
+    "title": "Hivernage",
+    "toggle": "Hivernage",
+    "help": "Aucun planning ne démarre : tonte, patrouille de nuit et bordures. Tes plannings restent tels quels et reprennent à la fin de l'hivernage. La tonte manuelle reste possible.",
+    "wakeOn": "Réveil le (facultatif)",
+    "banner": "Hivernage. Aucun planning ne tourne ; la tonte manuelle reste possible.",
+    "bannerUntil": "Hivernage jusqu’au {{date}}. Aucun planning ne tourne ; la tonte manuelle reste possible.",
+    "wake": "Réveiller"
   }
 }

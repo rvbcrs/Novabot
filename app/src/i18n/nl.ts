@@ -1100,4 +1100,11 @@ export default {
   stValUnknownParent: "Onbekende werkkaart {{map}}",
   stValOutsideWork: "Obstakel steekt buiten {{map}}",
   stValidationFailed: "Validatie mislukt",
+  winterSleepTitle: "Winterslaap",
+  winterSleepSub: "Er start geen schema: maaien, nachtpatrouille en randmaaien. Je schema's blijven en lopen weer zodra het stopt; handmatig maaien blijft werken.",
+  winterSleepWakeOn: "Wakker worden op",
+  winterSleepNoDate: "Geen datum",
+  winterSleepBanner: "Winterslaap: er draait geen schema.",
+  winterSleepBannerUntil: "Winterslaap tot {{date}}: er draait geen schema.",
+  winterSleepWake: "Wakker maken",
 };

@@ -955,4 +955,11 @@ export default {
   msRestartSub: "Startet die Mäher-Software neu (kein Reboot). Behebt festhängende Zustände wie Fehler 140. Nur im Leerlauf oder beim Laden.",
   msReanchorTitle: "Rahmen neu verankern",
   msReanchorSub: "Markiert den Lokalisierungsrahmen als ungültig, damit Sie ihn neu verankern können. Verwenden Sie dies, wenn die Position des Mähers von der Ladestation wegdriftet, und verankern Sie dann über den Hinweis auf dem Startbildschirm neu.",
+  winterSleepTitle: "Winterschlaf",
+  winterSleepSub: "Kein Zeitplan startet: Mähen, Nachtpatrouille und Kantenschnitt. Deine Zeitpläne bleiben und laufen wieder, wenn er endet; manuelles Mähen funktioniert weiter.",
+  winterSleepWakeOn: "Aufwachen am",
+  winterSleepNoDate: "Kein Datum",
+  winterSleepBanner: "Winterschlaf: kein Zeitplan läuft.",
+  winterSleepBannerUntil: "Winterschlaf bis {{date}}: kein Zeitplan läuft.",
+  winterSleepWake: "Aufwecken",
 };

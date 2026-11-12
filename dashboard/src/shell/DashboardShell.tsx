@@ -15,6 +15,7 @@ import { MapTab } from '../pages/MapTab';
 import { SchedulePage } from '../pages/SchedulePage';
 import { WorkRecordsPage } from '../pages/WorkRecordsPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { WinterSleep } from './WinterSleep';
 import { NetworkHealthCard } from '../components/drawer/NetworkHealthCard';
 import { LiveStatusCard } from '../components/drawer/LiveStatusCard';
 import { DockDriftCard } from '../components/drawer/DockDriftCard';
@@ -273,6 +274,7 @@ function ShellInner() {
       />
       <MdnsConflictBanner />
       <LongPauseBanner mower={activeMower} />
+      <WinterSleep sn={activeMowerSn} />
 
       {/* Device error/warning popup. Lost in the DashboardPage→DashboardShell
           refactor (it used to live in <MowerStatus>); restored here so the

@@ -591,6 +591,16 @@ export const CATALOG: Catalog = {
     fr: "La station de charge n'a pas répondu (délai dépassé)",
     de: "Die Ladestation hat nicht geantwortet (Zeitüberschreitung)",
   },
+  "enabled moet true of false zijn": {
+    en: "enabled must be true or false",
+    fr: "enabled doit être true ou false",
+    de: "enabled muss true oder false sein",
+  },
+  "Ongeldige wekdatum": {
+    en: "Invalid wake date",
+    fr: "Date de réveil invalide",
+    de: "Ungültiges Weckdatum",
+  },
   "Maak eerst een account aan.": {
     en: "Create an account first.",
     fr: "Créez d'abord un compte.",
@@ -1310,6 +1320,11 @@ export const CATALOG: Catalog = {
     en: "rebuild failed (no work polygon or charger anchor in DB)",
     fr: "échec de la reconstruction (aucun polygone de travail ni ancre de station de charge dans la base)",
     de: "Neuaufbau fehlgeschlagen (kein Arbeitspolygon oder Ladestations-Anker in der Datenbank)",
+  },
+  "winterslaap": {
+    en: "winter sleep",
+    fr: "hivernage",
+    de: "Winterschlaf",
   },
   "overgeslagen door de gebruiker ({0})": {
     en: "user skipped {0}",
