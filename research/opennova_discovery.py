@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Standalone runtime discovery loop for mowers running custom-firmware
-without the open mqtt_node Python wrapper.
+"""Keeps every server address on the mower pointing at the OpenNova server.
 
-Polls `opennova.local` every 60 s. When the resolved IP differs from the
-current mqtt addr in /userdata/lfi/json_config.json for 2 consecutive
-polls, atomically rewrites the config files (json_config.json,
-http_address.txt, server_ip.txt), kills mqtt_node so the existing
-mqtt_node_monitor.sh respawns it with the new broker, and restarts the
-OpenNova MQTT helpers the way run_novabot.sh starts them.
+Every 60 s it asks server_address.find_server() which server answers (mDNS
+opennova.local first, then the DNS redirect of the stock names, then the last
+server found; only one that answers as OpenNova counts) and compares that with
+ALL three addresses: json_config.json's broker, http_address.txt and
+server_ip.txt. When any of them differs for 2 consecutive polls, they are all
+rewritten together (server_address.write_server), mqtt_node is killed so
+mqtt_node_monitor.sh respawns it with the new files, and when the broker
+moved the OpenNova MQTT helpers are restarted the way run_novabot.sh starts
+them.
 
-When mDNS stays silent (server in a Docker bridge), the DNS redirect of
-mqtt.lfibot.com is followed too (GH #160), but only for an address this
-firmware wrote itself (a stock name, or equal to server_ip.txt) and only to
-a server that answers /api/setup/health as OpenNova. A broker set by hand
-(BLE provisioning, ESP32 tool) is left to mDNS alone, as before.
+It used to compare only the broker, so a stale http_address.txt next to a
+correct broker was never fixed (GH #170), and it would not touch a broker set
+by hand. A verified OpenNova server now always wins: the mower must point at
+one server everywhere.
 
 Verified deployment target: LFIN1231000211 (Python 3.8.10, aarch64).
 Uses only Python stdlib + libnss-mdns (which is already wired into
@@ -22,28 +23,20 @@ nsswitch on this firmware — `getent hosts opennova.local` works).
 from __future__ import annotations
 
 import glob
-import json
 import logging
 import os
 import shlex
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
-import urllib.request
-from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import server_address  # noqa: E402  (installed next to this script)
 
 LOG = logging.getLogger('opennova_discovery')
 
-JSON_PATH = Path('/userdata/lfi/json_config.json')
-HTTP_ADDR_PATH = Path('/userdata/lfi/http_address.txt')
-SERVER_IP_PATH = Path('/userdata/lfi/server_ip.txt')
-HOSTNAMES = ('opennova.local', 'opennovabot.local')
-DNS_HOSTNAMES = ('mqtt.lfibot.com',)
-# What set_server_urls.sh treats as "not set by hand" (stap 4 there).
-STOCK_ADDRS = ('', 'mqtt.lfibot.com', 'mqtt-dev.lfibot.com', 'app.lfibot.com')
 INTERVAL_S = 60
 DEBOUNCE = 2
 MQTT_NODE_BINARY = '/root/novabot/install/novabot_api/lib/novabot_api/mqtt_node'
@@ -75,130 +68,6 @@ HELPERS = (
      ROS_ENV + 'exec bash ' + SCRIPTS + '/start_auto_map.sh'),
 )
 STOP_WAIT_STEPS = 10   # x 0.5 s before SIGKILL
-
-
-def resolve_mdns(hostnames):
-    """Best-effort A-record lookup via stdlib resolver (libnss-mdns)."""
-    for h in hostnames:
-        try:
-            ip = socket.gethostbyname(h)
-            if ip and not ip.startswith('127.'):
-                return ip
-        except OSError:
-            continue
-    return None
-
-
-def resolve_dns(hostnames=DNS_HOSTNAMES):
-    """The DNS redirect of the stock cloud name (the same libc lookup)."""
-    return resolve_mdns(hostnames)
-
-
-def read_current_mqtt_host():
-    if not JSON_PATH.exists():
-        return None
-    try:
-        d = json.loads(JSON_PATH.read_text())
-        m = d.get('mqtt', {}) or {}
-        v = m.get('value') if isinstance(m.get('value'), dict) else m
-        return v.get('addr', v.get('server'))
-    except Exception:
-        LOG.exception('failed to read %s', JSON_PATH)
-        return None
-
-
-def read_last_known():
-    """The server set_server_urls.sh (or this loop) last wrote, or None."""
-    try:
-        return SERVER_IP_PATH.read_text().strip() or None
-    except OSError:
-        return None
-
-
-def http_ports():
-    """HTTP ports to ask: the one in http_address.txt, then the usual ones."""
-    ports = []
-    try:
-        line = HTTP_ADDR_PATH.read_text().strip()
-        if ':' in line:
-            ports.append(int(line.rsplit(':', 1)[1]))
-    except (OSError, ValueError):
-        pass
-    for p in (80, 8080, 443):
-        if p not in ports:
-            ports.append(p)
-    return ports
-
-
-def answers_as_opennova(ip, ports=None):
-    """True when http://ip:<port>/api/setup/health answers as OpenNova.
-
-    Same test as set_server_urls.sh's probe_http: a NAS web UI or the public
-    lfibot.com does not name a server and a broker in a small JSON body.
-    """
-    for port in (ports if ports is not None else http_ports()):
-        try:
-            with urllib.request.urlopen('http://%s:%d/api/setup/health' % (ip, port), timeout=3) as r:
-                body = r.read(2000).decode('utf-8', 'ignore')
-            if '"server"' in body and '"mqtt"' in body:
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def may_follow_dns(current, last_known):
-    """DNS only replaces an address this firmware wrote itself."""
-    return (current or '') in STOCK_ADDRS or current == last_known
-
-
-def find_server(current, last_known):
-    """(ip, source) of the server to follow, or (None, None)."""
-    ip = resolve_mdns(HOSTNAMES)
-    if ip:
-        return ip, 'mDNS'
-    if not may_follow_dns(current, last_known):
-        return None, None
-    ip = resolve_dns()
-    if not ip:
-        return None, None
-    if ip == current or answers_as_opennova(ip):
-        return ip, 'DNS'
-    return None, None
-
-
-def atomic_write(path: Path, content: str):
-    tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(content)
-    fd = os.open(str(tmp), os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(str(tmp), str(path))
-
-
-def rewrite_configs(new_ip):
-    if JSON_PATH.exists():
-        d = json.loads(JSON_PATH.read_text())
-        m = d.setdefault('mqtt', {})
-        if isinstance(m.get('value'), dict):
-            m['value']['addr'] = new_ip
-        else:
-            m['server'] = new_ip
-        atomic_write(JSON_PATH, json.dumps(d, indent=2))
-    if HTTP_ADDR_PATH.exists():
-        line = HTTP_ADDR_PATH.read_text().strip()
-        if ':' in line:
-            _, p = line.rsplit(':', 1)
-            atomic_write(HTTP_ADDR_PATH, '%s:%s' % (new_ip, p))
-        else:
-            atomic_write(HTTP_ADDR_PATH, new_ip)
-    else:
-        atomic_write(HTTP_ADDR_PATH, '%s:80' % new_ip)
-    # set_server_urls.sh reads this as "the address I wrote": without it the
-    # next boot would take the new address for one set by hand.
-    atomic_write(SERVER_IP_PATH, new_ip + '\n')
 
 
 def kill_mqtt_node():
@@ -290,36 +159,34 @@ def new_state():
 
 
 def poll_once(state):
-    current = read_current_mqtt_host()
-    resolved, source = find_server(current, read_last_known())
+    current = server_address.read_state()
+    found = server_address.find_server(current)
+    stale = server_address.differences(*found, current) if found else []
 
-    if not resolved:
-        LOG.debug('mDNS/DNS resolve failed — skipping')
-        state['candidate'], state['hits'] = None, 0
-    elif resolved == current:
+    if not stale:
         if state['candidate'] is not None:
-            LOG.info('candidate %s matched current — debounce reset', state['candidate'])
+            LOG.info('candidate %s no longer differs — debounce reset', state['candidate'])
         state['candidate'], state['hits'] = None, 0
+        return
+    if state['candidate'] == found:
+        state['hits'] += 1
     else:
-        if state['candidate'] == resolved:
-            state['hits'] += 1
-        else:
-            state['candidate'], state['hits'] = resolved, 1
-
-        LOG.info('%s candidate %s seen %d/%d (current=%s)',
-                 source, state['candidate'], state['hits'], DEBOUNCE, current)
-
-        if state['hits'] >= DEBOUNCE:
-            LOG.warning('confirmed switch %s -> %s, rewriting configs',
-                        current, state['candidate'])
-            try:
-                rewrite_configs(state['candidate'])
-                LOG.info('configs rewritten — killing mqtt_node so monitor respawns it')
-                kill_mqtt_node()
-                restart_helpers()
-            except Exception:
-                LOG.exception('switch failed — leaving previous config alone')
-            state['candidate'], state['hits'] = None, 0
+        state['candidate'], state['hits'] = found, 1
+    LOG.info('server %s:%d differs in %s, seen %d/%d (mqtt=%s http=%s server_ip=%s)',
+             found[0], found[1], ', '.join(stale), state['hits'], DEBOUNCE,
+             current['mqtt_addr'], current['http'], current['server_ip'])
+    if state['hits'] < DEBOUNCE:
+        return
+    state['candidate'], state['hits'] = None, 0
+    try:
+        changed = server_address.write_server(*found)
+    except Exception:
+        LOG.exception('rewrite failed — leaving the addresses alone')
+        return
+    LOG.warning('addresses now %s:%d (rewrote %s) — restarting mqtt_node', found[0], found[1], ', '.join(changed))
+    kill_mqtt_node()
+    if 'mqtt_addr' in changed:
+        restart_helpers()
 
 
 def main():

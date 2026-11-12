@@ -130,9 +130,8 @@ def charging_station_guard_interval_seconds():
 def read_config():
     """Read the SN and the configured MQTT broker from json_config.json.
 
-    The broker actually used is picked by connect_mqtt() on every (re)connect
-    (GH #160); the mqtt.lfibot.com DNS route (also the ESP32 AP case, where it
-    resolves to 10.0.0.1) now lives in broker_resolver.
+    connect_mqtt() reads the broker again on every (re)connect (GH #160);
+    which server it is, is decided in server_address.py (GH #170).
     """
     cfg_file = "/userdata/lfi/json_config.json"
     sn = None

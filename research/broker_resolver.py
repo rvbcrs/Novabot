@@ -1,42 +1,31 @@
 #!/usr/bin/env python3
-"""Which MQTT broker should a helper connect to right now? (GH #160)
+"""Which MQTT broker should a helper connect to right now?
 
 Shared by extended_commands.py, led_bridge.py and auto_map_node.py (through
 extended_commands.connect_mqtt). They used to read the broker address once at
-start and reconnect to that address forever, so a server that moved to a new
-IP kept them on the old one while DNS and the new broker were fine. They now
-call resolve_broker() before every connect.
+start and reconnect to that address forever, so a server that moved kept them
+on the old one (GH #160). They call resolve_broker() before every connect.
 
-Candidates, in order; the first that accepts a TCP connect on the MQTT port
-within a short timeout wins:
-  1. opennova.local      mDNS, follows the server when it moves (then the
-                         legacy opennovabot.local, like opennova_discovery.py)
-  2. mqtt.lfibot.com     the DNS redirect of the stock cloud name, only when
-                         it points at a non-public address: without a
-                         redirect it is the real cloud, whose broker refuses
-                         the mower (CONNACK 5) while the configured local one
-                         answers (GH #169)
-  3. json_config.json    the configured mqtt address
-  4. server_ip.txt       the last server set_server_urls.sh found
-When none answers, the configured address is returned, so the caller's retry
-loop keeps trying the address it was given.
+The answer is json_config.json's broker, read anew on every call: the same
+address mqtt_node uses. Which server that is, is decided in one place,
+server_address.py (opennova_discovery.py keeps it current and restarts the
+helpers when the broker moves). This module used to try its own list of names
+first, and picked the public mqtt.lfibot.com over the configured local broker
+on a mower without a DNS redirect (GH #169).
+
+Before the first server is found the configured address is still the stock
+mqtt.lfibot.com; it is returned as is, so the ESP32 setup AP (whose DNS
+answers that name with itself) keeps working.
 
 Stdlib only. build_custom_firmware.sh copies it next to the helpers in
 /root/novabot/scripts/.
 """
-import ipaddress
 import json
-import socket
 
 CONFIG_FILE = "/userdata/lfi/json_config.json"
 LAST_KNOWN_FILE = "/userdata/lfi/server_ip.txt"
-# The names opennova_discovery.py follows (its HOSTNAMES); older servers only
-# advertise opennovabot.local.
-MDNS_NAMES = ("opennova.local", "opennovabot.local")
-DNS_NAME = "mqtt.lfibot.com"
 DEFAULT_ADDR = "127.0.0.1"
 DEFAULT_PORT = 1883
-CONNECT_TIMEOUT_S = 2.0
 
 
 def configured_broker(path=CONFIG_FILE):
@@ -58,43 +47,7 @@ def last_known_server(path=LAST_KNOWN_FILE):
         return None
 
 
-def lookup(name):
-    """IPv4 address of `name` via the libc resolver (files, mdns4_minimal, dns), or None."""
-    try:
-        return socket.gethostbyname(name)
-    except (OSError, UnicodeError):
-        return None
-
-
-def is_redirect(addr):
-    """True for a LAN/VPN address: a DNS redirect to OpenNova, not the public cloud."""
-    try:
-        return not ipaddress.ip_address(addr).is_global
-    except ValueError:
-        return False
-
-
-def accepts_connect(addr, port, timeout=CONNECT_TIMEOUT_S):
-    try:
-        socket.create_connection((addr, port), timeout).close()
-        return True
-    except (OSError, ValueError):
-        return False
-
-
-def resolve_broker(config_file=CONFIG_FILE, last_known_file=LAST_KNOWN_FILE,
-                   lookup=lookup, reachable=accepts_connect, timeout=CONNECT_TIMEOUT_S):
+def resolve_broker(config_file=CONFIG_FILE, last_known_file=LAST_KNOWN_FILE):
     """(addr, port) to connect to now. Reads the files on every call."""
     configured, port = configured_broker(config_file)
-    last_known = last_known_server(last_known_file)
-    candidates = []
-    redirect = lookup(DNS_NAME)
-    if redirect and not is_redirect(redirect):
-        redirect = None
-    for addr in (*(lookup(name) for name in MDNS_NAMES), redirect, configured, last_known):
-        if addr and addr not in candidates:
-            candidates.append(addr)
-    for addr in candidates:
-        if reachable(addr, port, timeout):
-            return addr, port
-    return configured or last_known or DEFAULT_ADDR, port
+    return configured or last_known_server(last_known_file) or DEFAULT_ADDR, port

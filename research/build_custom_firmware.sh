@@ -564,41 +564,18 @@ fi
 # NB: Gebruik printf i.p.v. echo om trailing newline te voorkomen (breekt URL in curl)
 cat > "$NOVABOT_ROOT/scripts/set_server_urls.sh" << URLSCRIPT
 #!/bin/bash
-# CUSTOM: Stel lokale server URLs in bij elke boot.
+# CUSTOM: bij elke boot (en na elke sync_map) de serveradressen goedzetten.
 #
-# Design (2026-05-15 herzien):
-#   http_address.txt bevat de HOSTNAME \`opennova.local:<port>\`, niet een IP.
-#   De mower-firmware gebruikt libcurl + libc resolver, en de mower heeft
-#   \`mdns4_minimal\` in /etc/nsswitch.conf + avahi-daemon, dus elke HTTP
-#   request resolvet \`opennova.local\` opnieuw via mDNS. Verhuist de server
-#   naar een andere host die ook \`opennova.local\` adverteert, dan switched
-#   de mower automatisch — geen polling, geen watch loop nodig.
-#
-#   Port discovery prioriteit (eerste die werkt wint):
-#     1. /userdata/lfi/server_port_override.txt   (manual override)
-#     2. mDNS SRV \`_opennova-http._tcp.local\`     (strict target filter)
-#     3. HTTP probe op opennova.local (of IP): 80 → 8080 → 443, alleen een
-#        poort die /api/setup/health als OpenNova beantwoordt telt
-#     4. Hardcoded FALLBACK_HTTP_PORT (80, --http-port)
-#
-#   De target filter op stap 2 weigert rogue responders (Chromecast,
-#   neighbour-containers met \`_opennova-http._tcp.local\` collisions). Hij
-#   accepteert alleen SRV records met target opennova.local of opennovabot.local.
-#
-# MQTT broker adres in json_config.json blijft IP-based (libc gethostbyname
-# op \`opennova.local\` via getent, hosts: files mdns4_minimal). Dat is een
-# eenmalige resolutie aan de boot-side; mqtt_node-restart bij IP change
-# vereist een nieuwe boot OF handmatige rerun van dit script.
+# Welke OpenNova-server, en het schrijven van ALLE adressen die ernaar wijzen
+# (json_config.json mqtt.addr, http_address.txt, server_ip.txt), gebeurt op
+# één plek: server_address.py (GH #170). Dezelfde regel draait elke 60 s in
+# opennova_discovery.py. Alleen een server die als OpenNova antwoordt telt;
+# antwoordt er geen, dan blijven de adressen staan zoals ze waren. Dit script
+# schreef eerder zelf een ongecontroleerd app.lfibot.com-antwoord (de cloud
+# zonder DNS-redirect) in http_address.txt.
 
-FALLBACK_HOSTNAME="opennova.local"
-FALLBACK_HOST="${SERVER_HOST}"
-FALLBACK_HTTP_PORT="${SERVER_HTTP_PORT}"
-MQTT_PORT_NUM=${MQTT_PORT}
-PORT_OVERRIDE_FILE="/userdata/lfi/server_port_override.txt"
-LAST_KNOWN_FILE="/userdata/lfi/server_ip.txt"
-HTTP_ADDR_FILE="/userdata/lfi/http_address.txt"
-MQTT_CONFIG_FILE="/userdata/lfi/json_config.json"
 LOG_FILE="/userdata/ota/custom_firmware.log"
+MQTT_CONFIG_FILE="/userdata/lfi/json_config.json"
 
 mkdir -p /userdata/lfi /userdata/ota
 
@@ -606,33 +583,10 @@ log() {
     echo "[\$(date)] set_server_urls: \$1" >> "\$LOG_FILE"
 }
 
-# ── Host voor http_address.txt ───────────────────────────────────
-# Resolvet opennova.local (mDNS), dan is de hostname de beste keuze:
-# libcurl volgt de server bij een IP-wissel. Resolvet hij NIET (server in
-# Docker bridge, multicast komt het LAN niet op), dan is een hostname in
-# http_address.txt een gegarandeerde INIT_NET_ERROR-lus in mqtt_node.
-# Dan het IP: uit de DNS-omleiding van app.lfibot.com of last-known.
-HTTP_HOST="\$FALLBACK_HOSTNAME"
-if ! getent hosts "\$FALLBACK_HOSTNAME" >/dev/null 2>&1; then
-    HTTP_HOST="\$(getent hosts app.lfibot.com 2>/dev/null | awk '{print \$1}' | head -1)"
-    [ -z "\$HTTP_HOST" ] && [ -f "\$LAST_KNOWN_FILE" ] && HTTP_HOST="\$(tr -d '[:space:]' < "\$LAST_KNOWN_FILE")"
-    if [ -n "\$HTTP_HOST" ]; then
-        log "opennova.local lost niet op — http_address op IP \$HTTP_HOST"
-    else
-        HTTP_HOST="\$FALLBACK_HOSTNAME"
-        log "WARN: opennova.local lost niet op en geen IP bekend — hostname blijft (mqtt_node komt niet online)"
-    fi
-fi
-
 # ── --restart-mqtt: drop mqtt_node so ros2 launch respawns it ────
-# Used after a manual run when http_address.txt / json_config has
-# been updated and mqtt_node needs to re-read its config. mqtt_node
-# only reads config files at startup, so without a restart any
-# manual fix sits unused. The novabot_api launch file has
-# respawn=True so killing PID is safe — ROS spawns a fresh one in
-# ~5 sec with the new config. Without this flag, behavior is
-# unchanged (boot-pass path doesn't kill anything; mqtt_node simply
-# hasn't started yet when run_novabot.sh invokes us).
+# Used after a manual run: mqtt_node only reads its config files at
+# startup. Without this flag nothing is killed (at boot mqtt_node has not
+# started yet when run_novabot.sh invokes us).
 RESTART_MQTT=0
 if [ "\$1" = "--restart-mqtt" ]; then
     RESTART_MQTT=1
@@ -647,248 +601,11 @@ for i in \$(seq 1 30); do
     sleep 1
 done
 
-# ── Discovery functies ──────────────────────────────────────
-# Elke functie print uitkomst op stdout zodat caller \$() kan capturen.
-
-discover_port() {
-    python3 << 'SRV_EOF'
-import socket, struct, time
-
-def _parse_name(data, offset):
-    name = []
-    visited = set()
-    cur = offset
-    while True:
-        if cur >= len(data) or cur in visited: break
-        visited.add(cur)
-        l = data[cur]
-        if l == 0:
-            cur += 1
-            break
-        if l & 0xc0 == 0xc0:
-            ptr = ((l & 0x3f) << 8) | data[cur+1]
-            sub, _ = _parse_name(data, ptr)
-            if sub: name.append(sub)
-            cur += 2
-            return '.'.join(name), cur
-        cur += 1
-        name.append(data[cur:cur+l].decode(errors='ignore'))
-        cur += l
-    return '.'.join(name), cur
-
-def _wlan0_ip():
-    # Get the wlan0 IPv4 address so we can pin multicast to it. Without
-    # this, the join + sendto both inherit INADDR_ANY, and on devices
-    # without a default 224.0.0.0/4 route in the kernel routing table
-    # (live-observed on LFIN2231000633 — RDK X3 + Galactic, no multicast
-    # route at all) sendto raises ENETUNREACH and IP_ADD_MEMBERSHIP
-    # raises ENODEV. Resolving the iface IP up front + IP_MULTICAST_IF
-    # tells the kernel which interface to use regardless of routes.
-    try:
-        with open('/proc/net/route') as f:
-            f.readline()  # skip header
-        # Cheap "ip addr" parse via the inet socket trick:
-        import fcntl
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            ip = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, struct.pack('256s', b'wlan0'))[20:24])
-            return ip
-        finally:
-            s.close()
-    except Exception:
-        return None
-
-def srv(timeout=4):
-    qname = b'\x0e_opennova-http\x04_tcp\x05local\x00'
-    query = struct.pack('!6H', 0, 0, 1, 0, 0, 0) + qname + struct.pack('!2H', 33, 1)
-    wlan_ip = _wlan0_ip()
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-    except: pass
-    s.settimeout(2)
-    try:
-        s.bind(('', 5353))
-    except OSError:
-        s.close(); return
-    # Pin multicast to wlan0 if we have its IP. Falls back to INADDR_ANY
-    # for non-wlan setups (e.g. ethernet-only test rigs) where the kernel
-    # routing table already has the multicast route.
-    if wlan_ip:
-        try: s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(wlan_ip))
-        except OSError: pass
-        mreq = struct.pack('4s4s', socket.inet_aton('224.0.0.251'), socket.inet_aton(wlan_ip))
-    else:
-        mreq = struct.pack('4sL', socket.inet_aton('224.0.0.251'), socket.INADDR_ANY)
-    try:
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    except OSError:
-        # Kernel rejected the group join — bail out cleanly so the bash
-        # caller falls through to the TCP probe cascade.
-        s.close(); return
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            s.sendto(query, ('224.0.0.251', 5353))
-        except OSError:
-            # ENETUNREACH or similar — give up on mDNS and let the
-            # TCP probe cascade (8080→80→443) take over.
-            s.close(); return
-        try:
-            while True:
-                data, _ = s.recvfrom(4096)
-                if len(data) < 12: continue
-                if not (struct.unpack('!H', data[2:4])[0] & 0x8000): continue
-                qd = struct.unpack('!H', data[4:6])[0]
-                an = struct.unpack('!H', data[6:8])[0]
-                off = 12
-                for _ in range(qd):
-                    _, off = _parse_name(data, off); off += 4
-                for _ in range(an):
-                    _, off = _parse_name(data, off)
-                    if off + 10 > len(data): break
-                    rtype = struct.unpack('!H', data[off:off+2])[0]
-                    rdlen = struct.unpack('!H', data[off+8:off+10])[0]
-                    if rtype == 33 and off + 10 + 6 <= len(data):
-                        # SRV RDATA: priority(2) weight(2) port(2) target(name)
-                        port = struct.unpack('!H', data[off+10+4:off+10+6])[0]
-                        target, _ = _parse_name(data, off + 10 + 6)
-                        target = (target or '').lower()
-                        # Only accept SRV records whose target is one of our
-                        # advertised hostnames. Other responders on the LAN
-                        # (CasaOS/ZimaOS apps, neighbouring containers) may
-                        # claim _opennova-http._tcp.local with their own
-                        # random ports — without this filter the mower picks
-                        # whichever responds first (race-condition,
-                        # live-observed wrong ports 6466 + 8009 on user LAN
-                        # 2026-05-13).
-                        VALID_TARGETS = ('opennova.local', 'opennovabot.local')
-                        is_ours = any(target == t or target.endswith('.'+t) for t in VALID_TARGETS)
-                        if is_ours:
-                            s.close(); print(port); return
-                    off += 10 + rdlen
-        except socket.timeout: pass
-    s.close()
-
-srv()
-SRV_EOF
-}
-
-# ── HTTP probe helper ────────────────────────────────────────────
-# "Port open" is not enough: a NAS runs its own web UI on 80 (ZimaOS on
-# Ramon's .247), so a bare TCP connect picked 80 and mqtt_node's network
-# check then hit that UI and got a 404 forever. Ask the port whether it is
-# OpenNova: /api/setup/health answers with a small JSON that names the
-# server and the broker; nothing else on a LAN does.
-probe_http() {
-    python3 - "\$1" "\$2" << 'PROBE_EOF' 2>/dev/null
-import sys, urllib.request
-host = sys.argv[1]; port = int(sys.argv[2])
-try:
-    with urllib.request.urlopen('http://%s:%d/api/setup/health' % (host, port), timeout=3) as r:
-        body = r.read(2000).decode('utf-8', 'ignore')
-    sys.exit(0 if ('"server"' in body and '"mqtt"' in body) else 1)
-except Exception:
-    sys.exit(1)
-PROBE_EOF
-}
-
-# ── Port discovery cascade ───────────────────────────────────────
-# 1) override file (power-users met afwijkende port)
-# 2) mDNS SRV met strict target filter
-# 3) HTTP probe op opennova.local (of het IP): 80 → 8080 → 443 (moet OpenNova zijn)
-# 4) FALLBACK_HTTP_PORT
-PORT=""
-PORT_SOURCE=""
-
-if [ -f "\$PORT_OVERRIDE_FILE" ]; then
-    PORT="\$(tr -d '[:space:]' < "\$PORT_OVERRIDE_FILE")"
-    if [[ "\$PORT" =~ ^[0-9]+\$ ]] && [ "\$PORT" -gt 0 ] && [ "\$PORT" -lt 65536 ]; then
-        PORT_SOURCE="override"
-    else
-        log "WARN: \$PORT_OVERRIDE_FILE bevat ongeldige port '\$PORT' — genegeerd"
-        PORT=""
-    fi
-fi
-
-if [ -z "\$PORT" ]; then
-    SRV_PORT="\$(discover_port)"
-    if [ -n "\$SRV_PORT" ]; then
-        PORT="\$SRV_PORT"
-        PORT_SOURCE="mDNS SRV"
-    fi
-fi
-
-if [ -z "\$PORT" ]; then
-    for p in 80 8080 443; do
-        if probe_http "\$HTTP_HOST" "\$p"; then
-            PORT="\$p"
-            PORT_SOURCE="probe \$HTTP_HOST:\$p"
-            break
-        fi
-    done
-fi
-
-if [ -z "\$PORT" ]; then
-    PORT="\$FALLBACK_HTTP_PORT"
-    PORT_SOURCE="fallback (geen discovery succesvol)"
-fi
-
-# ── Schrijf http_address.txt — hostname-based ────────────────────
-# We schrijven \`opennova.local:<port>\`, niet een IP. Dat betekent dat
-# libcurl in de firmware bij elke HTTP request opnieuw via libc resolver +
-# mDNS naar avahi-daemon vraagt waar opennova.local op draait. Verhuist
-# de server naar een ander IP (of vervang door andere host die ook
-# opennova.local adverteert) → mower switched automatisch zonder polling
-# of script-rerun.
-NEW_ADDRESS="\${HTTP_HOST}:\${PORT}"
-CURRENT_ADDRESS=""
-[ -f "\$HTTP_ADDR_FILE" ] && CURRENT_ADDRESS="\$(cat "\$HTTP_ADDR_FILE")"
-if [ "\$NEW_ADDRESS" != "\$CURRENT_ADDRESS" ]; then
-    printf "%s" "\$NEW_ADDRESS" > "\$HTTP_ADDR_FILE"
-    log "http_address.txt → \$NEW_ADDRESS (port via \$PORT_SOURCE)"
-else
-    log "http_address.txt → \$NEW_ADDRESS (unchanged, port via \$PORT_SOURCE)"
-fi
-HTTP_ADDRESS="\$NEW_ADDRESS"
-
-# ── MQTT broker IP via libc resolver ─────────────────────────────
-# mqtt_node leest json_config.json bij startup en kan zelf hostnames
-# resolven via NSS, maar voor backward-compat houden we hier een IP
-# en updaten alleen bij wijziging. \`getent hosts\` consulteert dezelfde
-# resolver-chain (files → mdns4_minimal → dns) als libcurl.
-MQTT_ADDRESS="\$(getent hosts \$FALLBACK_HOSTNAME 2>/dev/null | awk '{print \$1}' | head -1)"
-[ -z "\$MQTT_ADDRESS" ] && [ "\$HTTP_HOST" != "\$FALLBACK_HOSTNAME" ] && MQTT_ADDRESS="\$HTTP_HOST"
-if [ -z "\$MQTT_ADDRESS" ] && [ -f "\$LAST_KNOWN_FILE" ]; then
-    MQTT_ADDRESS="\$(cat "\$LAST_KNOWN_FILE")"
-    log "getent miste — MQTT addr uit last-known: \$MQTT_ADDRESS"
-fi
-# server_ip.txt is also how stap 4 below recognises a broker address this
-# script wrote itself (GH #160), so read it before it is rewritten. An answer
-# that is not OpenNova (DNS falling back to the public lfibot.com) never
-# replaces a known server: that would make the address it wrote look custom.
-PREV_SERVER_IP=""
-[ -f "\$LAST_KNOWN_FILE" ] && PREV_SERVER_IP="\$(tr -d '[:space:]' < "\$LAST_KNOWN_FILE")"
-MQTT_VERIFIED=0
-if [ -n "\$MQTT_ADDRESS" ] && probe_http "\$MQTT_ADDRESS" "\$PORT"; then
-    MQTT_VERIFIED=1
-fi
-if [ -n "\$MQTT_ADDRESS" ] && { [ "\$MQTT_VERIFIED" = "1" ] || [ -z "\$PREV_SERVER_IP" ]; }; then
-    echo "\$MQTT_ADDRESS" > "\$LAST_KNOWN_FILE"
-elif [ -n "\$MQTT_ADDRESS" ] && [ "\$MQTT_ADDRESS" != "\$PREV_SERVER_IP" ]; then
-    log "\$MQTT_ADDRESS:\$PORT does not answer as OpenNova, server_ip.txt stays \$PREV_SERVER_IP"
-fi
-
-# 2. Ethernet altijd beschikbaar voor noodherstel (RDK X3 default: 192.168.1.10)
+# Ethernet altijd beschikbaar voor noodherstel (RDK X3 default: 192.168.1.10)
 ip addr add 192.168.1.10/24 dev eth0 2>/dev/null || true
 ip link set eth0 up 2>/dev/null || true
 
-# 3. MQTT broker adres — update ALLEEN mqtt velden in json_config.json
-# (behoud alle BLE-provisioned data: wifi, lora, sn, config/tz)
-# SKIP als geen server gevonden (bewaar bestaande config)
-if [ -z "\${MQTT_ADDRESS}" ]; then
-    log "SKIP json_config.json update — geen server IP beschikbaar"
-else
+# ── json_config.json: backups, tz, verdwenen secties herstellen ──
 #
 # VEILIGHEID (meerdere lagen):
 #   - Factory backup (.factory) — eenmalig, wordt NOOIT overschreven
@@ -896,13 +613,9 @@ else
 #   - Atomic write — schrijf naar .tmp, valideer, dan mv (nooit direct)
 #   - Post-write validatie — als resultaat secties mist, ABORT en herstel
 #   - Herstelvolgorde: .bak → .factory → niets wijzigen
-PREV_SERVER_IP="\$PREV_SERVER_IP" MQTT_VERIFIED="\$MQTT_VERIFIED" python3 << PYEOF
+python3 << PYEOF
 import json, os, shutil, sys, tempfile
 
-mqtt_addr = "\${MQTT_ADDRESS}"
-mqtt_port = \${MQTT_PORT_NUM}
-prev_server_ip = os.environ.get("PREV_SERVER_IP", "").strip()
-mqtt_verified = os.environ.get("MQTT_VERIFIED") == "1"
 cfg_file = "\${MQTT_CONFIG_FILE}"
 backup = cfg_file + ".bak"
 factory = cfg_file + ".factory"
@@ -944,9 +657,8 @@ if not loaded:
     c, loaded = load_json(factory)
     source = "factory"
 if not loaded:
-    log_msg("WARN: geen leesbare config gevonden — alleen mqtt wordt gezet")
-    c = {}
-    source = "empty"
+    log_msg("WARN: geen leesbare config gevonden — niets te doen")
+    sys.exit(0)
 else:
     log_msg(f"Config geladen uit {source} (secties: {list(c.keys())})")
 
@@ -969,50 +681,7 @@ if source == "main" and original_critical >= 2:
     except:
         pass
 
-# === Stap 4: Update ALLEEN mqtt + config/tz (nooit andere secties aanraken) ===
-# BELANGRIJK: als json_config.json al een custom MQTT adres bevat (niet mqtt.lfibot.com
-# of mqtt-dev.lfibot.com), dan is dat gezet via BLE/MQTT provisioning → NIET overschrijven.
-# Dit maakt de firmware generiek bruikbaar: ESP32 OTA tool flasht, provisioneert MQTT adres
-# via MQTT (stap 8), en set_server_urls.sh respecteert dat bij elke boot daarna.
-if "mqtt" not in c:
-    c["mqtt"] = {"set": 1, "value": {}}
-elif not isinstance(c.get("mqtt", {}).get("value"), dict):
-    c["mqtt"]["value"] = {}
-
-existing_addr = c.get("mqtt", {}).get("value", {}).get("addr", "")
-is_stock_addr = existing_addr in ("", "mqtt.lfibot.com", "mqtt-dev.lfibot.com", "app.lfibot.com")
-# What this script (or opennova_discovery.py) wrote itself is also in
-# server_ip.txt, so it is not a custom address: when the server moves, it
-# follows (GH #160), but only to an address that answered as OpenNova. An
-# address set by hand (BLE, ESP32 tool) never equals that file.
-is_own_addr = bool(prev_server_ip) and existing_addr == prev_server_ip
-if is_stock_addr:
-    c["mqtt"]["value"]["addr"] = mqtt_addr
-    c["mqtt"]["value"]["port"] = mqtt_port
-    log_msg(f"MQTT addr updated: {existing_addr} -> {mqtt_addr}")
-elif is_own_addr:
-    if mqtt_verified and mqtt_addr != existing_addr:
-        c["mqtt"]["value"]["addr"] = mqtt_addr
-        log_msg(f"MQTT addr moved with the server: {existing_addr} -> {mqtt_addr}")
-    elif mqtt_addr != existing_addr:
-        log_msg(f"MQTT addr KEPT: {mqtt_addr} answered not as OpenNova, {existing_addr} stays")
-    else:
-        log_msg(f"MQTT addr unchanged: {existing_addr}")
-    # The port that was there belongs to this install; only fill it in when missing.
-    if not c["mqtt"]["value"].get("port"):
-        c["mqtt"]["value"]["port"] = mqtt_port
-else:
-    log_msg(f"MQTT addr KEPT (custom): {existing_addr} (niet overschreven door {mqtt_addr})")
-    # De poort hoort bij het adres: als BLE-provisioning een custom broker heeft
-    # gezet (bv. :1884 naast een Home Assistant Mosquitto op 1883), dan mag de
-    # build-time default die NIET terugzetten bij elke boot. Alleen invullen als
-    # er helemaal geen poort staat.
-    if not c["mqtt"]["value"].get("port"):
-        c["mqtt"]["value"]["port"] = mqtt_port
-        log_msg(f"MQTT port ontbrak -> {mqtt_port}")
-    else:
-        log_msg(f"MQTT port KEPT (custom): {c['mqtt']['value']['port']}")
-
+# === Stap 4: tz default (the broker address is server_address.py's job) ===
 if "config" not in c:
     c["config"] = {"set": 1, "value": {"tz": "Europe/Amsterdam"}}
 elif c.get("config", {}).get("value") is None:
@@ -1075,9 +744,8 @@ has_wifi = "wifi" in c
 log_msg(f"OK — secties: {sections}, SN: {has_sn}, WiFi: {has_wifi}")
 PYEOF
 
-fi  # end of: if [ -z "\${MQTT_ADDRESS}" ] ... else
-
-echo "[\$(date)] HTTP → \${HTTP_ADDRESS}, MQTT → \${MQTT_ADDRESS}:\${MQTT_PORT_NUM}" >> /userdata/ota/custom_firmware.log
+# ── De server en alle adressen die ernaar wijzen ─────────────────
+log "\$(python3 /root/novabot/scripts/server_address.py --once 2>&1)"
 
 # ── Per-SN avahi hostname ────────────────────────────────────────────────
 # OpenNova server's mowerIpDiscovery service prefers <sn>.local over the
@@ -1489,10 +1157,16 @@ cp "$SCRIPT_DIR/firmware_state.py" "$NOVABOT_ROOT/scripts/firmware_state.py"
 echo "  firmware_state.py gekopieerd naar scripts/"
 
 # Shared by extended_commands.py, led_bridge.py and auto_map_node.py (all
-# import it): which broker answers now, picked anew on every reconnect so the
+# import it): json_config's broker, read anew on every reconnect so the
 # helpers follow a server that moved (GH #160). Copied unconditionally.
 cp "$SCRIPT_DIR/broker_resolver.py" "$NOVABOT_ROOT/scripts/broker_resolver.py"
 echo "  broker_resolver.py gekopieerd naar scripts/"
+
+# The one place that decides which OpenNova server the mower uses and writes
+# every address pointing at it (GH #170): set_server_urls.sh calls it at boot
+# and after sync_map, opennova_discovery.py imports it. Copied unconditionally.
+cp "$SCRIPT_DIR/server_address.py" "$NOVABOT_ROOT/scripts/server_address.py"
+echo "  server_address.py gekopieerd naar scripts/"
 
 # === Stap 5d: Camera stream service toevoegen ===
 echo "[5d/9] Camera stream service toevoegen..."
@@ -2729,6 +2403,7 @@ FW_PATHS=(
     "research/mow_zone_drive.py"
     "research/opennova_discovery.py"
     "research/broker_resolver.py"
+    "research/server_address.py"
     "research/led_bridge.py"
     "research/firmware/STM32"
     "research/set_server_urls.sh"

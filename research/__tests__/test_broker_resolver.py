@@ -7,9 +7,10 @@ once at start and reconnected to that same address forever. Live on
 LFIN2231000451: DNS and the new broker were fine, the log still said
 "[LED-BRIDGE] SN=..., MQTT=192.168.178.8:1883" and the mower stayed offline.
 
-The helpers now pick the broker anew before every connect: opennova.local,
-then mqtt.lfibot.com, then the json_config address, then server_ip.txt. The
-first that accepts a TCP connect on the MQTT port wins.
+The helpers now read the broker anew before every connect: json_config's,
+the same one mqtt_node uses. Which server that is, is decided in
+server_address.py (GH #170); the resolver's own list of names took the public
+mqtt.lfibot.com over the local broker (GH #169).
 
 Run: python3 research/__tests__/test_broker_resolver.py
 """
@@ -17,7 +18,6 @@ import importlib.util
 import json
 import os
 import signal
-import socket
 import tempfile
 import types
 
@@ -63,96 +63,38 @@ def write_last(addr):
             fh.write(addr + "\n")
 
 
-def resolve(names, answering, last_known=OLD):
-    """resolve_broker with stubbed name lookups and TCP probes.
-    Returns ((addr, port), [probed addr:port, ...])."""
+def resolve(last_known=OLD):
     write_last(last_known)
-    probed = []
-
-    def lookup(name):
-        return names.get(name)
-
-    def reachable(addr, port, timeout):
-        probed.append(f"{addr}:{port}")
-        return f"{addr}:{port}" in answering
-
-    got = br.resolve_broker(config_file=CFG, last_known_file=LAST,
-                            lookup=lookup, reachable=reachable)
-    return got, probed
+    return br.resolve_broker(config_file=CFG, last_known_file=LAST)
 
 
-# ── Order ────────────────────────────────────────────────────────────────────
+# ── The broker is json_config's, read on every call ─────────────────────────
 write_cfg(OLD)
-got, _ = resolve({"opennova.local": NEW}, {f"{NEW}:1883"})
-check("opennova.local answers -> that broker", got == (NEW, 1883), got)
+check("the configured broker", resolve() == (OLD, 1883), resolve())
 
-# The same two names opennova_discovery.py follows: older servers only
-# advertise opennovabot.local.
-got, _ = resolve({"opennovabot.local": NEW}, {f"{NEW}:1883", f"{OLD}:1883"})
-check("only the legacy opennovabot.local answers -> that broker", got == (NEW, 1883), got)
-
-got, _ = resolve({"mqtt.lfibot.com": NEW}, {f"{NEW}:1883", f"{OLD}:1883"})
-check("the issue: mDNS silent, DNS points at the new server, config at the old -> the new one",
-      got == (NEW, 1883), got)
-
-# GH #169: no DNS redirect on the mower, so mqtt.lfibot.com is the real cloud.
-got, probed = resolve({"mqtt.lfibot.com": "47.253.162.193"}, {"47.253.162.193:1883", f"{OLD}:1883"})
-check("mqtt.lfibot.com at a public address (the cloud) is skipped -> the configured broker",
-      got == (OLD, 1883) and "47.253.162.193:1883" not in probed, (got, probed))
-
-got, _ = resolve({"mqtt.lfibot.com": "100.101.1.2"}, {"100.101.1.2:1883", f"{OLD}:1883"})
-check("a redirect to a CGNAT/Tailscale address still counts", got == ("100.101.1.2", 1883), got)
-
-got, _ = resolve({"opennova.local": NEW, "mqtt.lfibot.com": "10.0.0.9"},
-                 {f"{NEW}:1883", "10.0.0.9:1883"})
-check("mDNS beats DNS when both answer", got == (NEW, 1883), got)
-
-got, _ = resolve({"opennova.local": "10.0.0.5", "mqtt.lfibot.com": "10.0.0.9"}, {f"{OLD}:1883"})
-check("names that do not answer -> the json_config address", got == (OLD, 1883), got)
-
-write_cfg("192.168.0.50")
-got, _ = resolve({}, {f"{OLD}:1883"}, last_known=OLD)
-check("only server_ip.txt answers -> server_ip.txt", got == (OLD, 1883), got)
-
-got, probed = resolve({"opennova.local": NEW}, set(), last_known=OLD)
-check("nothing answers -> the configured address, so the caller's retry loop keeps it",
-      got == ("192.168.0.50", 1883), got)
-check("  ... after trying every candidate in order",
-      probed == [f"{NEW}:1883", "192.168.0.50:1883", f"{OLD}:1883"], probed)
-
-# ── Port, duplicates, fresh reads ────────────────────────────────────────────
 write_cfg(OLD, port=1884)
-got, probed = resolve({"opennova.local": NEW}, {f"{NEW}:1884"})
-check("probes and returns the json_config port", got == (NEW, 1884) and probed == [f"{NEW}:1884"], probed)
+check("  ... with its port", resolve() == (OLD, 1884), resolve())
+
+# GH #169: the resolver tried names first and took the public cloud.
+write_cfg("192.168.178.228")
+check("no name lookups of its own: the configured local broker, never mqtt.lfibot.com",
+      not hasattr(br, "lookup") and resolve() == ("192.168.178.228", 1883), resolve())
+
+write_cfg("mqtt.lfibot.com")
+check("before the first server is found, the stock name as is (ESP32 setup AP)",
+      resolve() == ("mqtt.lfibot.com", 1883), resolve())
 
 write_cfg(OLD)
-_, probed = resolve({"opennova.local": NEW, "mqtt.lfibot.com": NEW}, set(), last_known=OLD)
-check("one address from several sources is probed once",
-      probed == [f"{NEW}:1883", f"{OLD}:1883"], probed)
-
-write_cfg(OLD)
-first, _ = resolve({}, {f"{OLD}:1883", f"{NEW}:1883"}, last_known=None)
+first = resolve(last_known=None)
 write_cfg(NEW)
-second, _ = resolve({}, {f"{OLD}:1883", f"{NEW}:1883"}, last_known=None)
+second = resolve(last_known=None)
 check("json_config is read on every call, not once at start",
       first == (OLD, 1883) and second == (NEW, 1883), (first, second))
 
 with open(CFG, "w") as fh:
     fh.write("{broken")
-got, _ = resolve({}, set(), last_known=None)
-check("unreadable config, nothing known -> 127.0.0.1:1883 as before", got == ("127.0.0.1", 1883), got)
-got, _ = resolve({}, set(), last_known=OLD)
-check("unreadable config -> server_ip.txt as the fallback", got == (OLD, 1883), got)
-
-# ── The real probes ──────────────────────────────────────────────────────────
-srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-srv.bind(("127.0.0.1", 0))
-srv.listen(1)
-port = srv.getsockname()[1]
-check("accepts_connect: a listening port", br.accepts_connect("127.0.0.1", port, 1.0) is True)
-srv.close()
-check("accepts_connect: a closed port", br.accepts_connect("127.0.0.1", port, 1.0) is False)
-check("lookup: a name that does not resolve is None", br.lookup("no-such-host.invalid") is None)
+check("unreadable config, nothing known -> 127.0.0.1:1883 as before", resolve(last_known=None) == ("127.0.0.1", 1883))
+check("unreadable config -> server_ip.txt as the fallback", resolve(last_known=OLD) == (OLD, 1883))
 
 
 # ── The helpers pick the broker before every connect ─────────────────────────
