@@ -18,6 +18,7 @@ import { readMowerMapSnapshot } from '../../services/mowerMapOperation.js';
 import type { MowerMapOperation } from '../../services/mowerMapOperation.js';
 import type { MapApply } from '../../services/mapApplyStatus.js';
 import { parsePgm } from '../../maps/validateGrid.js';
+import { isMapInstallPending, clearMapInstallPending } from '../../services/frameValidation.js';
 
 const sn = 'LFIN_APPLY_TEST';
 const anchor = { x: 0.03, y: 0.73 };
@@ -136,4 +137,36 @@ it('says a push was refused because there is no dock anchor', async () => {
   const lone = 'LFIN_NO_ANCHOR';
   expect(await applyMapsToMower(lone)).toBe(false);
   expect(deviceCache.get(lone)?.get('map_apply_error')).toBe('no_dock_anchor');
+});
+
+// GH #168: a ZIP the mower refused ("map untouched") left map_install_pending
+// set for good, so the dashboard kept blocking until the key was deleted by hand.
+describe('a sync_map the mower refused', () => {
+  const refused = (after: Record<string, unknown>) => {
+    const op = mower(after);
+    vi.mocked(op.command).mockImplementation(async (name: string) => name === 'sync_map' ? { result: 1, error: 'ZIP hash mismatch; map untouched' } : null);
+    return op;
+  };
+
+  it('releases the install when the readback shows the files unchanged', async () => {
+    const a = apply();
+    expect(await installVerifiedMapZip(sn, input(), refused({ ...before }), a)).toBeNull();
+    expect(a.fail).toHaveBeenCalledWith('sync_failed');
+    expect(isMapInstallPending(sn)).toBe(false);
+  });
+
+  it('keeps it when anything on the mower changed', async () => {
+    const a = apply();
+    await installVerifiedMapZip(sn, input(), refused({ ...before, csv_files: { ...files, 'map3_work.csv': '1,1\n' } }), a);
+    expect(isMapInstallPending(sn)).toBe(true);
+    clearMapInstallPending(sn);
+  });
+
+  it('keeps it on a timeout, when the mower may still be writing', async () => {
+    const op = mower({ ...before });
+    vi.mocked(op.command).mockResolvedValue(null);
+    await installVerifiedMapZip(sn, input(), op, apply());
+    expect(isMapInstallPending(sn)).toBe(true);
+    clearMapInstallPending(sn);
+  });
 });

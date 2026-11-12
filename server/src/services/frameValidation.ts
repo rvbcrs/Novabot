@@ -7,7 +7,8 @@
  * does not silently unlock go_to_charge.
  */
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
-import { isOwnedReanchorMotion } from './mowerMapOperation.js';
+import { isDeepStrictEqual } from 'node:util';
+import { isOwnedReanchorMotion, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
 
 const KEY = 'frame_unvalidated';
@@ -38,6 +39,22 @@ export function markMapInstallPending(sn: string): void {
 export function clearMapInstallPending(sn: string): void {
   deviceSettingsRepo.remove(sn, INSTALL_KEY);
   installing.delete(sn);
+}
+/**
+ * After an install the mower answered with a failure (not a timeout: then it
+ * may still be writing), the install is released when a readback shows the
+ * mower's map files exactly as before. A refused ZIP ("map untouched") left
+ * the pending set forever otherwise (GH #168). Any difference keeps it, so
+ * applying again stays the repair. Returns whether it was released.
+ */
+const SNAPSHOT_FIELDS = ['csv_files', 'x3_csv_files', 'map_files_text', 'map_files_b64', 'charging_station_yaml', 'pos_json'] as const;
+export async function releaseInstallIfUntouched(sn: string, before: Record<string, unknown>, operation: MowerMapOperation): Promise<boolean> {
+  const after = await readMowerMapSnapshot(sn, operation);
+  if (!after || after.result !== 0 || after.snapshot_consistent !== true) return false;
+  if (!SNAPSHOT_FIELDS.every(k => isDeepStrictEqual(after[k] ?? null, before[k] ?? null))) return false;
+  clearMapInstallPending(sn);
+  console.log(`[MAP-OP] ${sn}: install failed but the mower's map files are unchanged; install pending released`);
+  return true;
 }
 const revisions = new Map<string, number>();
 export const getFrameRevision = (sn: string): number => revisions.get(sn) ?? 0;

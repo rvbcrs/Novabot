@@ -30,7 +30,7 @@ import { emitDeviceBound, emitDevicePaired } from '../dashboard/socketHandler.js
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
 import { isSnBanned, isDeviceOnline } from './broker.js';
-import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, setPendingReanchor } from '../services/frameValidation.js';
+import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, releaseInstallIfUntouched, setPendingReanchor } from '../services/frameValidation.js';
 import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, isMowerMapOperationBusy, type MowerMapOperation } from '../services/mowerMapOperation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
 import type { MapApplyError } from '../services/mapApplyStatus.js';
@@ -859,7 +859,7 @@ export async function applyVerbatimToMower(
     prune_connectors: true,
   }, 120_000);
   if (!written) return fail('write_timeout', true);
-  if (written.result !== 0) return fail('write_failed', true);
+  if (written.result !== 0) return fail('write_failed', !await releaseInstallIfUntouched(sn, before, operation));
   const after = await readMowerMapSnapshot(sn, operation);
   if (!after || !snapshotMatchesFiles(after, files) || after.pos_json !== before.pos_json) return fail('readback_mismatch', true);
   return { pushed: true, validation, operationId: operation.id };

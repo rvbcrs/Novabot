@@ -7,7 +7,7 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { beginMapApply, confirmMapInstall, waitForPlannerBack, type MapApply, type MapApplyError } from './mapApplyStatus.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from './anchor.js';
 import { freshPositionState } from './positionTelemetry.js';
-import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending } from './frameValidation.js';
+import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, releaseInstallIfUntouched } from './frameValidation.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 import { geometryFromMowerFiles, sameMapFile } from './portableSnapshot.js';
@@ -174,7 +174,10 @@ export async function installVerifiedMapZip(
       zip_url: `/api/dashboard/maps/${encodeURIComponent(sn)}/sync-operation/${operation.id}`,
       expected_md5: crypto.createHash('md5').update(bytes).digest('hex'),
     }, SYNC_MAP_TIMEOUT_MS);
-    if (!sync || sync.result !== 0 || sync.restart === false || sync.auto_recharge_restart === false) { apply.fail(sync ? 'sync_failed' : 'sync_timeout'); return null; }
+    if (!sync || sync.result !== 0 || sync.restart === false || sync.auto_recharge_restart === false) {
+      if (sync && sync.result !== 0) await releaseInstallIfUntouched(sn, before, operation);
+      apply.fail(sync ? 'sync_failed' : 'sync_timeout'); return null;
+    }
     apply.phase('regenerating');
     if (lacksWholeMapRaster(before)) {
       const raster = await writeWholeMapRaster(sn, Object.fromEntries(expectedCsv), operation);

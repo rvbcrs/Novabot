@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../mqtt/broker.js', () => ({ isSnBanned: () => false, isDeviceOnline: vi.fn(() => true) }));
 vi.mock('../../dashboard/socketHandler.js', () => ({ emitDeviceBound: vi.fn(), emitDevicePaired: vi.fn() }));
 vi.mock('../../mqtt/sensorData.js', () => ({ deviceCache: new Map() }));
-vi.mock('../../services/frameValidation.js', () => ({ isFrameNavBlocked: () => false, markFrameUnvalidated: vi.fn(), markMapInstallPending: vi.fn(), clearMapInstallPending: vi.fn() }));
+vi.mock('../../services/frameValidation.js', () => ({ isFrameNavBlocked: () => false, markFrameUnvalidated: vi.fn(), markMapInstallPending: vi.fn(), clearMapInstallPending: vi.fn(), releaseInstallIfUntouched: vi.fn(async () => false) }));
 const apply = vi.hoisted(() => ({ phase: () => {}, fail: (() => {}) as (e: string) => void, done: () => {} }));
 vi.mock('../../services/mapApplyStatus.js', () => ({ beginMapApply: () => apply, confirmMapInstall: vi.fn() }));
 vi.mock('../../services/portableBackup.js', () => ({ listBackups: () => [], readBackup: () => Buffer.from('zip') }));
