@@ -538,7 +538,14 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
     <div id="setupResult" style="margin-top:12px"></div>
 
     <div style="text-align:center;color:#333;margin:18px 0;font-size:11px">&#8212; or &#8212;</div>
-    <button class="btn" style="width:100%;padding:10px;background:#252535;color:#777;font-size:12px" onclick="skipSetup()">Skip cloud import &#8212; create local account only</button>
+    <button class="btn" style="width:100%;padding:10px;background:#252535;color:#777;font-size:12px" onclick="skipSetup()" id="localBtn">Skip cloud import &#8212; create local account only</button>
+    <div id="localForm" style="display:none;margin-top:10px">
+      <input type="email" id="local_email" placeholder="Email" autocomplete="username" style="margin-bottom:8px">
+      <input type="password" id="local_pass" placeholder="Password (min. 6 characters)" autocomplete="new-password" style="margin-bottom:8px">
+      <input type="password" id="local_pass2" placeholder="Repeat password" autocomplete="new-password" style="margin-bottom:14px">
+      <button class="btn btn-green" style="width:100%;padding:12px;font-size:14px" onclick="createLocalAccount()" id="localCreateBtn">Create local account</button>
+      <div id="localResult" style="margin-top:12px"></div>
+    </div>
     <p style="font-size:10px;color:#444;margin-top:6px;text-align:center">You can always import from cloud later in Settings</p>
   </div>
 </div>
@@ -683,7 +690,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
         <details><summary>Eerste opstart / Login</summary><div class="help-sec">
           <div class="help-item"><b>Connect &amp; Import from Cloud</b> — eerste opstart: cloud-login, lokaal admin-account aanmaken en apparaten + kaarten importeren.</div>
-          <div class="help-item"><b>Skip cloud import</b> — maakt een leeg lokaal account (admin@local / admin) zonder cloud-import.</div>
+          <div class="help-item"><b>Skip cloud import</b> — maakt een lokaal account met je eigen e-mail en wachtwoord, zonder cloud-import.</div>
           <div class="help-item"><b>Login</b> — inloggen met je OpenNova-account.</div>
         </div></details>
       </div>
@@ -1066,6 +1073,30 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
     <div class="card">
       <h2>Account</h2>
       <div id="account">Loading...</div>
+      <button class="btn btn-sm" style="margin-top:12px" onclick="toggleOwnPassword()" id="ownPwBtn">Change password</button>
+      <div id="ownPwForm" style="display:none;margin-top:12px">
+        <input type="password" id="own_pw_old" placeholder="Current password" autocomplete="current-password" style="margin-bottom:8px">
+        <input type="password" id="own_pw_new" placeholder="New password (min. 6 characters)" autocomplete="new-password" style="margin-bottom:8px">
+        <input type="password" id="own_pw_new2" placeholder="Repeat new password" autocomplete="new-password" style="margin-bottom:10px">
+        <button class="btn btn-green btn-sm" onclick="saveOwnPassword()">Save password</button>
+        <div id="ownPwResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Users</h2>
+      <p style="font-size:12px;color:#999;margin:0 0 10px 0">Accounts on this server. Every account sees all devices in the OpenNova app and the dashboard. Admins also manage users and this admin page; remote access lets an account use the app and the dashboard from outside your network.</p>
+      <div id="usersList">Loading...</div>
+      <button class="btn btn-sm" style="margin-top:12px" onclick="toggleAddUser()" id="addUserBtn">Add user</button>
+      <div id="addUserForm" style="display:none;margin-top:12px">
+        <input type="email" id="new_user_email" placeholder="Email" autocomplete="off" style="margin-bottom:8px">
+        <input type="password" id="new_user_pw" placeholder="Password (min. 6 characters)" autocomplete="new-password" style="margin-bottom:8px">
+        <input type="password" id="new_user_pw2" placeholder="Repeat password" autocomplete="new-password" style="margin-bottom:8px">
+        <label style="font-size:12px;color:#ccc;margin-right:14px"><input type="checkbox" id="new_user_admin"> Admin</label>
+        <label style="font-size:12px;color:#ccc"><input type="checkbox" id="new_user_dash" checked> Remote access</label>
+        <div style="margin-top:10px"><button class="btn btn-green btn-sm" onclick="addUser()">Add user</button></div>
+        <div id="addUserResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
     </div>
 
     <div class="card" style="border:1px solid rgba(245,158,11,.3);background:linear-gradient(135deg,rgba(245,158,11,.06),rgba(124,58,237,.04))">
@@ -2132,7 +2163,13 @@ function isAuthFailurePayload(d) {
   return d && (d.code === 401 || d.code === 403);
 }
 
+var NO_ADMIN_MESSAGE = 'This account has no admin rights — use the dashboard';
+
 function endAdminSession(message) {
+  // A poll that fires after Logout also gets a 401: that is no expired
+  // session, and must not put "Session expired" (or wipe a login error) on
+  // the login screen. Only a session that was still open ends with a message.
+  var wasLoggedIn = !!token;
   token = '';
   localStorage.removeItem('admin_token');
   var login = document.getElementById('login');
@@ -2142,7 +2179,7 @@ function endAdminSession(message) {
   if (login) login.style.display = 'block';
   if (app) app.style.display = 'none';
   if (setup) setup.style.display = 'none';
-  if (err) err.textContent = message || '';
+  if (err && wasLoggedIn) err.textContent = message || '';
 }
 
 function authExpiredError() {
@@ -2157,7 +2194,7 @@ async function fetchJsonAuth(url, opts) {
   const r = await fetch(url, opts || {});
   const d = await r.json().catch(function() { return null; });
   if (r.status === 401 || r.status === 403 || isAuthFailurePayload(d)) {
-    endAdminSession('Session expired — please log in again');
+    endAdminSession(r.status === 403 ? NO_ADMIN_MESSAGE : 'Session expired — please log in again');
     throw authExpiredError();
   }
   if (!r.ok) throw new Error((d && (d.error || d.message)) || __t('Server error: {status}', { status: r.status }));
@@ -2169,7 +2206,8 @@ async function api(path, method='GET', body=null) {
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch('/api/admin-status' + path, opts);
   if (r.status === 401 || r.status === 403) {
-    endAdminSession('Session expired — please log in again');
+    // 403: a valid login without admin rights (GH #164), not an expired session.
+    endAdminSession(r.status === 403 ? NO_ADMIN_MESSAGE : 'Session expired — please log in again');
     throw authExpiredError();
   }
   var ct = r.headers.get('content-type') || '';
@@ -2438,7 +2476,123 @@ async function loadAccount() {
       '<div class="row"><span class="label">Role</span><span class="value"><span class="badge badge-admin">' + (u.is_admin ? 'admin' : 'user') + '</span></span></div>' +
       '<div class="row"><span class="label">Devices</span><span class="value">' + __t('{registered} registered · {seen} seen', { registered: d.counts.equipment, seen: d.counts.devices }) + '</span></div>' +
       '<div class="row"><span class="label">Maps</span><span class="value">' + d.counts.maps + '</span></div>';
+    currentAccountEmail = u.email || '';
+    loadUsers();
   } catch { document.getElementById('account').textContent = 'Failed to load'; }
+}
+
+// ── Users (GH #164): this server's local accounts, managed by an admin ──
+var currentAccountEmail = '';
+
+function pwMessage(el, msg, ok) {
+  el.innerHTML = '<span style="color:' + (ok ? '#00d4aa' : '#ef4444') + '">' + escHtml(msg) + '</span>';
+}
+
+function toggleOwnPassword() {
+  var f = document.getElementById('ownPwForm');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+}
+
+async function saveOwnPassword() {
+  var out = document.getElementById('ownPwResult');
+  var oldPw = document.getElementById('own_pw_old').value;
+  var newPw = document.getElementById('own_pw_new').value;
+  if (newPw.length < 6) { pwMessage(out, __t('At least 6 characters'), false); return; }
+  if (newPw !== document.getElementById('own_pw_new2').value) { pwMessage(out, __t('The passwords differ'), false); return; }
+  try {
+    var r = await fetch('/api/nova-user/appUser/appUserPwdUpdate', {
+      method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw })
+    });
+    var d = await r.json().catch(function() { return {}; });
+    if (!d.success) { pwMessage(out, d.message || __t('Failed'), false); return; }
+    ['own_pw_old', 'own_pw_new', 'own_pw_new2'].forEach(function(id) { document.getElementById(id).value = ''; });
+    pwMessage(out, __t('Password changed'), true);
+  } catch (e) { pwMessage(out, e.message, false); }
+}
+
+async function loadUsers() {
+  var box = document.getElementById('usersList');
+  try {
+    var d = await api('/users');
+    if (!d.users.length) { box.textContent = '-'; return; }
+    box.innerHTML = d.users.map(function(u) {
+      var self = u.email === currentAccountEmail;
+      var devices = [u.mower_sns, u.charger_sns].filter(Boolean).join(',').split(',').filter(Boolean).length;
+      var id = escHtml(u.app_user_id);
+      return '<div class="row" style="flex-wrap:wrap;gap:8px" data-uid="' + id + '">' +
+        '<span class="label" style="flex:1;min-width:180px;color:#ddd">' + escHtml(u.email) + (self ? ' <span style="color:#777">(' + __t('you') + ')</span>' : '') +
+        ' <span style="color:#666;font-size:11px">· ' + __t('{n} devices', { n: devices }) + '</span></span>' +
+        '<label style="font-size:12px;color:#ccc"><input type="checkbox" data-role="is_admin"' + (u.is_admin ? ' checked' : '') + '> Admin</label>' +
+        '<label style="font-size:12px;color:#ccc"><input type="checkbox" data-role="dashboard_access"' + (u.dashboard_access || u.is_admin ? ' checked' : '') + (u.is_admin ? ' disabled' : '') + '> ' + __t('Remote access') + '</label>' +
+        (self ? '' : '<button class="btn btn-sm" data-act="reset">' + __t('Reset password') + '</button>' +
+                     '<button class="btn btn-sm btn-red" data-act="delete">' + __t('Delete') + '</button>') +
+        '</div>';
+    }).join('');
+  } catch (e) { box.textContent = __t('Failed: {msg}', { msg: e.message }); }
+}
+
+// One listener for every row: role checkboxes and the reset/delete buttons.
+document.addEventListener('change', async function(ev) {
+  var cb = ev.target;
+  var row = cb && cb.closest && cb.closest('#usersList [data-uid]');
+  if (!row || !cb.dataset.role) return;
+  try { await api('/set-role', 'POST', { userId: row.dataset.uid, role: cb.dataset.role, enabled: cb.checked }); }
+  catch (e) { await modalAlert(__t('Failed'), escHtml(e.message)); }
+  loadUsers();
+});
+document.addEventListener('click', async function(ev) {
+  var btn = ev.target && ev.target.closest && ev.target.closest('#usersList [data-act]');
+  if (!btn) return;
+  var row = btn.closest('[data-uid]');
+  var email = row.querySelector('.label').firstChild.textContent;
+  if (btn.dataset.act === 'delete') {
+    var ok = await modalConfirm(__t('Delete {email}?', { email: escHtml(email) }),
+      __t('The account is removed and its mowers and chargers are unlinked from it. They stay on this server.'));
+    if (!ok) return;
+    try { await api('/delete-user', 'POST', { userId: row.dataset.uid }); } catch (e) { await modalAlert(__t('Failed'), escHtml(e.message)); }
+    loadUsers();
+  } else if (btn.dataset.act === 'reset') {
+    if (row.querySelector('[data-reset-form]')) return;
+    var form = document.createElement('div');
+    form.setAttribute('data-reset-form', '');
+    form.style.cssText = 'display:flex;gap:8px;width:100%';
+    form.innerHTML = '<input type="password" autocomplete="new-password" placeholder="' + escHtml(__t('New password (min. 6 characters)')) + '">' +
+      '<button class="btn btn-green btn-sm">' + escHtml(__t('Save')) + '</button>';
+    row.appendChild(form);
+    form.querySelector('button').onclick = async function() {
+      var pw = form.querySelector('input').value;
+      if (pw.length < 6) { await modalAlert(__t('Failed'), __t('At least 6 characters')); return; }
+      try { await api('/reset-password', 'POST', { userId: row.dataset.uid, newPassword: pw }); await modalAlert(__t('Password changed'), escHtml(email)); }
+      catch (e) { await modalAlert(__t('Failed'), escHtml(e.message)); }
+      loadUsers();
+    };
+    form.querySelector('input').focus();
+  }
+});
+
+function toggleAddUser() {
+  var f = document.getElementById('addUserForm');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+}
+
+async function addUser() {
+  var out = document.getElementById('addUserResult');
+  var pw = document.getElementById('new_user_pw').value;
+  if (pw.length < 6) { pwMessage(out, __t('At least 6 characters'), false); return; }
+  if (pw !== document.getElementById('new_user_pw2').value) { pwMessage(out, __t('The passwords differ'), false); return; }
+  try {
+    await api('/create-user', 'POST', {
+      email: document.getElementById('new_user_email').value.trim(), password: pw,
+      isAdmin: document.getElementById('new_user_admin').checked,
+      dashboardAccess: document.getElementById('new_user_dash').checked
+    });
+    document.getElementById('new_user_email').value = '';
+    document.getElementById('new_user_pw').value = '';
+    document.getElementById('new_user_pw2').value = '';
+    pwMessage(out, __t('User added'), true);
+    loadUsers();
+  } catch (e) { pwMessage(out, e.message, false); }
 }
 // Refresh uptime every 30s
 setInterval(async function() {
@@ -7393,12 +7547,42 @@ async function firstTimeCloudImport() {
   }
 }
 
-async function skipSetup() {
+function skipSetup() {
+  document.getElementById('localForm').style.display = '';
+  document.getElementById('localBtn').style.display = 'none';
+  document.getElementById('local_email').focus();
+}
+
+// The owner's own first account (GH #164); it used to be admin@local / admin.
+async function createLocalAccount() {
+  var email = document.getElementById('local_email').value.trim();
+  var pass = document.getElementById('local_pass').value;
+  var result = document.getElementById('localResult');
+  var fail = function(msg) { result.innerHTML = '<p style="color:#ef4444;font-size:12px">' + escHtml(msg) + '</p>'; };
+  if (pass !== document.getElementById('local_pass2').value) { fail(__t('The passwords differ')); return; }
+  var btn = document.getElementById('localCreateBtn');
+  btn.disabled = true;
   try {
-    await fetch('/api/setup/skip', {method:'POST'});
-    await modalAlert('Account Created', __t('Email: <b>{email}</b><br>Password: <b>{pass}</b>', { email: 'admin@local', pass: 'admin' }));
+    var res = await fetch('/api/setup/skip', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email: email, password: pass })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || !data.ok) { fail(data.error || __t('Failed: {msg}', { msg: res.status })); btn.disabled = false; return; }
+    var loginRes = await fetch('/api/nova-user/appUser/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email: email, password: pass })
+    });
+    var loginData = await loginRes.json();
+    var newToken = loginData.value && loginData.value.accessToken;
+    if (newToken) {
+      token = newToken;
+      localStorage.setItem('admin_token', token);
+      showApp();
+      return;
+    }
     location.reload();
-  } catch(e) { modalAlert('Failed', e.message); }
+  } catch(e) { fail(e.message); btn.disabled = false; }
 }
 
 // ── Remote Debug relay ──
@@ -7424,6 +7608,7 @@ function rsAuthHeaders(extra) {
   return h;
 }
 async function rsRefreshStatus() {
+  if (!token) return;   // logged out: no session to ask about (it polled a 401 every 2 s)
   var r = await fetch('/api/remote-support/status', { headers: rsAuthHeaders() }).then(function(x) { return x.json(); }).catch(function() { return { enabled: false, pendingRequest: null }; });
   var t = document.getElementById('rsToggle');
   if (t) t.checked = !!r.enabled;

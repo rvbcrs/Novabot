@@ -1167,6 +1167,17 @@
       "notPlaced": "Pas encore placée : Carte › Affichage › Photo de drone › Placer",
       "none": "Pas encore de photo de drone pour cette tondeuse.",
       "copyFrom": "Reprendre de {{name}}"
+    },
+    "accounts": {
+      "title": "Compte",
+      "help": "Change le mot de passe du compte avec lequel tu es connecté. Les utilisateurs se gèrent sur la page d'admin.",
+      "changePassword": "Changer le mot de passe",
+      "currentPassword": "Mot de passe actuel",
+      "newPassword": "Nouveau mot de passe",
+      "repeatPassword": "Répète le nouveau mot de passe",
+      "tooShort": "Au moins {{n}} caractères",
+      "mismatch": "Les nouveaux mots de passe diffèrent",
+      "passwordChanged": "Mot de passe modifié"
     }
   },
   "ai": {

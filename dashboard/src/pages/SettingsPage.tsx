@@ -5,7 +5,7 @@ import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
   CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, Bug, ExternalLink, Box,
-  Image as ImageIcon, Upload, Trash2, Copy, Route,
+  Image as ImageIcon, Upload, Trash2, Copy, Route, Users,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -13,7 +13,7 @@ import {
   updateMowerNickname, sendCommand, setSensorOverride, softRestartMower,
   fetchRainSettings, updateRainSettings, type RainSettings,
   setMaxSpeed, setChargeThreshold, rebootMower, fetchDeviceSettings,
-  previewDockChannelRepair, applyDockChannelRepair,
+  previewDockChannelRepair, applyDockChannelRepair, getToken,
 } from '../api/client';
 import { readWeekStart, writeWeekStart, type WeekStart } from '../utils/weekStart';
 import { readTimeFormat, writeTimeFormat, type TimeFormat } from '../utils/timeFormat';
@@ -23,6 +23,7 @@ import { readExperimental, writeExperimental } from '../utils/experimental';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
 import { useDialog } from '../components/common/Dialog';
+import { AccountsPanel } from '../components/settings/AccountsPanel';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 import {
   isUnsupportedFirmwareError, getServerVersion, fetchRenderSettings, saveRenderSettings,
@@ -51,6 +52,12 @@ export function SettingsPage({ mower }: Props) {
         <ExperimentalCard />
         <RainAutoPauseCard key={`rain-${mower.sn}`} sn={mower.sn} />
         <NotificationsCard />
+        {/* Only when logged in (from outside): on the LAN the dashboard knows no user. */}
+        {getToken() && (
+          <SettingCard icon={Users} title={t('settings.accounts.title', 'Account')} help={t('settings.accounts.help')}>
+            <AccountsPanel />
+          </SettingCard>
+        )}
         <DronePhotoCard key={`drone-${mower.sn}`} sn={mower.sn} />
         <GardenRenderCard />
         <HelpCard mower={mower} />

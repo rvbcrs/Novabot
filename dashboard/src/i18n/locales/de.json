@@ -1167,6 +1167,17 @@
       "notPlaced": "Noch nicht platziert: Karte › Ansicht › Drohnenfoto › Platzieren",
       "none": "Noch kein Drohnenfoto für diesen Mäher.",
       "copyFrom": "Von {{name}} übernehmen"
+    },
+    "accounts": {
+      "title": "Konto",
+      "help": "Ändere das Passwort des Kontos, mit dem du angemeldet bist. Benutzer verwaltest du auf der Admin-Seite.",
+      "changePassword": "Passwort ändern",
+      "currentPassword": "Aktuelles Passwort",
+      "newPassword": "Neues Passwort",
+      "repeatPassword": "Neues Passwort wiederholen",
+      "tooShort": "Mindestens {{n}} Zeichen",
+      "mismatch": "Die neuen Passwörter stimmen nicht überein",
+      "passwordChanged": "Passwort geändert"
     }
   },
   "ai": {

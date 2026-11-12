@@ -1692,3 +1692,31 @@ export async function clearMowerError(sn: string): Promise<{
   });
   return res.json().catch(() => ({ ok: false, error: `${res.status}` }));
 }
+
+// ── Accounts (GH #164) ──────────────────────────────────────────────────────
+// Who is logged in comes from the app login (JWT). On the LAN the dashboard
+// needs no login; managing users is on the admin page.
+
+export interface Me { email: string; isAdmin: boolean }
+
+/** The logged-in account, or null without a (valid) login. */
+export async function fetchMe(): Promise<Me | null> {
+  if (!getToken()) return null;
+  try {
+    const res = await apiFetch('/api/nova-user/appUser/appUserInfo');
+    const body = await res.json() as { success?: boolean; value?: { email?: string; isAdmin?: boolean } };
+    return body.success && body.value?.email ? { email: body.value.email, isAdmin: body.value.isAdmin === true } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Change the logged-in account's own password. Throws with the server's message. */
+export async function changeOwnPassword(oldPassword: string, newPassword: string): Promise<void> {
+  const res = await apiFetch('/api/nova-user/appUser/appUserPwdUpdate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ oldPassword, newPassword }),
+  });
+  const body = await res.json().catch(() => null) as { success?: boolean; message?: string } | null;
+  if (!body?.success) throw new Error(body?.message || `${res.status}`);
+}

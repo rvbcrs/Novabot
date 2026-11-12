@@ -55,6 +55,7 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { v4 as uuidv4 } from 'uuid';
+import { createFirstAdmin } from '../services/firstAdmin.js';
 import { mirrorScheduleToPlan, removePlanForSchedule } from '../services/scheduleMirror.js';
 import { getActiveAdvertisement, getCompetingServers } from '../services/mdnsAdvertiser.js';
 import { getDeviceHealth } from '../services/deviceHealth.js';
@@ -533,22 +534,10 @@ dashboardRouter.post('/bind-device', async (req: Request, res: Response) => {
   const { sn, name } = req.body as { sn?: string; name?: string };
   if (!sn || typeof sn !== 'string') { res.status(400).json({ ok: false, error: 'sn required' }); return; }
 
-  // Haal de enige gebruiker op — maak er één aan als die niet bestaat
-  let user = userRepo.findFirst();
-  if (!user) {
-    const bcrypt = await import('bcrypt');
-    const appUserId = `local_${Date.now()}`;
-    const hash = await bcrypt.hash('admin', 10);
-    userRepo.createIfMissing(appUserId, 'admin@local', hash, 'admin');
-    user = userRepo.findFirst();
-    if (!user) { res.status(500).json({ ok: false, error: T`Kon gebruiker niet aanmaken` }); return; }
-    // Same is_admin gap as setup.ts /skip — createIfMissing skips the
-    // is_admin column. Flip it on the actual stored row so the admin
-    // page works on the very first login after a factory reset.
-    userRepo.setRole(user.app_user_id, 'is_admin', true);
-    userRepo.setRole(user.app_user_id, 'dashboard_access', true);
-    console.log(`[dashboard] bind-device: auto-created local admin account`);
-  }
+  // Devices belong to the owner's account. It used to make admin@local with
+  // password "admin" here; the dashboard asks for an account first (GH #164).
+  const user = userRepo.findFirst();
+  if (!user) { res.status(409).json({ ok: false, error: T`Maak eerst een account aan.` }); return; }
 
   const isCharger = sn.startsWith('LFIC');
   const existing = equipmentRepo.findBySn(sn);
@@ -6780,28 +6769,12 @@ dashboardRouter.get('/setup/status', (_req: Request, res: Response) => {
 });
 
 // POST /api/dashboard/setup/create-user — maak de eerste gebruiker aan (alleen als DB leeg is)
-dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) => {
-  const T = reqT(req);
-  const { email, password, username } = req.body as { email?: string; password?: string; username?: string };
-
-  if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
-    res.status(400).json({ ok: false, error: T`Email en wachtwoord zijn verplicht` });
-    return;
-  }
-
-  const count = userRepo.count();
-  if (count > 0) {
-    res.status(409).json({ ok: false, error: T`Er bestaat al een gebruiker. Gebruik de inlogpagina.` });
-    return;
-  }
-
-  const bcrypt = await import('bcrypt');
-  const hash = await bcrypt.hash(password, 10);
-  const appUserId = uuidv4();
-
-  userRepo.create(appUserId, email.trim().toLowerCase(), hash, username?.trim() ?? '');
-
-  console.log(`[SETUP] Eerste gebruiker aangemaakt: ${email}`);
+dashboardRouter.post('/setup/create-user', (req: Request, res: Response) => {
+  const { email, password, username } = req.body as { email?: unknown; password?: unknown; username?: unknown };
+  // The first user is the admin (GH #164): before, it was not, and nobody
+  // could manage users.
+  const result = createFirstAdmin(reqT(req), email, password, typeof username === 'string' ? username : '');
+  if (!result.ok) { res.status(result.status).json({ ok: false, error: result.error }); return; }
   res.json({ ok: true });
 });
 

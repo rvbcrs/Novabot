@@ -1455,6 +1455,17 @@
       "notPlaced": "Nog niet geplaatst: Kaart › Weergave › Dronefoto › Plaatsen",
       "none": "Nog geen dronefoto voor deze maaier.",
       "copyFrom": "Overnemen van {{name}}"
+    },
+    "accounts": {
+      "title": "Account",
+      "help": "Wijzig het wachtwoord van het account waarmee je bent ingelogd. Gebruikers beheer je op de adminpagina.",
+      "changePassword": "Wachtwoord wijzigen",
+      "currentPassword": "Huidig wachtwoord",
+      "newPassword": "Nieuw wachtwoord",
+      "repeatPassword": "Herhaal nieuw wachtwoord",
+      "tooShort": "Minstens {{n}} tekens",
+      "mismatch": "De nieuwe wachtwoorden verschillen",
+      "passwordChanged": "Wachtwoord gewijzigd"
     }
   },
   "ai": {

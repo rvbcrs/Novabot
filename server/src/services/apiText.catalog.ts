@@ -476,11 +476,6 @@ export const CATALOG: Catalog = {
     fr: "Un canal doit commencer dans une zone de travail et finir dans une autre ; une extrémité est actuellement hors de toute zone.",
     de: "Ein Kanal muss in einem Arbeitsbereich beginnen und in einem anderen enden; ein Ende liegt jetzt außerhalb aller Bereiche.",
   },
-  "Email en wachtwoord zijn verplicht": {
-    en: "Email and password are required",
-    fr: "L'e-mail et le mot de passe sont obligatoires",
-    de: "E-Mail und Passwort sind erforderlich",
-  },
   "Er bestaat al een gebruiker. Gebruik de inlogpagina.": {
     en: "A user already exists. Use the login page.",
     fr: "Un utilisateur existe déjà. Utilisez la page de connexion.",
@@ -596,6 +591,11 @@ export const CATALOG: Catalog = {
     fr: "La station de charge n'a pas répondu (délai dépassé)",
     de: "Die Ladestation hat nicht geantwortet (Zeitüberschreitung)",
   },
+  "Maak eerst een account aan.": {
+    en: "Create an account first.",
+    fr: "Créez d'abord un compte.",
+    de: "Legen Sie zuerst ein Konto an.",
+  },
   "Er moet minstens één beheerder blijven": {
     en: "At least one admin must remain",
     fr: "Au moins un administrateur doit rester",
@@ -670,11 +670,6 @@ export const CATALOG: Catalog = {
     en: "Could not run the backup gate",
     fr: "Impossible d'exécuter la vérification de sauvegarde",
     de: "Die Backup-Prüfung konnte nicht ausgeführt werden",
-  },
-  "Kon gebruiker niet aanmaken": {
-    en: "Could not create user",
-    fr: "Impossible de créer l'utilisateur",
-    de: "Benutzer konnte nicht erstellt werden",
   },
   "Kon geen backup maken voor {0} terwijl er kaarten zijn, dus het flashen is geblokkeerd. Forceer alleen als je accepteert dat de kaarten niet geback-upt zijn.": {
     en: "Could not make a backup for {0} while there are maps, so flashing is blocked. Force only if you accept that the maps are not backed up.",

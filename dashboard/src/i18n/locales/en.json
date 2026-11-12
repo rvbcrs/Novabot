@@ -1248,6 +1248,17 @@
       "notPlaced": "Not placed yet: Map › View › Drone photo › Place",
       "none": "No drone photo for this mower yet.",
       "copyFrom": "Copy from {{name}}"
+    },
+    "accounts": {
+      "title": "Account",
+      "help": "Change the password of the account you are logged in with. Users are managed on the admin page.",
+      "changePassword": "Change password",
+      "currentPassword": "Current password",
+      "newPassword": "New password",
+      "repeatPassword": "Repeat new password",
+      "tooShort": "At least {{n}} characters",
+      "mismatch": "The new passwords differ",
+      "passwordChanged": "Password changed"
     }
   },
   "ai": {

@@ -23,6 +23,7 @@ import { importCloudWorkRecords } from '../services/cloudWorkRecordsImport.js';
 import { markFrameUnvalidated } from '../services/frameValidation.js';
 import { SERVER_VERSION } from '../services/serverVersion.js';
 import { reqT } from '../services/serverText.js';
+import { createFirstAdmin } from '../services/firstAdmin.js';
 // LFI cloud helpers were extracted to `src/services/lfiCloud.ts` on 2026-04-23
 // so cloud-api routes can import them without reaching into `routes/setup.ts`
 // (the cloud-api freeze forbids that direction). Re-export here so existing
@@ -645,31 +646,13 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
 
 // ── POST /skip — create local account without cloud import ───────────────────
 
-setupRouter.post('/skip', async (req: Request, res: Response) => {
+setupRouter.post('/skip', (req: Request, res: Response) => {
+  // The owner's own account (GH #164): no more admin@local with password "admin".
   const T = reqT(req);
-  try {
-    const bcrypt = await import('bcrypt');
-    const hashedPwd = await bcrypt.hash('admin', 10);
-    const appUserId = `local_${Date.now()}`;
-
-    userRepo.createIfMissing(appUserId, 'admin@local', hashedPwd, 'admin');
-    // createIfMissing leaves is_admin at the column default (0) — without
-    // this the adminMiddleware would reject the very first request after
-    // login and the admin UI bounces right back to the login screen.
-    // Lookup the actual user row (the appUserId above is fresh, but the
-    // INSERT OR IGNORE may have kept an existing row with a different id)
-    // and flip is_admin / dashboard_access on whichever row matches.
-    const existing = userRepo.findByEmail('admin@local');
-    if (existing) {
-      userRepo.setRole(existing.app_user_id, 'is_admin', true);
-      userRepo.setRole(existing.app_user_id, 'dashboard_access', true);
-    }
-
-    invalidateSetupCache();
-    res.json({ ok: true, message: T`Lokaal account aangemaakt. Koppel je maaier via de Novabot-app.` });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: String(err) });
-  }
+  const { email, password } = req.body as { email?: unknown; password?: unknown };
+  const result = createFirstAdmin(T, email, password);
+  if (!result.ok) { res.status(result.status).json({ ok: false, error: result.error }); return; }
+  res.json({ ok: true, email: result.email, message: T`Lokaal account aangemaakt. Koppel je maaier via de Novabot-app.` });
 });
 
 // ── GET /devices ─────────────────────────────────────────────────────────────
