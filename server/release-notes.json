@@ -1,6 +1,33 @@
 {
   "releases": [
     {
+      "version": "2026.1112.2320",
+      "date": "2026-11-12",
+      "sections": {
+        "dashboard": [
+          "The service worker fetches from the network first, so an update no longer leaves a blank page"
+        ],
+        "firmware": [
+          "Autosys_monitor's broker in sensor.json points at the OpenNova server, not the LFI cloud",
+          "A public address is never a server candidate and never written",
+          "One rule finds the OpenNova server and points every address on the mower at it",
+          "The broker resolver skips mqtt.lfibot.com when it resolves to a public address",
+          "The dock measurement lights the pattern at 30, not full"
+        ],
+        "server": [
+          "Winter sleep — no schedule starts until it ends, optionally on a wake date",
+          "No 'sent home manually' popup while leaving the dock; no error banner for the 140 of a map push (GH #163, #171)",
+          "Manage users on the admin page; the first account is the owner's own admin (GH #164)",
+          "Admin can add local users; the user list no longer sends password hashes (GH #164)",
+          "No 'Process crashed' push for the error 140 of our own map push (GH #171)",
+          "A mow started through mow_zone gets the saved obstacle avoidance (GH #167)",
+          "A refused install whose files stayed unchanged releases map_install_pending",
+          "A long map read no longer fails the apply, and a cancelled task is not busy",
+          "A docking timeout says so, and the server waits for the mower's own reason"
+        ]
+      }
+    },
+    {
       "version": "2026.1024.0808",
       "date": "2026-10-24",
       "sections": {
@@ -187,18 +214,6 @@
         ],
         "server": [
           "Check the current hour too"
-        ]
-      }
-    },
-    {
-      "version": "2026.1011.2012",
-      "date": "2026-10-11",
-      "sections": {
-        "dashboard": [
-          "No mowing direction for an edge cut, readable zone route errors"
-        ],
-        "firmware": [
-          "An edge cut reaches a zone that touches the last one"
         ]
       }
     }
