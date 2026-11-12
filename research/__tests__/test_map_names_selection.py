@@ -15,12 +15,13 @@ import types
 
 # mow_zone_drive imports rclpy and the mower's ROS messages at module level;
 # stub them so the pure selection helpers can be checked off the mower.
-for name in ["rclpy", "rclpy.node", "rclpy.action", "rclpy.qos",
+for name in ["rclpy", "rclpy.node", "rclpy.action", "rclpy.qos", "rclpy.time",
              "rcl_interfaces", "rcl_interfaces.srv", "rcl_interfaces.msg",
              "decision_msgs", "decision_msgs.srv", "decision_msgs.msg",
              "std_msgs", "std_msgs.msg", "std_srvs", "std_srvs.srv",
              "geometry_msgs", "geometry_msgs.msg",
              "nav_msgs", "nav_msgs.msg", "nav2_msgs", "nav2_msgs.action",
+             "nav2_msgs.srv",
              "coverage_planner", "coverage_planner.action", "action_msgs",
              "action_msgs.msg", "tf2_ros", "builtin_interfaces",
              "builtin_interfaces.msg"]:
@@ -30,8 +31,9 @@ for mod, attrs in {
     "decision_msgs.msg": ["RobotStatus"],
     "std_srvs.srv": ["Trigger", "SetBool", "Empty"],
     "geometry_msgs.msg": ["PoseStamped", "PointStamped", "Point", "Twist"],
-    "nav_msgs.msg": ["Path", "Odometry"],
+    "nav_msgs.msg": ["Path", "Odometry", "OccupancyGrid"],
     "nav2_msgs.action": ["FollowPath", "NavigateToPose"],
+    "nav2_msgs.srv": ["LoadMap"],
     "coverage_planner.action": ["NavigateThroughCoveragePaths"],
     "action_msgs.msg": ["GoalStatus"],
     "builtin_interfaces.msg": ["Duration"],
@@ -47,6 +49,8 @@ for mod, attrs in {
 # stub moet echte attributen hebben in plaats van een kale klasse.
 sys.modules["rclpy.qos"].QoSHistoryPolicy = type("QoSHistoryPolicy", (), {"KEEP_LAST": 1, "KEEP_ALL": 0})
 sys.modules["rclpy.qos"].QoSProfile = lambda **kw: kw
+sys.modules["rclpy.qos"].QoSReliabilityPolicy = type("QoSReliabilityPolicy", (), {"RELIABLE": 1, "BEST_EFFORT": 2})
+sys.modules["rclpy.qos"].QoSDurabilityPolicy = type("QoSDurabilityPolicy", (), {"TRANSIENT_LOCAL": 1, "VOLATILE": 2})
 sys.modules["rclpy"].node = sys.modules["rclpy.node"]
 setattr(sys.modules["rclpy.node"], "Node", type("Node", (), {}))
 setattr(sys.modules["rclpy.action"], "ActionClient", type("ActionClient", (), {}))
@@ -89,6 +93,49 @@ def test_names_carry_the_yaml_extension():
     # The bare name is what produced error 118; access() needs the real file.
     for name in mzd.map_names_for(100000) + mzd.map_names_for(1000000):
         assert name.endswith(".yaml"), name
+
+
+class _Req:
+    pass
+
+
+class _Future:
+    def result(self):
+        return types.SimpleNamespace(result=True)
+
+
+class _Client:
+    sent = []
+
+    def wait_for_service(self, timeout_sec):
+        return True
+
+    def call_async(self, req):
+        _Client.sent.append(req)
+        return _Future()
+
+
+def _start_cov(perception):
+    mzd.StartCoverageTask = types.SimpleNamespace(Request=_Req)
+    mzd.rclpy.spin_until_future_complete = lambda *a, **k: None
+    drv = mzd.Driver.__new__(mzd.Driver)
+    drv.node = types.SimpleNamespace(create_client=lambda *a: _Client())
+    drv.perception_level = perception
+    _Client.sent.clear()
+    assert drv.start_cov(1000, 2, None)
+    return _Client.sent[0]
+
+
+def test_saved_obstacle_avoidance_reaches_the_coverage_task():
+    # GH #167: without specify_perception_level robot_decision keeps whatever
+    # the last task left, so a Low chosen in the app never reached the mow.
+    req = _start_cov(1)
+    assert req.specify_perception_level is True and req.perception_level == 1
+
+
+def test_no_saved_setting_leaves_the_task_as_before():
+    req = _start_cov(None)
+    assert not hasattr(req, "specify_perception_level")
 
 
 if __name__ == "__main__":

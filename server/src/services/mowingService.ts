@@ -17,6 +17,7 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
+import { selectObstacleDetectionLevel } from './obstacleDetectionCadence.js';
 import { getMowingAreaErrorMsg, mowerSwVersion } from './mowingArea.js';
 import { customBuildNumber } from './firmwareAdvisory.js';
 import { freshPositionState } from './positionTelemetry.js';
@@ -380,6 +381,14 @@ export const EDGE_OBSTACLE_LEVEL_KEY = 'edge_obstacle_level';
 export function edgeObstacleLevel(sn: string): number {
   const row = deviceSettingsRepo.findBySn(sn).find(r => r.key === EDGE_OBSTACLE_LEVEL_KEY);
   return row?.value === '1' ? 1 : 0;
+}
+
+/** The saved obstacle avoidance (1 Low/detection, 2 Medium, 3 High), or null
+ *  when never set. It is perception_level 1:1. mow_zone starts coverage itself
+ *  (StartCoverageTask) and must pass it: without specify_perception_level the
+ *  mower keeps whatever the last task left (GH #167). */
+export function mowPerceptionLevel(sn: string): number | null {
+  return selectObstacleDetectionLevel(deviceSettingsRepo.findBySn(sn));
 }
 
 /** device_settings key: '1' = an edge cut after every finished mow. The custom

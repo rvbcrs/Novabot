@@ -86,7 +86,7 @@ import { startDockReturn, dockReturn } from '../services/dockReturnCycle.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { deriveMowerActivity } from '../mqtt/mowerActivity.js';
-import { MOW_PARA_SETTLE_MS, edgeObstacleLevel, startEdgeCuts } from '../services/mowingService.js';
+import { MOW_PARA_SETTLE_MS, edgeObstacleLevel, mowPerceptionLevel, startEdgeCuts } from '../services/mowingService.js';
 import { startPatrol, stopPatrol, readPatrolSettings, alertKinds } from '../services/patrolService.js';
 import { planPatrol } from '../services/patrolPlan.js';
 import { withPatrolOutcome } from '../services/patrolRuns.js';
@@ -4842,6 +4842,12 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   const edge = command.start_edge_cut as Record<string, unknown> | undefined;
   if (edge && typeof edge === 'object' && edge.obstacleLevel === undefined && edgeObstacleLevel(sn) === 1) {
     edge.obstacleLevel = 1;
+  }
+  // GH #167: a mow started through mow_zone gets the saved obstacle avoidance.
+  const zone = command.mow_zone as Record<string, unknown> | undefined;
+  if (zone && typeof zone === 'object' && !zone.edge && zone.perceptionLevel === undefined) {
+    const level = mowPerceptionLevel(sn);
+    if (level != null) zone.perceptionLevel = level;
   }
   publishExtendedCommand(sn, command);
   res.json({ ok: true, command: Object.keys(command)[0] });

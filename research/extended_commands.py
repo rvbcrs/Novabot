@@ -1939,6 +1939,14 @@ def handle_mow_zone(params, respond):
         respond("mow_zone_status", {"phase": "error", "error": "invalid_map"}); return
     cutterhigh = int(params.get("cutterhigh", 2))
     direction = params.get("direction", None)
+    # GH #167: the saved obstacle avoidance (1 Low/detection .. 3 High), passed
+    # to StartCoverageTask; absent from an older server, then "-" keeps the
+    # mower's own setting as before.
+    try:
+        perception = int(params.get("perceptionLevel"))
+        p_arg = str(perception) if 1 <= perception <= 3 else "-"
+    except (TypeError, ValueError):
+        p_arg = "-"
     # edge (#148): the same departure and transit, then the edge cut of that
     # zone (start_edge_cut) instead of coverage.
     edge = bool(params.get("edge", False))
@@ -1995,10 +2003,10 @@ def handle_mow_zone(params, respond):
         # "Failed to make progress". mow_zone_drive.py keeps its shm footprint
         # tiny (throwaway tf-probe node, depth-1 pubs) so it no longer exhausts
         # the iceoryx pool.
-        'exec stdbuf -oL python3 "$1" "$2" "$3" "$4" "$5" "$6"'
+        'exec stdbuf -oL python3 "$1" "$2" "$3" "$4" "$5" "$6" "$7"'
     )
     argv = ["bash", "-c", wrapper, "mow_zone", drive_script, "edge" if edge else "mow",
-            to_slot, str(int(map_ids)), str(int(cutterhigh)), d_arg]
+            to_slot, str(int(map_ids)), str(int(cutterhigh)), d_arg, p_arg]
 
     def _run():
         terminal_seen = False

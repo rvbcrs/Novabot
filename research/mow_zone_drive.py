@@ -400,6 +400,9 @@ def fetch_snapshot(topic, timeout=25.0):
 class Driver:
     def __init__(self, node):
         self.node = node
+        # StartCoverageTask perception_level (1..3) for start_cov, or None to
+        # keep the mower's own setting (GH #167).
+        self.perception_level = None
         # Minimal shm footprint: NO persistent tf listener. Its /tf + /tf_static
         # subscriptions, under the mower's shm config (16-deep history, 128-deep
         # queue, 4MB chunks), were the chunk hogs that exhausted the 50-chunk
@@ -957,6 +960,12 @@ class Driver:
             req.blade_heights = [int(cutterhigh)]
         req.specify_direction = direction is not None
         req.cov_direction = int(direction) if direction is not None else 0
+        # Without specify_perception_level robot_decision never calls
+        # setPerceptionLevel: the mow kept whatever the last task left, so a
+        # Low chosen in the app did not reach a mow_zone mow (GH #167).
+        if self.perception_level is not None:
+            req.specify_perception_level = True
+            req.perception_level = int(self.perception_level)
         fut = cli.call_async(req)
         rclpy.spin_until_future_complete(self.node, fut, timeout_sec=15.0)
         r = fut.result()
@@ -2712,10 +2721,12 @@ def run(drv, args):
                     rc = do_mow(drv, args[1], int(args[2]), int(args[3]), None, edge=True)
             elif mode == "mow":
                 if len(args) < 5:
-                    phase("error", "usage: mow_zone_drive.py mow <to_slot> <map_ids> <cutterhigh> <direction|->")
+                    phase("error", "usage: mow_zone_drive.py mow <to_slot> <map_ids> <cutterhigh> <direction|-> [perception|-]")
                 elif not re.fullmatch(r"map\d+", args[1]):
                     phase("error", "invalid_map")
                 else:
+                    if len(args) > 5 and args[5] in ("1", "2", "3"):
+                        drv.perception_level = int(args[5])
                     rc = do_mow(drv, args[1], int(args[2]), int(args[3]),
                                 None if args[4] == "-" else int(args[4]))
             elif mode == "probe":

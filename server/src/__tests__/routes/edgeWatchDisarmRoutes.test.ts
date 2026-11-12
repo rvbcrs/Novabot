@@ -236,6 +236,25 @@ describe('mowing area limit at both command entry points (#114)', () => {
     expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/EDGE_LOW',
       { start_edge_cut: { mapName: 'map0', bladeHeight: 40, obstacleLevel: 1 } });
   });
+
+  // GH #167: mow_zone starts coverage itself, so the saved obstacle avoidance
+  // has to travel with it or the mower keeps whatever the last task left.
+  it('adds the saved obstacle avoidance to a mow_zone', async () => {
+    deviceSettingsRepo.upsert('ZONE_LOW', 'obstacle_avoidance_sensitivity', '1');
+    const r = await request(server).post('/api/dashboard/extended/ZONE_LOW')
+      .send({ mow_zone: { map: 'map0', cutterhigh: 2 } });
+    expect(r.status).toBe(200);
+    expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/ZONE_LOW',
+      { mow_zone: { map: 'map0', cutterhigh: 2, perceptionLevel: 1 } });
+  });
+
+  it('leaves a mow_zone alone when no obstacle avoidance was ever saved, and an edge one always', async () => {
+    await request(server).post('/api/dashboard/extended/ZONE_UNSET').send({ mow_zone: { map: 'map0' } });
+    expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/ZONE_UNSET', { mow_zone: { map: 'map0' } });
+    deviceSettingsRepo.upsert('ZONE_EDGE', 'obstacle_avoidance_sensitivity', '3');
+    await request(server).post('/api/dashboard/extended/ZONE_EDGE').send({ mow_zone: { map: 'map0', edge: true } });
+    expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/ZONE_EDGE', { mow_zone: { map: 'map0', edge: true } });
+  });
 });
 
 /** Maak een schema dat NU aan de beurt is (echte klok) met vandaag als
