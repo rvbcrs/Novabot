@@ -24,7 +24,9 @@ describe('SQLite datetime("now") parsing (issue #13 regression)', () => {
     // The drift magnitude equals the local timezone offset. Compare via
     // |drift| so the assertion holds in UTC (CI runner) where Object.is
     // distinguishes +0 from -0 and would otherwise fail this test.
-    const expectedDriftMs = Math.abs(new Date().getTimezoneOffset()) * 60_000;
+    // The offset ON that date (April: summer time), not today's: with today's
+    // the test failed every winter (CET +1 h against CEST +2 h).
+    const expectedDriftMs = Math.abs(buggy.getTimezoneOffset()) * 60_000;
     expect(Math.abs(driftMs)).toBe(expectedDriftMs);
   });
 
