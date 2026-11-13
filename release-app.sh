@@ -1,7 +1,9 @@
 #!/bin/bash
-# release-app.sh — Build the OpenNova Android APK and write a release
-# manifest. Both files end up in dist/app-release/. You upload them
-# manually to the central NAS host (https://downloads.ramonvanbruggen.nl/app/).
+# release-app.sh — Release the OpenNova app:
+#   1. build the Android APK and its release manifest (dist/app-release/),
+#   2. publish both to the NAS behind https://downloads.ramonvanbruggen.nl/app/
+#      (APK first, manifest last, then the live manifest is checked),
+#   3. build the iOS app and upload it to TestFlight (app/scripts/build-testflight.sh).
 #
 # The app polls https://downloads.ramonvanbruggen.nl/app/manifest.json directly,
 # so there is no per-server endpoint and no Docker image bloat.
@@ -9,11 +11,15 @@
 # Usage:
 #   1. Bump app/app.json expo.version (semver).
 #   2. ./release-app.sh
-#   3. Drag dist/app-release/{manifest.json, opennova-vX.Y.Z.apk} to the NAS.
+#   3. Tag app-vX.Y.Z AFTER the script (the release notes run from the last app-v* tag).
+#
+# Skip a step: SKIP_UPLOAD=1 (APK stays local), SKIP_TESTFLIGHT=1.
 #
 # Prerequisites:
 #   - eas-cli installed (npm install -g eas-cli) — used in --local mode, no credits.
 #   - JDK 17+ and Android SDK on PATH.
+#   - Upload: SSH_USER / SSH_PASS for the NAS (192.168.0.247) in the environment, sshpass.
+#   - TestFlight: Xcode (release, not beta) signed in under Settings > Accounts, CocoaPods.
 set -e
 . "$(dirname "$0")/tools/quiet-build.sh"
 
@@ -130,6 +136,57 @@ echo "Built v${VERSION}:"
 echo "  APK:      ${APK_OUT} ($(du -h "${APK_OUT}" | awk '{print $1}'))"
 echo "  Manifest: ${OUT_DIR}/manifest.json"
 echo "  SHA256:   ${SHA}"
+
+# ── Publish to the NAS ───────────────────────────────────────────────────────
+# The download container serves this host folder as /app/ (shared/app is
+# world-writable, so no docker cp). Each file goes to <name>.part and is moved
+# into place, so the app never sees half a file; the manifest goes last, so it
+# never points at an APK that is not there yet.
+NAS_HOST="192.168.0.247"
+NAS_APP_DIR="/volume1/Main-Storage/AppData/everydrop/shared/app"
+MANIFEST_URL="https://downloads.ramonvanbruggen.nl/app/manifest.json"
+
+nas_put() {  # nas_put <local file> <name on the share>
+  sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$SSH_USER@$NAS_HOST" \
+    "cat > '$NAS_APP_DIR/$2.part' && mv '$NAS_APP_DIR/$2.part' '$NAS_APP_DIR/$2' && chmod 644 '$NAS_APP_DIR/$2' && sha256sum '$NAS_APP_DIR/$2'" \
+    < "$1" 2>/dev/null | awk '{print $1}'
+}
+
+if [ "${SKIP_UPLOAD:-}" = "1" ]; then
+  echo "SKIP_UPLOAD=1: upload dist/app-release/{${APK_NAME},manifest.json} to the NAS yourself."
+else
+  if [ -z "${SSH_USER:-}" ] || [ -z "${SSH_PASS:-}" ] || ! command -v sshpass >/dev/null; then
+    echo "ERROR: SSH_USER/SSH_PASS (and sshpass) are needed to publish to the NAS; the APK is in ${OUT_DIR}." >&2
+    exit 1
+  fi
+  echo ""
+  echo "Publishing to the NAS..."
+  [ "$(nas_put "${APK_OUT}" "${APK_NAME}")" = "${SHA}" ] || { echo "ERROR: APK upload failed or checksum differs" >&2; exit 1; }
+  MSHA=$(shasum -a 256 "${OUT_DIR}/manifest.json" | awk '{print $1}')
+  [ "$(nas_put "${OUT_DIR}/manifest.json" manifest.json)" = "${MSHA}" ] || { echo "ERROR: manifest upload failed or checksum differs" >&2; exit 1; }
+  # The public side, through Cloudflare: cache-busted, so it is the file just written.
+  LIVE=$(curl -fsS "${MANIFEST_URL}?t=$(date +%s)" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version" 2>/dev/null || true)
+  if [ "$LIVE" != "$VERSION" ]; then
+    echo "ERROR: ${MANIFEST_URL} says '${LIVE}', expected ${VERSION}" >&2
+    exit 1
+  fi
+  echo "  Live: ${MANIFEST_URL} -> v${LIVE}"
+fi
+
+# ── iOS: TestFlight ──────────────────────────────────────────────────────────
+# Release Xcode, not the beta xcode-select may point at: App Store Connect
+# refuses uploads built with a beta SDK. CocoaPods needs a UTF-8 locale.
+if [ "${SKIP_TESTFLIGHT:-}" = "1" ]; then
+  echo "SKIP_TESTFLIGHT=1: no iOS build."
+else
+  echo ""
+  echo "Building iOS v${VERSION} for TestFlight..."
+  (
+    cd app
+    LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+      bash scripts/build-testflight.sh
+  )
+fi
+
 echo ""
-echo "Next: upload both files to the NAS folder behind"
-echo "      https://downloads.ramonvanbruggen.nl/app/"
+echo "Released app v${VERSION}."
