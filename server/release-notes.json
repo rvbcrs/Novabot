@@ -1,6 +1,21 @@
 {
   "releases": [
     {
+      "version": "2026.1113.1139",
+      "date": "2026-11-13",
+      "sections": {
+        "dashboard": [
+          "Firmware update from the banner opens a progress window like the app's"
+        ],
+        "app": [
+          "Winter-sleep wake dates are 4, 5 and 6 months ahead, not fixed spring months"
+        ],
+        "server": [
+          "Self-update recognises a container created from an image id (Container Studio)"
+        ]
+      }
+    },
+    {
       "version": "2026.1112.2320",
       "date": "2026-11-12",
       "sections": {
@@ -197,23 +212,6 @@
         "server": [
           "The last zone can be deleted, dock channel and all",
           "Judge a moved station by the RTK position, not the map position"
-        ]
-      }
-    },
-    {
-      "version": "2026.1013.1529",
-      "date": "2026-10-13",
-      "sections": {
-        "dashboard": [
-          "Offer a newer custom firmware build",
-          "Update the server from the banner"
-        ],
-        "app": [
-          "No stale mowing plan on the home map after a start",
-          "Edge cut from a dock beside the lawn; a stop reaches the zone drive (#142, #147)"
-        ],
-        "server": [
-          "Check the current hour too"
         ]
       }
     }
