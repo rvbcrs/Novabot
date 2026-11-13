@@ -147,7 +147,9 @@ NAS_APP_DIR="/volume1/Main-Storage/AppData/everydrop/shared/app"
 MANIFEST_URL="https://downloads.ramonvanbruggen.nl/app/manifest.json"
 
 nas_put() {  # nas_put <local file> <name on the share>
-  sshpass -p "$SSH_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 "$SSH_USER@$NAS_HOST" \
+  # Password via the environment (not argv); the host key is pinned on first use
+  # and a changed key is refused.
+  SSHPASS="$SSH_PASS" sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 "$SSH_USER@$NAS_HOST" \
     "cat > '$NAS_APP_DIR/$2.part' && mv '$NAS_APP_DIR/$2.part' '$NAS_APP_DIR/$2' && chmod 644 '$NAS_APP_DIR/$2' && sha256sum '$NAS_APP_DIR/$2'" \
     < "$1" 2>/dev/null | awk '{print $1}'
 }
