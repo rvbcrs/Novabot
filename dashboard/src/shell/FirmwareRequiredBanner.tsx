@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { fetchFirmwareAdvisory, fetchFirmwareUpdate, triggerOta, type FirmwareAdvisoryDto, type ReleaseNotesEntry } from '../api/client';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
+import { OtaProgressModal } from '../components/ota/OtaProgressModal';
 import { betaFirmwareWarningLines } from '../utils/betaFirmware';
 import { otaFinished, type OtaProgress } from '../hooks/useDevices';
 import { useNow, otaElapsed, useOtaPhaseLabel } from '../utils/otaPhase';
@@ -41,6 +42,9 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
   const [error, setError] = useState<string | null>(null);
   const [, setDismissTick] = useState(0);
   const [showNotes, setShowNotes] = useState(false);
+  // The progress window; it keeps from/target so it stays up to "done" after the
+  // banner itself is gone (the mower then runs the target).
+  const [progressFor, setProgressFor] = useState<{ sn: string; from: string; target: string } | null>(null);
 
   useEffect(() => {
     if (!sn) { setAdv(null); return; }
@@ -56,18 +60,21 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
     // A finished update changes the version: ask at once, not at the next poll
     // (the banner kept offering the build the mower had just installed).
   }, [sn, version]);
-  useEffect(() => { setState('idle'); setError(null); }, [sn]);
+  useEffect(() => { setState('idle'); setError(null); setProgressFor(null); }, [sn]);
   const session = otaProgress?.session;
   const phaseLabel = useOtaPhaseLabel(session);
   const elapsed = otaElapsed(useNow(!!session), session?.since);
 
-  if (!sn || !adv?.target) return null;
+  const progressModal = progressFor && progressFor.sn === sn && (
+    <OtaProgressModal sn={progressFor.sn} from={progressFor.from} target={progressFor.target} progress={otaProgress} onClose={() => setProgressFor(null)} />
+  );
+  if (!sn || !adv?.target) return progressModal || null;
   const target = adv.target;
   const required = adv.required;
   // What the builds since the mower's own bring, to read before updating; the
   // popup puts the "v" in front of a version itself.
   const notes: ReleaseNotesEntry[] = (adv.releases ?? []).map(r => ({ version: r.version.replace(/^v/, ''), date: '', sections: { firmware: r.notes } }));
-  if (!required && (!adv.updateAvailable || (state === 'idle' && dismissedVersion(sn) === target.version))) return null;
+  if (!required && (!adv.updateAvailable || (state === 'idle' && dismissedVersion(sn) === target.version))) return progressModal || null;
   const pct = otaProgress?.percentage ?? null;
   const flashing = session
     ? !otaFinished(otaProgress)
@@ -86,7 +93,7 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
     }
     setState('sending');
     const r = await triggerOta(sn, versionId, true).catch(() => ({ ok: false, error: 'network' } as { ok: boolean; error?: string; detail?: string }));
-    if (r.ok) { setState('started'); setError(null); }
+    if (r.ok) { setState('started'); setError(null); setProgressFor({ sn, from: adv.current ?? '', target: target.version }); }
     else { setState('error'); setError(r.detail || r.error || 'failed'); }
   };
 
@@ -118,6 +125,14 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
               className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium whitespace-nowrap transition-colors"
             >
               {t('releaseNotes.title')}
+            </button>
+          )}
+          {flashing && (
+            <button
+              onClick={() => setProgressFor({ sn, from: adv.current ?? '', target: target.version })}
+              className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium whitespace-nowrap transition-colors"
+            >
+              {t('otaModal.show')}
             </button>
           )}
           {!flashing && (
@@ -158,6 +173,14 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
             {t('releaseNotes.title')}
           </button>
         )}
+        {flashing && (
+          <button
+            onClick={() => setProgressFor({ sn, from: adv.current ?? '', target: target.version })}
+            className="px-3 py-1 rounded bg-red-800/70 hover:bg-red-700/70 text-white text-xs font-medium whitespace-nowrap"
+          >
+            {t('otaModal.show')}
+          </button>
+        )}
         {!flashing && (
           <button
             onClick={() => setConfirm(true)}
@@ -169,6 +192,7 @@ export function FirmwareRequiredBanner({ sn, version, charging, otaProgress }: {
         )}
       </div>
       )}
+      {progressModal}
       {showNotes && (
         <ReleaseNotesModal
           releases={notes}

@@ -1994,5 +1994,18 @@
     "banner": "Winterslaap. Er draait geen schema; handmatig maaien kan nog.",
     "bannerUntil": "Winterslaap tot {{date}}. Er draait geen schema; handmatig maaien kan nog.",
     "wake": "Wakker maken"
+  },
+  "otaModal": {
+    "updating": "Firmware bijwerken",
+    "restarting": "De maaier herstart",
+    "done": "Update voltooid",
+    "failed": "Update mislukt",
+    "rolledBack": "Update teruggedraaid",
+    "stalled": "De herstart komt niet",
+    "preparing": "Wachten op de maaier…",
+    "closeHint": "Dit duurt 20 tot 30 minuten. Je kunt dit venster sluiten; de update gaat door.",
+    "waitingHint": "De maaier installeert de update tijdens het herstarten. Dit duurt een paar minuten.",
+    "hide": "Verbergen",
+    "show": "Voortgang"
   }
 }

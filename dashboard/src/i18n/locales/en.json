@@ -1994,5 +1994,18 @@
     "banner": "Winter sleep. No schedule runs; you can still mow by hand.",
     "bannerUntil": "Winter sleep until {{date}}. No schedule runs; you can still mow by hand.",
     "wake": "Wake up"
+  },
+  "otaModal": {
+    "updating": "Updating firmware",
+    "restarting": "The mower is restarting",
+    "done": "Update complete",
+    "failed": "Update failed",
+    "rolledBack": "Update rolled back",
+    "stalled": "The reboot is not happening",
+    "preparing": "Waiting for the mower…",
+    "closeHint": "This takes 20 to 30 minutes. You can close this window; the update continues.",
+    "waitingHint": "The mower installs the update while it restarts. This takes a few minutes.",
+    "hide": "Hide",
+    "show": "Progress"
   }
 }

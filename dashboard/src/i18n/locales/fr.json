@@ -1994,5 +1994,18 @@
     "banner": "Hivernage. Aucun planning ne tourne ; la tonte manuelle reste possible.",
     "bannerUntil": "Hivernage jusqu’au {{date}}. Aucun planning ne tourne ; la tonte manuelle reste possible.",
     "wake": "Réveiller"
+  },
+  "otaModal": {
+    "updating": "Mise à jour du firmware",
+    "restarting": "La tondeuse redémarre",
+    "done": "Mise à jour terminée",
+    "failed": "Échec de la mise à jour",
+    "rolledBack": "Mise à jour annulée",
+    "stalled": "Le redémarrage n'a pas lieu",
+    "preparing": "En attente de la tondeuse…",
+    "closeHint": "Cela prend 20 à 30 minutes. Vous pouvez fermer cette fenêtre ; la mise à jour continue.",
+    "waitingHint": "La tondeuse installe la mise à jour en redémarrant. Cela prend quelques minutes.",
+    "hide": "Masquer",
+    "show": "Progression"
   }
 }

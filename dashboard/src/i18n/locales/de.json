@@ -1994,5 +1994,18 @@
     "banner": "Winterschlaf. Kein Zeitplan läuft; manuell mähen geht weiterhin.",
     "bannerUntil": "Winterschlaf bis {{date}}. Kein Zeitplan läuft; manuell mähen geht weiterhin.",
     "wake": "Aufwecken"
+  },
+  "otaModal": {
+    "updating": "Firmware wird aktualisiert",
+    "restarting": "Der Mäher startet neu",
+    "done": "Update abgeschlossen",
+    "failed": "Update fehlgeschlagen",
+    "rolledBack": "Update zurückgesetzt",
+    "stalled": "Der Neustart erfolgt nicht",
+    "preparing": "Warten auf den Mäher…",
+    "closeHint": "Das dauert 20 bis 30 Minuten. Sie können dieses Fenster schließen; das Update läuft weiter.",
+    "waitingHint": "Der Mäher installiert das Update beim Neustart. Das dauert einige Minuten.",
+    "hide": "Ausblenden",
+    "show": "Fortschritt"
   }
 }
