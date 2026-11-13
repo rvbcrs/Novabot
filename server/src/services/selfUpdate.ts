@@ -23,6 +23,7 @@ export const DOCKER_SOCKET = '/var/run/docker.sock';
 /** Pinned: a moving tag could change what runs with the Docker socket. */
 export const HELPER_IMAGE = { name: 'docker', tag: '27.5.1-cli' };
 const OPENNOVA_IMAGE = /^(docker\.io\/)?rvbcrs\/opennova(:|@|$)/;
+const IMAGE_ID = /^sha256:[0-9a-f]{64}$/;
 // Names that end up in the helper's shell command: compose's own character set.
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
 
@@ -75,25 +76,43 @@ export function ownContainerId(mountinfo: string, hostname: string): string | nu
   return /^[0-9a-f]{12}$/.test(hostname) ? hostname : null;
 }
 
-interface Plan { project: string; workdir: string; configFiles: string[]; services: string[] }
+interface Plan { project: string; workdir: string; configFiles: string[]; services: string[]; socket: string }
+
+/** The OpenNova image reference of a container: the name it was created with,
+ *  or for a container created from an image id (Container Studio does that)
+ *  the image's own tags and digests. Null when it is not OpenNova's. */
+async function openNovaRef(d: SelfUpdateDeps, name: string | undefined, imageId: string | undefined): Promise<string | null> {
+  if (name && OPENNOVA_IMAGE.test(name)) return name;
+  if (!imageId || !IMAGE_ID.test(imageId)) return null;
+  try {
+    const image = await d.docker('GET', `/images/${imageId}/json`) as { RepoTags?: string[] | null; RepoDigests?: string[] | null };
+    return [...(image.RepoTags ?? []), ...(image.RepoDigests ?? [])].find(r => OPENNOVA_IMAGE.test(r)) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 async function planUpdate(d: SelfUpdateDeps): Promise<{ plan?: Plan; reason?: string }> {
   if (!d.socketExists()) return { reason: 'no_socket' };
   const id = ownContainerId(d.mountinfo(), d.hostname());
   if (!id) return { reason: 'unknown_container' };
-  const self = await d.docker('GET', `/containers/${id}/json`) as { Config?: { Labels?: Record<string, string> } };
+  const self = await d.docker('GET', `/containers/${id}/json`) as {
+    Config?: { Labels?: Record<string, string> }; Mounts?: Array<{ Source?: string; Destination?: string }>;
+  };
   const labels = self.Config?.Labels ?? {};
   const project = labels['com.docker.compose.project'];
   const workdir = labels['com.docker.compose.project.working_dir'];
   const configFiles = (labels['com.docker.compose.project.config_files'] ?? '').split(',').map(f => f.trim()).filter(Boolean);
   if (!project || !workdir || !configFiles.length) return { reason: 'not_compose' };
   const filters = encodeURIComponent(JSON.stringify({ label: [`com.docker.compose.project=${project}`] }));
-  const containers = await d.docker('GET', `/containers/json?all=1&filters=${filters}`) as Array<{ Image?: string; Labels?: Record<string, string> }>;
-  const services = [...new Set(containers
-    .filter(c => OPENNOVA_IMAGE.test(c.Image ?? ''))
-    .map(c => c.Labels?.['com.docker.compose.service'] ?? ''))].filter(Boolean).sort();
+  const containers = await d.docker('GET', `/containers/json?all=1&filters=${filters}`) as Array<{ Image?: string; ImageID?: string; Labels?: Record<string, string> }>;
+  const ours = await Promise.all(containers.map(async c => await openNovaRef(d, c.Image, c.ImageID) ? c.Labels?.['com.docker.compose.service'] ?? '' : ''));
+  const services = [...new Set(ours)].filter(Boolean).sort();
   if (!services.length) return { reason: 'not_compose' };
-  return { plan: { project, workdir, configFiles, services } };
+  // The helper mounts the socket from where it is on the host, which need not be
+  // /var/run/docker.sock (Container Studio: /var/run/container-studio/docker.sock).
+  const socket = self.Mounts?.find(m => m.Destination === DOCKER_SOCKET)?.Source || DOCKER_SOCKET;
+  return { plan: { project, workdir, configFiles, services, socket } };
 }
 
 export async function selfUpdateStatus(d: SelfUpdateDeps = realDeps): Promise<{ available: boolean; reason?: string }> {
@@ -114,7 +133,6 @@ function imageTag(ref: string): string {
   return colon > name.lastIndexOf('/') ? name.slice(colon + 1) || 'latest' : 'latest';
 }
 
-const IMAGE_ID = /^sha256:[0-9a-f]{64}$/;
 const REPO_DIGEST = /@(sha256:[0-9a-f]{64})$/;
 
 /** The registry digest of an image, from the first of its RepoDigests; null for an
@@ -143,7 +161,9 @@ export async function runningImage(d: SelfUpdateDeps = realDeps): Promise<{ tag:
     const id = ownContainerId(d.mountinfo(), d.hostname());
     if (!id) return null;
     const self = await d.docker('GET', `/containers/${id}/json`) as { Image?: string; Config?: { Image?: string } };
-    const name = self.Config?.Image;
+    // Created from an image id (Container Studio): the tag comes from the image.
+    const created = self.Config?.Image;
+    const name = created && IMAGE_ID.test(created) ? await openNovaRef(d, undefined, created) ?? created : created;
     if (!name) return null;
     return { tag: imageTag(name), digest: await repoDigest(d, self.Image) };
   } catch {
@@ -180,7 +200,7 @@ export async function startSelfUpdate(d: SelfUpdateDeps = realDeps): Promise<{ o
       Env: [`COMPOSE_PROJECT_NAME=${plan.project}`, `COMPOSE_FILE=${plan.configFiles.join(':')}`],
       WorkingDir: plan.workdir,
       Labels: { 'opennova.role': 'updater' },
-      HostConfig: { AutoRemove: true, Binds: [`${DOCKER_SOCKET}:${DOCKER_SOCKET}`, ...dirs.map(p => `${p}:${p}`)] },
+      HostConfig: { AutoRemove: true, Binds: [`${plan.socket}:${DOCKER_SOCKET}`, ...dirs.map(p => `${p}:${p}`)] },
     }) as { Id: string };
     await d.docker('POST', `/containers/${created.Id}/start`);
     console.log(`[UPDATE] helper started for ${plan.project}: ${services}`);

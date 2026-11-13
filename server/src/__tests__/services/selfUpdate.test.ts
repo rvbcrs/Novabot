@@ -94,6 +94,34 @@ describe('startSelfUpdate', () => {
   it('refuses without the socket', async () => {
     expect((await startSelfUpdate(deps(fakeDocker().docker, false))).ok).toBe(false);
   });
+
+  it('Container Studio: a container created from an image id, the socket elsewhere on the host', async () => {
+    const IMG = `sha256:${'d'.repeat(64)}`;
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const docker: DockerCall = async (method, path, body) => {
+      calls.push({ method, path, body });
+      if (path === `/containers/${ID}/json`) {
+        return { Id: ID, Image: IMG, Config: { Labels: LABELS, Image: IMG },
+          Mounts: [{ Source: '/var/run/container-studio/docker.sock', Destination: '/var/run/docker.sock' }] };
+      }
+      if (path.startsWith('/containers/json')) {
+        return [
+          { Image: IMG, ImageID: IMG, Labels: { 'com.docker.compose.service': 'opennova' } },
+          { Image: `sha256:${'e'.repeat(64)}`, ImageID: `sha256:${'e'.repeat(64)}`, Labels: { 'com.docker.compose.service': 'homeassistant' } },
+        ];
+      }
+      if (path === `/images/${IMG}/json`) return { RepoTags: ['rvbcrs/opennova:beta'], RepoDigests: [] };
+      if (path.startsWith('/images/sha256:')) return { RepoTags: ['homeassistant/home-assistant:stable'] };
+      if (path.startsWith('/containers/create')) return { Id: 'helper1' };
+      return {};
+    };
+    expect(await selfUpdateStatus(deps(docker))).toEqual({ available: true });
+    expect(await runningImage(deps(docker))).toEqual({ tag: 'beta', digest: null });
+    expect(await startSelfUpdate(deps(docker))).toEqual({ ok: true });
+    const create = calls.find(c => c.path.startsWith('/containers/create'))!.body as { Cmd: string[]; HostConfig: { Binds: string[] } };
+    expect(create.Cmd.join(' ')).toContain('pull opennova &&');
+    expect(create.HostConfig.Binds).toContain('/var/run/container-studio/docker.sock:/var/run/docker.sock');
+  });
 });
 
 /**
