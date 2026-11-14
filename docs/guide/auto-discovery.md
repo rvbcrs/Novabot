@@ -74,8 +74,17 @@ dns-sd -G v4 opennova.local      # macOS
 avahi-resolve -n opennova.local  # Linux
 ```
 
-You should see the OpenNova server's IP in under a second. From inside
-the OpenNova container:
+You should see the OpenNova server's IP in under a second. With the
+standard compose the `opennova-mdns` helper does the advertising:
+
+```bash
+docker logs opennova-mdns
+# [MDNS-ONLY] advertising opennova.local -> 192.168.1.50 on 5353/udp (host network, detected)
+```
+
+Running the main container with `network_mode: host` and no helper
+(`docker-compose.linux.yml`, the Raspberry Pi installer)? Then it
+advertises itself:
 
 ```bash
 docker logs opennova | grep MDNS
@@ -97,11 +106,15 @@ notification to your phone.
 
 ## Configuration knobs
 
-Server (`docker-compose.yml` environment):
+Server (`docker-compose.yml` environment). With the standard compose the
+advertiser runs in `opennova-mdns`, so `MDNS_HOSTNAMES` and `MDNS_TTL` go
+under that service, not under `opennova`:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ENABLE_MDNS` | `true` | Set `false` to disable the advertiser entirely |
+| `ENABLE_MDNS` | `true` | Advertiser in the main container. The standard compose sets `false`, because `opennova-mdns` advertises instead |
+| `MDNS_SIDECAR` | — | `true` on the main container tells the diagnosis that `opennova-mdns` does the advertising |
+| `MDNS_ONLY` | — | `true` turns a container into the mDNS helper and nothing else (set on `opennova-mdns`) |
 | `MDNS_HOSTNAMES` | `opennova.local,opennovabot.local` | Hostnames to advertise |
 | `MDNS_TTL` | `120` | A-record TTL in seconds |
 

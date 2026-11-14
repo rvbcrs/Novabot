@@ -124,14 +124,33 @@ You should see `HTTP + WebSocket listening on port 80` and `[MQTT] Broker
 luistert op port 1883`. On Linux, `docker logs opennova-mdns` shows one line:
 `advertising opennova.local -> <your IP> on 5353/udp (host network, detected)`.
 
+#### Portainer
+
+Use the whole compose file as a **stack**, not as a single container:
+**Stacks → Add stack → Web editor**, paste the file, change `TARGET_IP`,
+then **Deploy the stack**. "Add container" with the `rvbcrs/opennova` image
+gives you only the main container: no `opennova-mdns`, no ports and none of
+the settings above, and the mower will not come online.
+
+- `TARGET_IP` is the address of the NAS or host on your LAN (`192.168.x.x`),
+  never the `172.x` address Docker gives the container.
+- No macvlan or other network setup is needed. The stack's own networking is
+  what the compose expects.
+- Replace `./data` with an absolute path on the host, for example
+  `/srv/opennova/data:/data`, so you know where the database lives.
+
+The same applies to the NAS apps: Synology Container Manager → **Project**,
+QNAP Container Station → **Applications**, each with the whole file pasted in.
+
 ### 3. Open the admin panel
 
 Go to **http://TARGET_IP/admin** (or `:8080/admin` if you changed the port).
 With an empty database you get the setup page:
 
 - Enter your Novabot cloud credentials to import your account and devices, or
-- **Skip cloud import — create local account** (`admin@local`, password `admin`).
-  No Novabot account to import from? [Without the Novabot Cloud](../user-guide/without-the-cloud.md)
+- **Skip cloud import — create local account only**, then type your own email
+  address and a password (at least 6 characters). That becomes the admin
+  account. No Novabot account to import from? [Without the Novabot Cloud](../user-guide/without-the-cloud.md)
   is the path from here.
 
 ### 4. Point the mower at your server

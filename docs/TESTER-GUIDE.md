@@ -38,36 +38,25 @@ If you don't have Docker yet:
 
 ### 1.2 Start OpenNova
 
-Create a directory and configuration file:
+Create an empty folder (`mkdir opennova && cd opennova`) and save this in it as
+`docker-compose.yml`. **Change one line: `TARGET_IP`**, the LAN address of this
+machine (see the tip below).
+
+```yaml
+--8<-- "docker-compose.yml"
+```
+
+It is the same file as on [Installing OpenNova](guide/docker.md); that page
+explains every setting. Then start it:
 
 ```bash
-mkdir opennova && cd opennova
-
-cat > docker-compose.yml << 'EOF'
-services:
-  opennova:
-    image: rvbcrs/opennova:latest
-    container_name: opennova
-    restart: unless-stopped
-    ports:
-      - "80:80"        # HTTP (API + admin panel + mower connectivity check)
-      - "443:443"      # HTTPS (required for Novabot app on iOS)
-      - "1883:1883"    # MQTT broker
-    environment:
-      PORT: 80
-      ENABLE_TLS: "true"
-      DB_PATH: /data/novabot.db
-      STORAGE_PATH: /data/storage
-      FIRMWARE_PATH: /data/firmware
-    volumes:
-      - novabot-data:/data
-
-volumes:
-  novabot-data:
-EOF
-
 docker compose up -d
 ```
+
+> **Portainer or a NAS app?** Create a **stack** (Portainer) or a **project**
+> (Synology Container Manager) and paste the whole file. Creating a single
+> container leaves out `opennova-mdns` and the rest of the settings. See
+> [Portainer](guide/docker.md#portainer).
 
 ### 1.3 Verify the server is running
 
@@ -89,7 +78,7 @@ The quick version: make `mqtt.lfibot.com` and `app.lfibot.com` point to your ser
 
 - Your router's DNS settings (easiest for Fritz!Box, ASUS)
 - Pi-hole or AdGuard Home
-- OpenNova's built-in DNS server (add `ENABLE_DNS: "true"` and port `53:53/udp` to docker-compose)
+- OpenNova's built-in DNS server: already on in the compose above (`ENABLE_DNS: "true"`, port `53:53/udp`); set `TARGET_IP` as the DNS server in your router
 
 ---
 
@@ -115,7 +104,7 @@ On first visit, the admin panel shows a **Welcome to OpenNova** setup wizard:
 
 After import, you're automatically logged in to the admin panel.
 
-> **Skip cloud import?** Click "Skip" to create a local-only account (admin@local / admin). You can import from cloud later via Settings > Cloud Import. No cloud at all? See [Without the Novabot Cloud](user-guide/without-the-cloud.md).
+> **Skip cloud import?** Click "Skip cloud import — create local account only" and type your own email address and a password (at least 6 characters); that becomes the admin account. You can import from cloud later via Settings > Cloud Import. No cloud at all? See [Without the Novabot Cloud](user-guide/without-the-cloud.md).
 
 ---
 

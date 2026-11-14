@@ -24,10 +24,10 @@ Kept, because it lives on the hardware:
 
 ## Step 1: Create the local account
 
-On the setup page of the admin panel choose **Skip cloud import, create local
-account**. That makes one admin account, `admin@local` with password `admin`.
-Change the password in the admin panel before you expose the server to anything
-but your own network. The wizard then continues with the certificate step as
+On the setup page of the admin panel choose **Skip cloud import — create local
+account only**, then type your own email address and a password (at least 6
+characters, twice). That makes the admin account; you add other people later
+under Settings > Users. The wizard then continues with the certificate step as
 usual; see [First Run](../guide/getting-started.md).
 
 If the cloud comes back later, **Cloud import** under admin Settings still
@@ -36,7 +36,7 @@ works and keeps what you set up locally.
 ## Step 2: Add your charger and mower
 
 Log into the app (the official Novabot app or the
-[OpenNova app](opennova-app.md)) with `admin@local` / `admin`. The device list
+[OpenNova app](opennova-app.md)) with the email and password from step 1. The device list
 is empty, so add the charger first and then the mower, exactly like a first
 setup: the app provisions them over Bluetooth with your Wi-Fi and your server
 address. The mower and charger must resolve `mqtt.lfibot.com` to your server
