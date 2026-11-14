@@ -341,7 +341,7 @@ export default function TerrainView3D({ sn }: { sn: string }) {
   const cameraRef = useRef<THREE.Camera | null>(null);
   const layoutRef = useRef({ pageX: 0, pageY: 0, width: 0, height: 0 });
   const raycasterRef = useRef(new THREE.Raycaster());
-  const containerRef = useRef<View>(null);
+  const containerRef = useRef<React.ComponentRef<typeof View>>(null);
 
   const terrainRef = useRef<TerrainScene | null>(null);
   const voxelRef = useRef<THREE.InstancedMesh | null>(null);

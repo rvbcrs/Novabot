@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#030712"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ramonvanbruggen.opennova",
@@ -81,6 +76,18 @@
         {
           "color": "#22c55e",
           "androidMode": "default"
+        }
+      ],
+      "expo-asset",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#030712"
         }
       ]
     ],

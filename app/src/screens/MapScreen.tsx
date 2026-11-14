@@ -321,7 +321,7 @@ export default function MapScreen() {
     message?: string;
     actions: AppActionSheetItem[];
   }>({ visible: false, title: '', actions: [] });
-  const zoneCarouselRef = useRef<ScrollView | null>(null);
+  const zoneCarouselRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const panelOffsetY = useSharedValue(0);
   const panelStartY = useSharedValue(0);
 
@@ -2626,7 +2626,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.42)',
   },
   actionsSheetBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   actionsSheet: {
     backgroundColor: c.card,

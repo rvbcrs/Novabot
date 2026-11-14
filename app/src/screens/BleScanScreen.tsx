@@ -215,7 +215,7 @@ export default function BleScanScreen({ navigation, route }: Props) {
                 {t('pvNoDevicesHint')}
               </Text>
             </View>
-          ) : null
+          ) : undefined
         }
         style={styles.list}
       />

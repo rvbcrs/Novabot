@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { appAlertCompat } from '../context/AppAlertContext';
 import { Ionicons } from '@expo/vector-icons';
-import { Swipeable } from 'react-native-gesture-handler';
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useStyles, useTheme, type Colors } from '../theme';

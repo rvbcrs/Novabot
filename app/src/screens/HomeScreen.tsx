@@ -622,7 +622,7 @@ export default function HomeScreen() {
   const styles = useStyles(makeStyles);
   // What the floating action pill blurs. Android needs an explicit target
   // (expo-blur 55); iOS blurs whatever is behind the view regardless.
-  const blurTargetRef = useRef<View>(null);
+  const blurTargetRef = useRef<React.ComponentRef<typeof View>>(null);
   // Measured, so the scroll reserves exactly the pill's footprint (#145).
   const [pillHeight, setPillHeight] = useState(66);
   const hero = HERO_PALETTE[colorScheme];

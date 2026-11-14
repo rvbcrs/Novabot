@@ -238,7 +238,7 @@ const makeStyles = (_c: Colors) => StyleSheet.create({
     overflow: 'hidden',
   },
   rainLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 0,
   },
   raindrop: {
