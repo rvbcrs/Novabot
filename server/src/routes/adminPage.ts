@@ -277,8 +277,8 @@ export function adminPageHtml(): string {
 </style>
 </head>
 <body>
-<!-- i18n: client-side translate-by-source-string layer (EN/NL/FR/DE). The dict
-     (server/src/routes/adminI18n.ts) maps rendered source text to 4 languages.
+<!-- i18n: client-side translate-by-source-string layer (EN/NL/FR/DE/ES). The dict
+     (server/src/routes/adminI18n.ts) maps rendered source text to 5 languages.
      The applier walks the LIVE DOM (so JS-rendered content is covered too) and a
      MutationObserver translates dynamically-added nodes. Source is English,
      except the "? Help" popup (Dutch). Switch via #langSelect in the header. -->
@@ -286,7 +286,7 @@ export function adminPageHtml(): string {
 window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 (function(){
   var T = window.__ADMIN_I18N__ || {};
-  var LANGS = ['en','nl','fr','de'];
+  var LANGS = ['en','nl','fr','de','es'];
   var origText = new WeakMap();
   var origAttr = new WeakMap();
   var origBlock = new WeakMap();
@@ -335,7 +335,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
   };
   window.__lang = function(){ return curLang; };
   // Locale for dates/times rendered by the page, following the admin language.
-  window.__locale = function(){ return ({ en: 'en-GB', nl: 'nl-NL', fr: 'fr-FR', de: 'de-DE' })[curLang] || 'en-GB'; };
+  window.__locale = function(){ return ({ en: 'en-GB', nl: 'nl-NL', fr: 'fr-FR', de: 'de-DE', es: 'es-AR' })[curLang] || 'en-GB'; };
   // Every same-origin /api/ call carries the admin language, so server-side
   // error texts (services/serverText.ts langOf) come back translated.
   (function(){
@@ -564,6 +564,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <button class="langbtn" data-lang="nl" onclick="window.__setLang('nl')">NL</button>
         <button class="langbtn" data-lang="fr" onclick="window.__setLang('fr')">FR</button>
         <button class="langbtn" data-lang="de" onclick="window.__setLang('de')">DE</button>
+        <button class="langbtn" data-lang="es" onclick="window.__setLang('es')">ES</button>
       </div>
       <a class="btn" id="dashboardLink" href="/" style="display:none">Dashboard</a>
       <a class="btn" id="whatsNewLink" href="/#whats-new" style="display:none">What's new</a>
