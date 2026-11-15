@@ -1,5 +1,5 @@
 /**
- * Server text: one sentence, four languages.
+ * Server text: one sentence, five languages.
  *
  * Everything the server says to a person (API errors, status messages, the
  * connection diagnosis) goes through here. It used to be written in Dutch and
@@ -30,9 +30,9 @@
 import { CATALOG as DIAGNOSIS_CATALOG } from './diagnosisText.catalog.js';
 import { CATALOG as API_CATALOG } from './apiText.catalog.js';
 
-export type Lang = 'nl' | 'en' | 'fr' | 'de';
+export type Lang = 'nl' | 'en' | 'fr' | 'de' | 'es';
 
-export const LANGS: readonly Lang[] = ['nl', 'en', 'fr', 'de'];
+export const LANGS: readonly Lang[] = ['nl', 'en', 'fr', 'de', 'es'];
 
 /** Source language: the key IS the Dutch sentence, so it needs no entry. */
 export const SOURCE_LANG: Lang = 'nl';
@@ -40,7 +40,7 @@ export const SOURCE_LANG: Lang = 'nl';
 /** Without a usable language tag: English. Dutch only when asked for. */
 export const DEFAULT_LANG: Lang = 'en';
 
-export type CatalogEntry = { en: string; fr: string; de: string };
+export type CatalogEntry = { en: string; fr: string; de: string; es: string };
 export type Catalog = Record<string, CatalogEntry>;
 
 const CATALOG: Catalog = { ...DIAGNOSIS_CATALOG, ...API_CATALOG };
