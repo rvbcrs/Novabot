@@ -119,7 +119,7 @@ export function CalendarGrid({ schedules, onEdit, onCreateAt }: Props) {
 
                 {/* Schedule blocks */}
                 {daySchedules.map((s) => {
-                  const startH = parseHour(s.startTime);
+                  const startH = parseHour((s.startTimeToday ?? s.startTime));
                   const endH = s.endTime ? parseHour(s.endTime) : startH + 1;
                   const top = (startH - START_HOUR) * ROW_H;
                   const height = Math.max((endH - startH) * ROW_H, ROW_H * 0.5);
@@ -141,7 +141,7 @@ export function CalendarGrid({ schedules, onEdit, onCreateAt }: Props) {
                       }}
                     >
                       <span className="block text-[8px] leading-tight opacity-80">
-                        {s.startTime}
+                        {(s.startTimeToday ?? s.startTime)}
                       </span>
                       {height > ROW_H * 0.8 && (
                         <span className="block text-[9px] leading-tight font-medium truncate mt-0.5">

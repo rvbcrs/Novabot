@@ -1100,7 +1100,16 @@
       "hour": "Uur",
       "minute": "Minuut",
       "period": "AM of PM"
-    }
+    },
+    "startAt": "Starten op",
+    "anchor": {
+      "time": "Vaste tijd",
+      "sunrise": "Zonsopkomst",
+      "sunset": "Zonsondergang"
+    },
+    "offsetMin": "minuten (min = ervoor, plus = erna)",
+    "sunHint": "De starttijd schuift elke dag mee met de zon (berekend uit de GPS-positie van het laadstation). De server start de maaier.",
+    "startFallback": "Start zonder GPS"
   },
   "rain": {
     "since": "Sinds {{time}}",

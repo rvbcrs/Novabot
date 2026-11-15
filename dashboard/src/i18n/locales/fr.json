@@ -861,7 +861,16 @@
       "hour": "Heure",
       "minute": "Minute",
       "period": "AM ou PM"
-    }
+    },
+    "startAt": "Démarrer à",
+    "anchor": {
+      "time": "Heure fixe",
+      "sunrise": "Lever du soleil",
+      "sunset": "Coucher du soleil"
+    },
+    "offsetMin": "minutes (moins = avant, plus = après)",
+    "sunHint": "L'heure de départ suit le soleil chaque jour (calculée à partir de la position GPS de la station de charge). Le serveur démarre la tondeuse.",
+    "startFallback": "Départ sans GPS"
   },
   "rain": {
     "since": "Depuis {{time}}",

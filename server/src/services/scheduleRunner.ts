@@ -22,6 +22,7 @@ import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
 import { M, renderMsg, type Lang, type Msg } from './serverText.js';
 import { serverTimeZone } from '../utils/serverTimeZone.js';
+import { sunTimes, isSunEvent } from './sunTimes.js';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let edgeIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -364,7 +365,61 @@ function wallTime(row: ScheduleRow, at: Date): string {
   return `${String(Math.floor(wc.minutesIntoDay / 60)).padStart(2, '0')}:${String(wc.minutesIntoDay % 60).padStart(2, '0')}`;
 }
 
-export function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null {
+/**
+ * Start of a sun-anchored schedule on the calendar day `wc` (sunrise/sunset at
+ * the charging station plus start_offset_min), or null when the schedule is not
+ * sun-anchored, the station has no GPS position yet, or the sun does not rise or
+ * set that day. Patrols keep their own clock window and never use the sun.
+ */
+/**
+ * Where to compute sunrise/sunset for a mower: the charger's GPS when it is
+ * known, else the mower's last reported fix. The charger GPS is only captured
+ * once the dashboard sees the mower docked; until then the mower's own fix
+ * (a few metres away) is just as good for the sun, which moves ~4 s per km.
+ */
+function sunPosition(mowerSn: string): { lat: number; lng: number } | null {
+  const charger = getChargerGps(mowerSn);
+  if (charger) return charger;
+  const cache = deviceCache.get(mowerSn);
+  const lat = parseFloat(cache?.get('latitude') ?? '');
+  const lng = parseFloat(cache?.get('longitude') ?? '');
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) < 1e-3 && Math.abs(lng) < 1e-3) return null; // no RTK fix yet
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
+function sunStart(
+  row: ScheduleRow,
+  wc: { year: number; month: number; day: number },
+  gps?: { lat: number; lng: number } | null,
+): Date | null {
+  if (row.kind === 'patrol' || !isSunEvent(row.start_anchor)) return null;
+  const pos = gps === undefined ? sunPosition(row.mower_sn) : gps;
+  if (!pos) return null;
+  const event = sunTimes(wc.year, wc.month, wc.day, pos.lat, pos.lng)[row.start_anchor];
+  if (event === null) return null;
+  return new Date(event + (row.start_offset_min ?? 0) * 60_000);
+}
+
+/**
+ * The HH:MM a schedule starts on the day of `at` in its zone: the sun-anchored
+ * time when it is one and can be computed, else start_time.
+ */
+export function effectiveStartTime(
+  row: ScheduleRow,
+  at: Date = new Date(),
+  gps?: { lat: number; lng: number } | null,
+): string {
+  const sun = sunStart(row, wallClock(at, row.timezone ?? null), gps);
+  return sun ? wallTime(row, sun) : row.start_time;
+}
+
+export function getScheduleOccurrence(
+  row: ScheduleRow,
+  now: Date,
+  gps?: { lat: number; lng: number } | null,
+): Date | null {
   const wc = wallClock(now, row.timezone ?? null);
 
   // Match today against either the interval-days rule (preferred when set)
@@ -383,6 +438,11 @@ export function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null 
     const weekdays: number[] = JSON.parse(row.weekdays);
     if (!weekdays.includes(wc.weekday)) return null; // 0=Sunday
   }
+
+  // Sunrise/sunset schedules follow the seasons; without a GPS fix they fall
+  // back to start_time below.
+  const sun = sunStart(row, wc, gps);
+  if (sun) return sun;
 
   const [hourText = '0', minuteText = '0'] = row.start_time.split(':');
   const hour = Number(hourText);
@@ -498,7 +558,7 @@ function checkSchedules() {
           || (Number.isFinite(lastTriggered) && lastTriggered >= scheduledAt.getTime());
         const existedThen = !Number.isFinite(createdAt) || createdAt <= scheduledAt.getTime();
         if (!decided && existedThen) {
-          logScheduleDecision(row, false, 'MISSED', M`de server draaide niet om ${slot ? wallTime(row, slot.slotAt) : row.start_time}`);
+          logScheduleDecision(row, false, 'MISSED', M`de server draaide niet om ${slot ? wallTime(row, slot.slotAt) : wallTime(row, scheduledAt)}`);
         }
       }
       continue;

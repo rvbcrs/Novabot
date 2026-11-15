@@ -93,6 +93,12 @@ export interface Schedule {
   scheduleName: string | null;
   startTime: string;
   endTime: string | null;
+  /** 'time' = fixed startTime; 'sunrise'/'sunset' = start follows the sun (startTime is the fallback without GPS). */
+  startAnchor?: 'time' | 'sunrise' | 'sunset';
+  /** Minutes after (+) or before (-) the sun event, -180..180. */
+  startOffsetMin?: number;
+  /** Start time of today's run as the server computes it (HH:MM). */
+  startTimeToday?: string;
   /** Patrol only: minutes between two rounds of the window startTime..endTime; 0 = once. */
   intervalMin?: number;
   weekdays: number[];
