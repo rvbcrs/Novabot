@@ -25,7 +25,9 @@ import { safeFirmwarePath, isFirmwareFileName, firmwareSourceAllowed, MANIFEST_H
 import os from 'os';
 import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
-import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason, isScheduleWarning } from '../services/scheduleRunner.js';
+import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason, isScheduleWarning, effectiveStartTime } from '../services/scheduleRunner.js';
+import { MAX_SUN_OFFSET_MIN } from '../services/sunTimes.js';
+import type { ScheduleRow as RepoScheduleRow } from '../db/repositories/schedules.js';
 import { stopDriveBeforeEnding, isDuplicateZoneStart } from '../services/edgeCutGuard.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
@@ -3973,6 +3975,8 @@ interface ScheduleRow {
   edge_days: string | null;
   kind?: string;
   interval_min?: number;
+  start_anchor?: string;
+  start_offset_min?: number;
   created_at: string;
   updated_at: string;
 }
@@ -3987,6 +3991,12 @@ function scheduleRowToDto(r: ScheduleRow, lang: Lang) {
     endTime: r.end_time,
     // Patrol only: minutes between two rounds of the window up to endTime; 0 = once.
     intervalMin: r.interval_min ?? 0,
+    // 'time' = startTime; 'sunrise'/'sunset' = that sun event at the charging
+    // station plus startOffsetMin, so the start follows the seasons.
+    startAnchor: r.start_anchor ?? 'time',
+    startOffsetMin: r.start_offset_min ?? 0,
+    // The HH:MM it starts today (the sun time, or startTime without GPS).
+    startTimeToday: effectiveStartTime(r as unknown as RepoScheduleRow),
     weekdays: JSON.parse(r.weekdays),
     enabled: r.enabled === 1,
     mapId: r.map_id,
@@ -4099,6 +4109,24 @@ function patrolWindowError(T: Translate, intervalMin: unknown, endTime: unknown)
   return null;
 }
 
+/**
+ * A sun anchor as it will be stored: null when it is valid, else the 400
+ * sentence. A patrol keeps its own clock window and cannot follow the sun.
+ */
+function sunAnchorError(T: Translate, isPatrol: boolean, anchor: unknown, offsetMin: unknown): string | null {
+  if (anchor !== undefined && anchor !== 'time' && anchor !== 'sunrise' && anchor !== 'sunset') {
+    return T`startAnchor moet time, sunrise of sunset zijn`;
+  }
+  if (isPatrol && (anchor === 'sunrise' || anchor === 'sunset')) {
+    return T`Een patrouille kan niet op zonsopkomst of zonsondergang starten`;
+  }
+  if (offsetMin !== undefined && !(typeof offsetMin === 'number' && Number.isInteger(offsetMin)
+    && Math.abs(offsetMin) <= MAX_SUN_OFFSET_MIN)) {
+    return T`startOffsetMin moet een heel getal van -180 tot en met 180 zijn`;
+  }
+  return null;
+}
+
 // POST /api/dashboard/schedules/:sn — nieuw schedule aanmaken
 dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   const T = reqT(req);
@@ -4142,6 +4170,11 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     // Alleen voor een patrouille: false maakt het schema uitgeschakeld (de
     // patrouillekaart bewaart de tijd ook met de nachtschakelaar uit).
     enabled?: boolean;
+    // Start relative to the sun ('sunrise' | 'sunset') instead of startTime,
+    // plus startOffsetMin (negative = before). startTime stays the fallback
+    // while the charging station has no GPS position.
+    startAnchor?: 'time' | 'sunrise' | 'sunset';
+    startOffsetMin?: number;
   };
 
   if (Array.isArray(body.edgeDays) && body.edgeDays.length > 0
@@ -4152,6 +4185,12 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     res.status(400).json({ error: T`startTime is vereist` });
     return;
   }
+  const anchorError = sunAnchorError(T, isPatrol, body.startAnchor, body.startOffsetMin);
+  if (anchorError) {
+    res.status(400).json({ error: anchorError });
+    return;
+  }
+  const sunAnchored = body.startAnchor === 'sunrise' || body.startAnchor === 'sunset';
   if (isPatrol) {
     const windowError = patrolWindowError(T, body.intervalMin, body.endTime);
     if (windowError) {
@@ -4190,13 +4229,16 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     kind: isPatrol ? 'patrol' : 'mow',
     // A mow schedule has no window: its interval is not read.
     interval_min: isPatrol ? (body.intervalMin ?? 0) : 0,
+    start_anchor: body.startAnchor ?? 'time',
+    start_offset_min: body.startOffsetMin ?? 0,
   });
 
   // Stuur timer_task naar maaier als die online is — maar NIET als rain_pause
   // actief is OF als interval_days mode aan staat (mower's timer_task is
   // strictly WEEKLY, interval scheduling lives server-side via the runner).
   // En nooit voor een patrouille: de firmware zou er een maaibeurt van maken.
-  if (!isPatrol && isDeviceOnline(sn) && !body.rainPause && !(body.intervalDays && body.intervalDays > 0)) {
+  // Nor for a sun-anchored schedule: the firmware only knows a fixed clock time.
+  if (!isPatrol && !sunAnchored && isDeviceOnline(sn) && !body.rainPause && !(body.intervalDays && body.intervalDays > 0)) {
     publishToDevice(sn, {
       timer_task: {
         task_id: scheduleId,
@@ -4241,6 +4283,11 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     && rejectUnlessOpenNova(sn, req, res, M`Randmaaien op schemadagen`)) return;
   // A patrol window must be able to run once saved: what is sent is checked
   // together with what is kept (an interval needs an end time, either way round).
+  const anchorError = sunAnchorError(T, existing.kind === 'patrol', body.startAnchor, body.startOffsetMin);
+  if (anchorError) {
+    res.status(400).json({ error: anchorError });
+    return;
+  }
   if (existing.kind === 'patrol' && (body.intervalMin !== undefined || body.endTime !== undefined)) {
     const windowError = patrolWindowError(T,
       body.intervalMin !== undefined ? body.intervalMin : existing.interval_min,
@@ -4256,6 +4303,8 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     start_time: body.startTime as string | undefined,
     end_time: body.endTime as string | null | undefined,   // null clears it
     interval_min: existing.kind === 'patrol' ? (body.intervalMin as number | undefined) : undefined,
+    start_anchor: body.startAnchor as string | undefined,
+    start_offset_min: body.startOffsetMin as number | undefined,
     weekdays: body.weekdays ? JSON.stringify(body.weekdays as number[]) : undefined,
     enabled: body.enabled !== undefined ? ((body.enabled as boolean) ? 1 : 0) : undefined,
     map_id: body.mapId as string | undefined,
@@ -4321,6 +4370,10 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
   }
   if (row.kind === 'patrol') {
     res.status(409).json({ error: T`Een patrouilleschema draait op de server en gaat niet naar de maaier.` });
+    return;
+  }
+  if (row.start_anchor === 'sunrise' || row.start_anchor === 'sunset') {
+    res.status(409).json({ error: T`Een schema op zonsopkomst of zonsondergang draait op de server en gaat niet naar de maaier.` });
     return;
   }
 

@@ -185,15 +185,15 @@ export function ScheduleTimeline({ sn, onSelect }: Props) {
                 {/* Schedule blocks */}
                 {enabled.flatMap(s => {
                   if (!s.weekdays.includes(stored)) return [];
-                  const start = timeToMinutes(s.startTime);
+                  const start = timeToMinutes((s.startTimeToday ?? s.startTime));
                   const end = s.endTime ? timeToMinutes(s.endTime) : Math.min(start + 60, 24 * 60);
                   if (end <= start) return [];
                   const top = (start / 60) * HOUR_PX;
                   const height = ((end - start) / 60) * HOUR_PX;
                   const a = accentForId(s.scheduleId);
                   const compact = height < 30;
-                  const timeRange = `${formatTime(s.startTime, timeFormat)}${s.endTime ? `–${formatTime(s.endTime, timeFormat)}` : ''}`;
-                  const label = s.scheduleName ?? formatTime(s.startTime, timeFormat);
+                  const timeRange = `${formatTime((s.startTimeToday ?? s.startTime), timeFormat)}${s.endTime ? `–${formatTime(s.endTime, timeFormat)}` : ''}`;
+                  const label = s.scheduleName ?? formatTime((s.startTimeToday ?? s.startTime), timeFormat);
                   return [
                     <div
                       key={s.scheduleId}
@@ -241,7 +241,7 @@ export function ScheduleTimeline({ sn, onSelect }: Props) {
             return (
               <span key={s.scheduleId} className="inline-flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-sm" style={{ background: a.bar }} />
-                {s.scheduleName ?? `${formatTime(s.startTime, timeFormat)}${s.endTime ? `–${formatTime(s.endTime, timeFormat)}` : ''}`}
+                {s.scheduleName ?? `${formatTime((s.startTimeToday ?? s.startTime), timeFormat)}${s.endTime ? `–${formatTime(s.endTime, timeFormat)}` : ''}`}
               </span>
             );
           })}

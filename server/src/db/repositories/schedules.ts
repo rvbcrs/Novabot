@@ -47,6 +47,10 @@ export interface ScheduleRow {
   kind?: string;
   /** Patrol only: minutes between two rounds of the night's window (end_time); 0 = once. */
   interval_min: number;
+  /** 'time' (start_time), 'sunrise' or 'sunset'. Optional: older rows/tests lack it = 'time'. */
+  start_anchor?: string;
+  /** Minutes from the sun event (negative = before); only read when start_anchor is a sun event. */
+  start_offset_min?: number;
   /** Laatste runner-beslissing: ISO-tijd, 'started' | 'skipped' | 'failed' | 'missed', en de reden. */
   last_result_at: string | null;
   last_result: string | null;
@@ -194,8 +198,9 @@ export class ScheduleRepository {
         map_id, map_name, cutting_height, path_direction, work_mode, task_mode,
         edge_offset, rain_pause, rain_threshold_mm, rain_threshold_probability,
         rain_check_hours, alternate_direction, alternate_step,
-        interval_days, interval_anchor_date, timezone, edge_days, kind, interval_min
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        interval_days, interval_anchor_date, timezone, edge_days, kind, interval_min,
+        start_anchor, start_offset_min
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.schedule_id, data.mower_sn, data.schedule_name ?? null,
       data.start_time, data.end_time ?? null, data.weekdays ?? '[]', data.enabled ?? 1,
@@ -206,6 +211,7 @@ export class ScheduleRepository {
       data.alternate_direction ?? 0, data.alternate_step ?? 90,
       data.interval_days ?? 0, data.interval_anchor_date ?? null,
       data.timezone ?? null, data.edge_days ?? null, data.kind ?? 'mow', data.interval_min ?? 0,
+      data.start_anchor ?? 'time', data.start_offset_min ?? 0,
     );
   }
 
@@ -241,6 +247,8 @@ export class ScheduleRepository {
       ['last_result_reason', data.last_result_reason],
       ['edge_days', data.edge_days],
       ['interval_min', data.interval_min],
+      ['start_anchor', data.start_anchor],
+      ['start_offset_min', data.start_offset_min],
     ];
 
     for (const [key, value] of updatable) {
@@ -290,6 +298,8 @@ export class ScheduleRepository {
       ['last_result_reason', data.last_result_reason],
       ['edge_days', data.edge_days],
       ['interval_min', data.interval_min],
+      ['start_anchor', data.start_anchor],
+      ['start_offset_min', data.start_offset_min],
     ];
 
     for (const [key, value] of updatable) {

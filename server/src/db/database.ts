@@ -864,6 +864,17 @@ export function initDb(): void {
     // Kolom bestaat al
   }
 
+  // Start relative to the sun: 'time' (start_time, the default), 'sunrise' or
+  // 'sunset' plus start_offset_min (negative = before). start_time stays the
+  // fallback when the charging station has no GPS position yet.
+  for (const col of [
+    "start_anchor TEXT NOT NULL DEFAULT 'time'",
+    'start_offset_min INTEGER NOT NULL DEFAULT 0',
+  ]) {
+    try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
   // Night patrol: the run the server started last per mower, its upload token
   // and start time, the schedule that started it, and the end that was handled.
   // On disk so a server restart in the middle of a patrol keeps taking that

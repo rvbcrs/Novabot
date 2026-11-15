@@ -52,6 +52,8 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
   // Form state
   const [name, setName] = useState('');
   const [startTime, setStartTime] = useState('09:00');
+  const [startAnchor, setStartAnchor] = useState<'time' | 'sunrise' | 'sunset'>('time');
+  const [startOffsetMin, setStartOffsetMin] = useState(0);
   const [endTime, setEndTime] = useState('12:00');
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [mapId, setMapId] = useState<string | null>(null);
@@ -73,6 +75,8 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
     if (editSchedule) {
       setName(editSchedule.scheduleName ?? '');
       setStartTime(editSchedule.startTime);
+      setStartAnchor(editSchedule.startAnchor ?? 'time');
+      setStartOffsetMin(editSchedule.startOffsetMin ?? 0);
       setEndTime(editSchedule.endTime ?? '');
       setWeekdays([...editSchedule.weekdays]);
       setMapId(editSchedule.mapId);
@@ -87,6 +91,8 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
       const endH = d ? String(Math.min(d.hour + 3, 22)).padStart(2, '0') + ':00' : '12:00';
       setName('');
       setStartTime(h);
+      setStartAnchor('time');
+      setStartOffsetMin(0);
       setEndTime(endH);
       setWeekdays(d ? [d.weekday] : [...DEFAULT_SCHEDULE.weekdays]);
       setMapId(null);
@@ -111,6 +117,8 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
     const payload = {
       scheduleName: name || null,
       startTime,
+      startAnchor,
+      startOffsetMin: startAnchor === 'time' ? 0 : startOffsetMin,
       endTime: endTime || null,
       weekdays,
       enabled,
@@ -236,11 +244,56 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
               />
             </div>
 
+            {/* Start: fixed clock time or relative to sunrise/sunset */}
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                {t('schedule.startAt')}
+              </label>
+              <div className="flex gap-1">
+                {(['time', 'sunrise', 'sunset'] as const).map(a => (
+                  <button
+                    key={a}
+                    type="button"
+                    onClick={() => setStartAnchor(a)}
+                    className={`flex-1 h-9 text-xs rounded-lg border ${
+                      startAnchor === a
+                        ? 'bg-emerald-600 border-emerald-500 text-white'
+                        : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
+                    }`}
+                  >
+                    {t(`schedule.anchor.${a}`)}
+                  </button>
+                ))}
+              </div>
+              {startAnchor !== 'time' && (
+                <div className="mt-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={-180}
+                      max={180}
+                      step={5}
+                      value={startOffsetMin}
+                      onChange={(e) => {
+                        const v = Math.round(Number(e.target.value));
+                        setStartOffsetMin(Number.isFinite(v) ? Math.max(-180, Math.min(180, v)) : 0);
+                      }}
+                      className="w-20 h-9 px-2 rounded-lg border border-gray-200 dark:border-gray-700
+                                 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+                    />
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{t('schedule.offsetMin')}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{t('schedule.sunHint')}</p>
+                </div>
+              )}
+            </div>
+
             {/* Start / End */}
             <div className="flex gap-3">
               <div className="flex-1">
                 <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                  {t('schedule.start')}
+                  {startAnchor === 'time' ? t('schedule.start') : t('schedule.startFallback')}
                 </label>
                 <input
                   type="time"

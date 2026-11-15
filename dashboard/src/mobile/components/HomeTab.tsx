@@ -72,7 +72,7 @@ function getCurrentEndTime(schedules: Schedule[]): string | null {
 
   for (const s of schedules) {
     if (!s.enabled || !s.endTime || !s.weekdays?.includes(today)) continue;
-    const [sh, sm] = s.startTime.split(':').map(Number);
+    const [sh, sm] = (s.startTimeToday ?? s.startTime).split(':').map(Number);
     const [eh, em] = s.endTime.split(':').map(Number);
     const startMin = sh * 60 + sm;
     const endMin = eh * 60 + em;
