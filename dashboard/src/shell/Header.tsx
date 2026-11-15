@@ -10,7 +10,7 @@ import { getServerVersion, fetchReleaseNotes, type ReleaseNotesEntry } from '../
 import { pendingWhatsNew } from '../whatsNew';
 import type { MowerEvent } from '../types';
 
-const LANGS = ['nl', 'en', 'fr', 'de'] as const;
+const LANGS = ['nl', 'en', 'fr', 'de', 'es'] as const;
 
 interface Props {
   connected: boolean;
