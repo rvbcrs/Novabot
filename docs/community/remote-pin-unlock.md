@@ -1,12 +1,13 @@
 # Remote PIN unlock research (WORK IN PROGRESS — no working unlock yet)
 
 > Community research notes from a Novabot owner running OpenNova. Shared as
-> **work in progress**, not a finished solution. Two firmware attempts were
-> flashed and live-tested: v3.6.99 verifies the PIN correctly but **does not clear
-> the lock**; v3.6.100 clears the gate bit but **the lock FSM re-asserts it**, so
-> the mower stays locked. **There is no patch that unlocks a real lock yet.** The
-> genuinely reusable, already-confirmed finding is **how the MCU flasher works**
-> (bottom section) — that part stands on its own.
+> **work in progress**, not a finished solution. Firmware attempts so far: v3.6.99
+> verifies the PIN correctly but **does not clear the lock**; v3.6.100 tried to
+> clear it but targeted the **wrong incident number** (cleared the IMU incident, not
+> the PIN) and failed live; v3.6.101 (correct incident `0xd`) is **built but not yet
+> flashed/tested**. **No patch unlocks a real lock yet.** The genuinely reusable,
+> already-confirmed finding is **how the MCU flasher works** (bottom section) — that
+> part stands on its own.
 >
 > **Firmware flashing is risky.** Everything below touches the motor-controller
 > MCU. Read it end to end, keep a verified backup of the stock binary, and do
@@ -47,13 +48,16 @@ wrong, but because `type=2` is unimplemented.
 
 > Note: `report_exception_state.no_set_pin_code` is **not** the lock flag. It is
 > a separate flag ("no PIN configured"). The real lock is the `no_pin_code` bit
-> (bit 16, `0x10000`) of the error bitmask held in RAM at `0x200002E0`. The MCU
-> serialises it to the host via `get_error_mask` (`0x08030314`, which `ldm`s the
-> raw mask), and the Linux side turns that bit into error `151`. This is
-> **RAM-only**: at boot the MCU sets the bit from EEPROM register `0x75` (`== '9'`),
-> and the firmware never writes EEPROM `0x75` (it stays a factory byte), so there
-> is **no** RTC/backup-domain persistence of the lock. Stock clears the bit only
-> through the physical-screen path; the remote channel has to clear it explicitly.
+> (`0x10000`) of `error_set_flag`, which the MCU serialises to the host via
+> `get_error_mask` (`0x08030314`); the Linux side turns it into error `151`.
+>
+> The firmware tracks errors as numbered **incidents**. The PIN lock is
+> **incident 13 (`0xd`)**: at boot `set_incident(0xd)` (`0x08045952`) raises the
+> `0x10000` bit. **Do not confuse it with incident 16 (`0x10`), which is an IMU
+> error** — the chip talks I2C to the IMU at `0x68` (reg `0x75` = `WHO_AM_I`, reg
+> `0x1f` = accel/gyro data); incident 16 has nothing to do with the PIN. Stock
+> clears incident 13 only through the physical-screen path; the remote channel has
+> to clear it explicitly.
 
 ## Attempted fix: an "honest verify" patch (`type=2`)
 
@@ -79,51 +83,45 @@ Flashed as v3.6.99 and tested on a mower that was **genuinely locked**
 - **But the mower stays locked at `151`.** The remote call reports success and
   the lock does not clear.
 
-Cause, from disassembly: the real lock gate is the `no_pin_code` bit (bit 16,
-`0x10000`) of the error bitmask in RAM at `0x200002E0`. The injected `type=2`
-handler writes UI/state RAM (`0x368` / `0x4CE` / `0x774` / `0x775` / `0x77C`)
-**but never clears that bit**, so the honest comparison is correct but the unlock
-side-effect is incomplete: it clears display/error scratch state, not the gate
-that keeps the mower at `151`.
+Cause, from disassembly: the real lock is the `no_pin_code` bit (`0x10000`) of
+`error_set_flag`, raised by incident 13 (`0xd`). The injected `type=2` handler
+writes UI/state RAM (`0x368` / `0x4CE` / `0x774` / `0x775` / `0x77C`) **but never
+clears that incident**, so the honest comparison is correct but the unlock
+side-effect is incomplete: it clears display/error scratch state, not the bit that
+keeps the mower at `151`.
 
-> Correction (confirmed by disassembly scan): the lock is **RAM-only** — there is
-> no persistent flag in the backup/RTC domain (`0x40023800`) involved, contrary to
-> an earlier guess. Clearing bit 16 of the `0x200002E0` mask is all that is needed.
-> Scan evidence: `clr_incident(16)` is never called anywhere in stock and
-> `reset_total` has no callers, i.e. stock only clears bit 16 via the screen path.
+## Attempt 2: v3.6.100 — live-tested, FAILED (cleared the wrong incident)
 
-## Attempt 2: v3.6.100 — live-tested, INSUFFICIENT (FSM re-asserts the lock)
-
-A follow-up patch tried to clear the gate on a verified PIN:
+A follow-up patch tried to clear the incident on a verified PIN, but targeted the
+**wrong incident number**:
 
 - Base = v3.6.99 (same redirect + honest `type=2` verify).
 - On the **correct-PIN** path, the exit at `0x0805E4C8` jumps to a small stub in
   free flash (`0x0805E4E0`): `movs r0,#0x10; movs r1,#0; bl clr_incident
-  (0x08027A94); b.w <exit>`, which clears bit 16 (`error_set_flag 0x14000 →
-  0x4000`).
-- **Wrong PIN** path untouched (`status 3`). It does **not** touch EEPROM `0x75`.
+  (0x08027A94)`, intending to clear the lock.
 - Version byte `0x64` (= 100); CRC recalculated and consistent.
 
-**Live test (2026-11-22): FAILED.** The chip was flashed and confirmed running
-v3.6.100 (`chassis_board_version 3 6 100`), but the mower **stays locked**: MQTT
-reports `error_status 151` every frame. `type=2` + correct PIN returns `status 0`
-and `clr_incident(0x10)` does drop bit 16 — **once** — but the lock FSM
-(`0x08030B00`, RAM counter `0x200000AC`) **re-asserts `set_incident(16)` every
-~10 iterations**. Clearing the bit in the verify handler is not enough; the FSM
-keeps the lock up as long as its gate still reads "locked".
+**Live test (2026-11-22): FAILED.** The chip ran v3.6.100 but the mower stayed at
+`151`. Root cause: `0x10` is **incident 16 (the IMU error), not the PIN lock**.
+Worse, `clr_incident`'s switch has **no case for `0x10`**, so the stub only touched
+the 64-bit incident mask and **never cleared the `0x10000` bit in `error_set_flag`**
+— the lock was never even addressed.
 
-Root cause so far (read-only disasm):
+## Attempt 3: v3.6.101 — correct incident (`0xd`), built, NOT yet flashed
 
-- **Gate A** (`0x08019704`) reads EEPROM reg `0x75` (factory byte `'9'`, never
-  written). This is **not** the live lock — do not touch it.
-- The **post-power-off lock lives in gate B** (~`0x08019744`), which reads EEPROM
-  reg `0x1f`. The exact variable that the **physical-screen** PIN flips to
-  "unlocked" is **not yet pinpointed** — that is the missing piece for a possible
-  `v3.6.101`.
+The fix is to clear **incident 13 (`0xd`)** instead of 16:
 
-**Status: still not solved.** v3.6.99 verifies but does not clear; v3.6.100 clears
-the bit but the FSM re-locks. No patch unlocks a real lock yet. The physical
-screen remains the only *proven* way to clear a real lock.
+- Identical to v3.6.100 except one instruction: `movs r0,#0xd` instead of
+  `movs r0,#0x10`.
+- `clr_incident`'s **case `0xd`** (`0x08027B9C`) does `[0xa] bic #1`, i.e. it turns
+  off the `0x10000` bit of `error_set_flag` — exactly undoing the boot's
+  `set_incident(0xd)` (`0x08045952`).
+- Version byte `0x65` (= 101); CRC recalculated and verified.
+
+**Status: built and CRC-verified, NOT yet flashed or tested live** (awaiting owner
+OK to flash). Until a live test shows the mower actually leaves `151`, this stays
+unconfirmed — hence the PR is still a draft. The physical screen remains the only
+*proven* way to clear a real lock.
 
 ## How the MCU flasher actually works (confirmed, reusable)
 
@@ -197,16 +195,17 @@ or power-cycling it. After each flash the MCU raises `no_pin_code` +
 ## Status / credit
 
 - MCU flasher mechanism: **confirmed and reusable.**
-- Gate analysis: **confirmed** — the reported lock is bit 16 (`0x10000`) of the RAM
-  mask at `0x200002E0`, RAM-only, no RTC persistence; but a **lock FSM**
-  (`0x08030B00`) re-asserts it from a gate that reads EEPROM reg `0x1f`.
+- Incident analysis: **confirmed** — the PIN lock is **incident 13 (`0xd`)**, which
+  raises the `0x10000` bit of `error_set_flag`; incident 16 (`0x10`) is a separate
+  **IMU** error (I2C `0x68`, regs `0x75`/`0x1f`), unrelated to the PIN.
 - Honest-verify `type=2` patch (v3.6.99): **flashed + live-tested; returns status
   0/3 correctly; does NOT clear a real lock.**
-- Clear-the-gate patch (v3.6.100): **flashed + live-tested; INSUFFICIENT** — clears
-  bit 16 once, the FSM re-asserts it; mower stays at `151`.
-- Open question for a possible v3.6.101: the exact variable the **physical-screen**
-  PIN flips at EEPROM reg `0x1f` / gate B (~`0x08019744`) to make the FSM report
-  "unlocked".
+- Clear-incident patch (v3.6.100): **flashed + live-tested; FAILED** — cleared
+  incident `0x10` (IMU), which has no `clr_incident` case, so `error_set_flag` was
+  never touched; mower stayed at `151`.
+- Correct-incident patch (v3.6.101): **built + CRC-verified; NOT yet flashed/tested**
+  — `clr_incident(0xd)`, whose case `0xd` (`0x08027B9C`) does `bic #1` on the flag,
+  undoing the boot's `set_incident(0xd)`. Awaiting a live test.
 
-If any of this is useful, or someone knows which variable the screen path clears
-to satisfy gate B, we would love to hear it.
+If any of this is useful, or someone can confirm the live result of
+`clr_incident(0xd)` on a verified PIN, we would love to hear it.
