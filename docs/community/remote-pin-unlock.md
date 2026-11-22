@@ -1,11 +1,13 @@
-# Remote PIN unlock research (WORK IN PROGRESS — does NOT yet clear a real lock)
+# Remote PIN unlock research (WORK IN PROGRESS — fix candidate, not verified live)
 
 > Community research notes from a Novabot owner running OpenNova. Shared as
-> **work in progress**, not a solution. The honest-verify firmware patch
-> described here is flashed and the verify command behaves correctly, **but it
-> does not actually clear the anti-theft lock on a truly-locked mower** (see
-> "Current result"). The genuinely reusable, confirmed finding is **how the MCU
-> flasher works** (bottom section) — that part stands on its own.
+> **work in progress**, not a finished solution. The honest-verify patch that is
+> currently **flashed** (v3.6.99) verifies the PIN correctly but **does not clear
+> the anti-theft lock** on a truly-locked mower. A follow-up patch (v3.6.100) that
+> *should* clear it has been **built and statically verified but not yet flashed
+> or tested live** — see "Fix candidate". The genuinely reusable, already-confirmed
+> finding is **how the MCU flasher works** (bottom section) — that part stands on
+> its own.
 >
 > **Firmware flashing is risky.** Everything below touches the motor-controller
 > MCU. Read it end to end, keep a verified backup of the stock binary, and do
@@ -46,7 +48,13 @@ wrong, but because `type=2` is unimplemented.
 
 > Note: `report_exception_state.no_set_pin_code` is **not** the lock flag. It is
 > a separate flag ("no PIN configured"). The real lock is the `no_pin_code` bit
-> (`0x10000`) in the chassis node's `error_set_flag`.
+> (bit 16, `0x10000`) of the error bitmask held in RAM at `0x200002E0`. The MCU
+> serialises it to the host via `get_error_mask` (`0x08030314`, which `ldm`s the
+> raw mask), and the Linux side turns that bit into error `151`. This is
+> **RAM-only**: at boot the MCU sets the bit from EEPROM register `0x75` (`== '9'`),
+> and the firmware never writes EEPROM `0x75` (it stays a factory byte), so there
+> is **no** RTC/backup-domain persistence of the lock. Stock clears the bit only
+> through the physical-screen path; the remote channel has to clear it explicitly.
 
 ## Attempted fix: an "honest verify" patch (`type=2`)
 
@@ -63,7 +71,7 @@ it **broke charging** via a write to a mode byte (`0x2000150C`) that also affect
 blade calibration. The honest-verify patch compares the PIN for real and does
 **not** write that mode byte.
 
-## ⚠️ Current result: verify works, unlock does NOT (verified live 2026-11-22)
+## ⚠️ v3.6.99 result: verify works, unlock does NOT (verified live 2026-11-22)
 
 Flashed as v3.6.99 and tested on a mower that was **genuinely locked**
 (`error_status 151`, real anti-theft lock after a power-off):
@@ -72,19 +80,38 @@ Flashed as v3.6.99 and tested on a mower that was **genuinely locked**
 - **But the mower stays locked at `151`.** The remote call reports success and
   the lock does not clear.
 
-Cause, from disassembly: the real lock gate is the `no_pin_code` bit (`0x10000`).
-The injected `type=2` handler writes UI/state RAM
-(`0x368` / `0x4CE` / `0x774` / `0x775` / `0x77C`) **but never touches the real
-gate** — the bitmask at `0x200002E0` nor the persistent flag at `0x40023800`
-(backup / RTC domain) that actually hold the lock. So the honest comparison is
-correct, but the unlock side-effect is incomplete: it clears display/error
-scratch state, not the gate that keeps the mower at `151`.
+Cause, from disassembly: the real lock gate is the `no_pin_code` bit (bit 16,
+`0x10000`) of the error bitmask in RAM at `0x200002E0`. The injected `type=2`
+handler writes UI/state RAM (`0x368` / `0x4CE` / `0x774` / `0x775` / `0x77C`)
+**but never clears that bit**, so the honest comparison is correct but the unlock
+side-effect is incomplete: it clears display/error scratch state, not the gate
+that keeps the mower at `151`.
 
-**Status: not solved.** A working patch would have to clear the gate bit 16
-(`no_pin_code` / the `0x200002E0` bitmask) and the persistent `0x40023800` flag
-on a verified match, without weakening the anti-theft behaviour after a real
-power-off. That is the open part of this work. Until then, the physical screen
-remains the only way to clear a real lock.
+> Correction (confirmed by disassembly scan): the lock is **RAM-only** — there is
+> no persistent flag in the backup/RTC domain (`0x40023800`) involved, contrary to
+> an earlier guess. Clearing bit 16 of the `0x200002E0` mask is all that is needed.
+> Scan evidence: `clr_incident(16)` is never called anywhere in stock and
+> `reset_total` has no callers, i.e. stock only clears bit 16 via the screen path.
+
+## Fix candidate: v3.6.100 (built + statically verified, NOT yet flashed)
+
+A follow-up patch clears the gate for real on a verified PIN, without weakening
+anti-theft:
+
+- Base = v3.6.99 (same redirect + honest `type=2` verify).
+- On the **correct-PIN** path, the exit at `0x0805E4C8` now jumps to a small stub
+  in free flash (`0x0805E4E0`): `movs r0,#0x10; movs r1,#0; bl clr_incident
+  (0x08027A94); b.w <exit>`. That actually clears bit 16, taking
+  `error_set_flag` from `0x14000` → `0x4000`.
+- **Wrong PIN** path untouched (`status 3`). Anti-theft preserved: it does **not**
+  touch EEPROM `0x75`, so a real power-off still re-locks the mower.
+- Version byte `0x64` (= 100); CRC recalculated and consistent.
+
+**Status: fix candidate, NOT confirmed.** v3.6.100 is built and checks out
+statically, but it has **not been flashed or tested on a live locked mower yet**.
+Until a live test shows `error_set_flag = 0x4000` and the mower actually leaves
+`151`, treat this as unverified. Until then, the physical screen remains the only
+*proven* way to clear a real lock.
 
 ## How the MCU flasher actually works (confirmed, reusable)
 
@@ -158,9 +185,12 @@ or power-cycling it. After each flash the MCU raises `no_pin_code` +
 ## Status / credit
 
 - MCU flasher mechanism: **confirmed and reusable.**
-- Honest-verify `type=2` patch: **flashed; command returns status 0/3 correctly;
-  but does NOT clear a real lock** — the handler does not touch the gate bit.
-  **Open / work in progress.**
+- Gate analysis: **confirmed** — the lock is bit 16 (`0x10000`) of the RAM mask at
+  `0x200002E0`, RAM-only, no RTC persistence.
+- Honest-verify `type=2` patch (v3.6.99): **flashed; command returns status 0/3
+  correctly; but does NOT clear a real lock** — the handler does not clear bit 16.
+- Clear-the-gate patch (v3.6.100): **built and statically verified; NOT yet
+  flashed or tested live.** Fix candidate, unconfirmed.
 
-If any of this is useful, or someone knows the correct gate to clear on a
-verified match, we would love to hear it.
+If any of this is useful, or someone can confirm the live result of clearing
+bit 16 on a verified match, we would love to hear it.
