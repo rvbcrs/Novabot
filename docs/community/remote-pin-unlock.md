@@ -48,8 +48,11 @@ wrong, but because `type=2` is unimplemented.
 
 > Note: `report_exception_state.no_set_pin_code` is **not** the lock flag. It is
 > a separate flag ("no PIN configured"). The real lock is the `no_pin_code` bit
-> (`0x10000`) of `error_set_flag`, which the MCU serialises to the host via
-> `get_error_mask` (`0x08030314`); the Linux side turns it into error `151`.
+> (`0x10000`) of `error_set_flag` (a `u32` at `0x20001A18`), which the MCU
+> serialises to the host via `get_error_mask` (`0x08030314`); the Linux side turns
+> it into error `151`. It is a plain error bit, **not** a `lock_state` and **not**
+> stored in EEPROM — nothing re-asserts it at runtime; it only comes back on the
+> next boot (that is where the anti-theft lives).
 >
 > The firmware tracks errors as numbered **incidents**. The PIN lock is
 > **incident 13 (`0xd`)**: at boot `set_incident(0xd)` (`0x08045952`) raises the
