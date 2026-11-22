@@ -8,11 +8,10 @@ rework anything here.
 - **[remote-pin-unlock.md](remote-pin-unlock.md)** — ⚠️ **work in progress.** How
   the STM32 chassis MCU flasher actually works (it's in `chassis_control_node`,
   not the OTA service) — **confirmed and reusable**. Plus the remote PIN unlock
-  research: the flashed "honest verify" patch (v3.6.99) returns the right status
-  but does **not** clear a real lock; the gate is now identified (bit 16,
-  `0x10000`, of the RAM mask at `0x200002E0`, RAM-only — no RTC persistence), and
-  a clear-the-gate patch (v3.6.100) is **built but not yet flashed/verified live**.
-  Fix candidate, documented honestly.
+  research: two patches were flashed and live-tested — v3.6.99 (honest verify)
+  returns the right status but does **not** clear the lock, and v3.6.100 clears the
+  gate bit but the **lock FSM re-asserts it**, so the mower stays locked. **No
+  working unlock yet**; documented honestly with the open question for a next try.
 - **[wpa3-usb-ethernet.md](wpa3-usb-ethernet.md)** — mower won't join a **WPA3**
   network: it's a WPA3/SAE association failure, not a wrong password. Fix via USB
   Ethernet by setting the NetworkManager profile to `wpa-psk` (WPA2).

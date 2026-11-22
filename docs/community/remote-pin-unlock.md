@@ -1,13 +1,12 @@
-# Remote PIN unlock research (WORK IN PROGRESS — fix candidate, not verified live)
+# Remote PIN unlock research (WORK IN PROGRESS — no working unlock yet)
 
 > Community research notes from a Novabot owner running OpenNova. Shared as
-> **work in progress**, not a finished solution. The honest-verify patch that is
-> currently **flashed** (v3.6.99) verifies the PIN correctly but **does not clear
-> the anti-theft lock** on a truly-locked mower. A follow-up patch (v3.6.100) that
-> *should* clear it has been **built and statically verified but not yet flashed
-> or tested live** — see "Fix candidate". The genuinely reusable, already-confirmed
-> finding is **how the MCU flasher works** (bottom section) — that part stands on
-> its own.
+> **work in progress**, not a finished solution. Two firmware attempts were
+> flashed and live-tested: v3.6.99 verifies the PIN correctly but **does not clear
+> the lock**; v3.6.100 clears the gate bit but **the lock FSM re-asserts it**, so
+> the mower stays locked. **There is no patch that unlocks a real lock yet.** The
+> genuinely reusable, already-confirmed finding is **how the MCU flasher works**
+> (bottom section) — that part stands on its own.
 >
 > **Firmware flashing is risky.** Everything below touches the motor-controller
 > MCU. Read it end to end, keep a verified backup of the stock binary, and do
@@ -93,25 +92,38 @@ that keeps the mower at `151`.
 > Scan evidence: `clr_incident(16)` is never called anywhere in stock and
 > `reset_total` has no callers, i.e. stock only clears bit 16 via the screen path.
 
-## Fix candidate: v3.6.100 (built + statically verified, NOT yet flashed)
+## Attempt 2: v3.6.100 — live-tested, INSUFFICIENT (FSM re-asserts the lock)
 
-A follow-up patch clears the gate for real on a verified PIN, without weakening
-anti-theft:
+A follow-up patch tried to clear the gate on a verified PIN:
 
 - Base = v3.6.99 (same redirect + honest `type=2` verify).
-- On the **correct-PIN** path, the exit at `0x0805E4C8` now jumps to a small stub
-  in free flash (`0x0805E4E0`): `movs r0,#0x10; movs r1,#0; bl clr_incident
-  (0x08027A94); b.w <exit>`. That actually clears bit 16, taking
-  `error_set_flag` from `0x14000` → `0x4000`.
-- **Wrong PIN** path untouched (`status 3`). Anti-theft preserved: it does **not**
-  touch EEPROM `0x75`, so a real power-off still re-locks the mower.
+- On the **correct-PIN** path, the exit at `0x0805E4C8` jumps to a small stub in
+  free flash (`0x0805E4E0`): `movs r0,#0x10; movs r1,#0; bl clr_incident
+  (0x08027A94); b.w <exit>`, which clears bit 16 (`error_set_flag 0x14000 →
+  0x4000`).
+- **Wrong PIN** path untouched (`status 3`). It does **not** touch EEPROM `0x75`.
 - Version byte `0x64` (= 100); CRC recalculated and consistent.
 
-**Status: fix candidate, NOT confirmed.** v3.6.100 is built and checks out
-statically, but it has **not been flashed or tested on a live locked mower yet**.
-Until a live test shows `error_set_flag = 0x4000` and the mower actually leaves
-`151`, treat this as unverified. Until then, the physical screen remains the only
-*proven* way to clear a real lock.
+**Live test (2026-11-22): FAILED.** The chip was flashed and confirmed running
+v3.6.100 (`chassis_board_version 3 6 100`), but the mower **stays locked**: MQTT
+reports `error_status 151` every frame. `type=2` + correct PIN returns `status 0`
+and `clr_incident(0x10)` does drop bit 16 — **once** — but the lock FSM
+(`0x08030B00`, RAM counter `0x200000AC`) **re-asserts `set_incident(16)` every
+~10 iterations**. Clearing the bit in the verify handler is not enough; the FSM
+keeps the lock up as long as its gate still reads "locked".
+
+Root cause so far (read-only disasm):
+
+- **Gate A** (`0x08019704`) reads EEPROM reg `0x75` (factory byte `'9'`, never
+  written). This is **not** the live lock — do not touch it.
+- The **post-power-off lock lives in gate B** (~`0x08019744`), which reads EEPROM
+  reg `0x1f`. The exact variable that the **physical-screen** PIN flips to
+  "unlocked" is **not yet pinpointed** — that is the missing piece for a possible
+  `v3.6.101`.
+
+**Status: still not solved.** v3.6.99 verifies but does not clear; v3.6.100 clears
+the bit but the FSM re-locks. No patch unlocks a real lock yet. The physical
+screen remains the only *proven* way to clear a real lock.
 
 ## How the MCU flasher actually works (confirmed, reusable)
 
@@ -185,12 +197,16 @@ or power-cycling it. After each flash the MCU raises `no_pin_code` +
 ## Status / credit
 
 - MCU flasher mechanism: **confirmed and reusable.**
-- Gate analysis: **confirmed** — the lock is bit 16 (`0x10000`) of the RAM mask at
-  `0x200002E0`, RAM-only, no RTC persistence.
-- Honest-verify `type=2` patch (v3.6.99): **flashed; command returns status 0/3
-  correctly; but does NOT clear a real lock** — the handler does not clear bit 16.
-- Clear-the-gate patch (v3.6.100): **built and statically verified; NOT yet
-  flashed or tested live.** Fix candidate, unconfirmed.
+- Gate analysis: **confirmed** — the reported lock is bit 16 (`0x10000`) of the RAM
+  mask at `0x200002E0`, RAM-only, no RTC persistence; but a **lock FSM**
+  (`0x08030B00`) re-asserts it from a gate that reads EEPROM reg `0x1f`.
+- Honest-verify `type=2` patch (v3.6.99): **flashed + live-tested; returns status
+  0/3 correctly; does NOT clear a real lock.**
+- Clear-the-gate patch (v3.6.100): **flashed + live-tested; INSUFFICIENT** — clears
+  bit 16 once, the FSM re-asserts it; mower stays at `151`.
+- Open question for a possible v3.6.101: the exact variable the **physical-screen**
+  PIN flips at EEPROM reg `0x1f` / gate B (~`0x08019744`) to make the FSM report
+  "unlocked".
 
-If any of this is useful, or someone can confirm the live result of clearing
-bit 16 on a verified match, we would love to hear it.
+If any of this is useful, or someone knows which variable the screen path clears
+to satisfy gate B, we would love to hear it.
