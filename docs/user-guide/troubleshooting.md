@@ -57,6 +57,16 @@ Most common cause by far. The mower's `mqtt_node` can't reach your MQTT broker.
 Send the Wi-Fi settings again with the OpenNova app, charger first; do not
 delete the devices. See [Reconnect to Wi-Fi](reconnect-wifi.md).
 
+## The mower does not join Wi-Fi after provisioning (WPA3)
+
+The mower can fail to connect with WPA3. If your network offers WPA3, including
+"WPA2/WPA3 transition" mode, the mower can save it as WPA3 and then does not
+connect, even with the right password. Give the mower a WPA2-only network:
+switch WPA3 off for that network, or make a separate WPA2 network for it.
+Then send the Wi-Fi settings again with the OpenNova app. Custom firmware
+newer than custom-52 switches such a saved network to WPA2 by itself after
+two minutes without Wi-Fi.
+
 ## The app shows "No map!" even though I made a map
 
 The map upload completed on the mower side, but `queryEquipmentMap` returned an empty array.
