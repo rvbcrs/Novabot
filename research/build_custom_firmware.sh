@@ -1377,6 +1377,21 @@ while true; do
     if [ $fail_count -eq $FAIL_THRESHOLD ]; then
         echo "[$(date)] WiFi >2 min weg — config controleren" >> "$LOG"
 
+        # WPA3 (GH #185): mqtt_node verbindt met `nmcli device wifi connect`,
+        # dat de beveiliging uit de scan haalt. Op een netwerk dat ook WPA3
+        # aanbiedt wordt het profiel key-mgmt=sae, en daarmee associeert de
+        # maaier niet. Zet zo'n profiel één keer om naar WPA2 (wpa-psk); een
+        # WPA2/WPA3-transitienetwerk accepteert dat. Een WPA3-only netwerk
+        # blijft onbereikbaar, net als nu.
+        nmcli -t -f UUID,TYPE connection show 2>/dev/null | while IFS=: read -r uuid type; do
+            [ "$type" = "802-11-wireless" ] || continue
+            if [ "$(nmcli -g 802-11-wireless-security.key-mgmt connection show "$uuid" 2>/dev/null)" = "sae" ]; then
+                echo "[$(date)] WiFi-profiel $uuid op WPA3 (sae) — omzetten naar wpa-psk" >> "$LOG"
+                nmcli connection modify "$uuid" 802-11-wireless-security.key-mgmt wpa-psk >> "$LOG" 2>&1
+                nmcli connection up "$uuid" >> "$LOG" 2>&1
+            fi
+        done
+
         # Check of json_config.json een wifi sectie heeft
         HAS_WIFI=$(python3 -c "
 import json
