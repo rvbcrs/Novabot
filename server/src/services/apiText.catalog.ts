@@ -1357,6 +1357,26 @@ export const CATALOG: Catalog = {
     fr: "intervalMin doit valoir 0 ou être compris entre 15 et 240 minutes",
     de: "intervalMin muss 0 oder zwischen 15 und 240 Minuten liegen",
   },
+  "startAnchor moet time, sunrise of sunset zijn": {
+    en: "startAnchor must be time, sunrise or sunset",
+    fr: "startAnchor doit être time, sunrise ou sunset",
+    de: "startAnchor muss time, sunrise oder sunset sein",
+  },
+  "Een patrouille kan niet op zonsopkomst of zonsondergang starten": {
+    en: "A patrol cannot start at sunrise or sunset",
+    fr: "Une patrouille ne peut pas démarrer au lever ou au coucher du soleil",
+    de: "Eine Patrouille kann nicht bei Sonnenaufgang oder Sonnenuntergang starten",
+  },
+  "startOffsetMin moet een heel getal van -180 tot en met 180 zijn": {
+    en: "startOffsetMin must be a whole number from -180 to 180",
+    fr: "startOffsetMin doit être un nombre entier de -180 à 180",
+    de: "startOffsetMin muss eine ganze Zahl von -180 bis 180 sein",
+  },
+  "Een schema op zonsopkomst of zonsondergang draait op de server en gaat niet naar de maaier.": {
+    en: "A sunrise or sunset schedule runs on the server and is not sent to the mower.",
+    fr: "Un planning au lever ou au coucher du soleil tourne sur le serveur et n'est pas envoyé à la tondeuse.",
+    de: "Ein Zeitplan bei Sonnenaufgang oder Sonnenuntergang läuft auf dem Server und wird nicht an den Mäher gesendet.",
+  },
   "endTime moet HH:MM zijn": {
     en: "endTime must be HH:MM",
     fr: "endTime doit être au format HH:MM",

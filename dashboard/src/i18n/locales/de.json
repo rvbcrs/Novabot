@@ -861,7 +861,16 @@
       "hour": "Stunde",
       "minute": "Minute",
       "period": "AM oder PM"
-    }
+    },
+    "startAt": "Start bei",
+    "anchor": {
+      "time": "Feste Uhrzeit",
+      "sunrise": "Sonnenaufgang",
+      "sunset": "Sonnenuntergang"
+    },
+    "offsetMin": "Minuten (minus = vorher, plus = nachher)",
+    "sunHint": "Die Startzeit wandert jeden Tag mit der Sonne (berechnet aus der GPS-Position der Ladestation). Der Server startet den Mäher.",
+    "startFallback": "Start ohne GPS"
   },
   "rain": {
     "since": "Seit {{time}}",

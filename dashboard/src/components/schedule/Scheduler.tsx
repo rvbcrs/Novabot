@@ -51,6 +51,8 @@ interface Props {
 interface ScheduleForm {
   scheduleName: string;
   startTime: string;
+  startAnchor: 'time' | 'sunrise' | 'sunset';
+  startOffsetMin: number;
   endTime: string;
   weekdays: number[];
   mapId: string;
@@ -70,6 +72,8 @@ interface ScheduleForm {
 const defaultForm: ScheduleForm = {
   scheduleName: '',
   startTime: '09:00',
+  startAnchor: 'time',
+  startOffsetMin: 0,
   endTime: '12:00',
   weekdays: [1, 2, 3, 4, 5],
   mapId: '',
@@ -146,6 +150,8 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange, editRequ
     const payload = {
       scheduleName: form.scheduleName || null,
       startTime: form.startTime,
+      startAnchor: form.startAnchor,
+      startOffsetMin: form.startAnchor === 'time' ? 0 : form.startOffsetMin,
       endTime: form.endTime || null,
       weekdays: form.weekdays,
       mapId: form.mapId || null,
@@ -193,6 +199,8 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange, editRequ
     setForm({
       scheduleName: s.scheduleName ?? '',
       startTime: s.startTime,
+      startAnchor: s.startAnchor ?? 'time',
+      startOffsetMin: s.startOffsetMin ?? 0,
       endTime: s.endTime ?? '',
       weekdays: s.weekdays,
       mapId: s.mapId ?? '',
@@ -324,10 +332,53 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange, editRequ
             />
           </div>
 
+          {/* Start: fixed clock time or relative to sunrise/sunset */}
+          <div className="mb-3">
+            <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.startAt')}</label>
+            <div className="mt-1 flex gap-1">
+              {(['time', 'sunrise', 'sunset'] as const).map(a => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => setForm(prev => ({ ...prev, startAnchor: a }))}
+                  className={`flex-1 text-xs px-2 py-1.5 rounded border ${
+                    form.startAnchor === a
+                      ? 'bg-emerald-600 border-emerald-500 text-white'
+                      : 'bg-gray-900 border-gray-700 text-gray-400 hover:text-gray-200'
+                  }`}
+                >
+                  {t(`schedule.anchor.${a}`)}
+                </button>
+              ))}
+            </div>
+            {form.startAnchor !== 'time' && (
+              <div className="mt-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={-180}
+                    max={180}
+                    step={5}
+                    value={form.startOffsetMin}
+                    onChange={e => {
+                      const v = Math.round(Number(e.target.value));
+                      setForm(prev => ({ ...prev, startOffsetMin: Number.isFinite(v) ? Math.max(-180, Math.min(180, v)) : 0 }));
+                    }}
+                    className="w-20 text-sm bg-gray-900 border border-gray-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-emerald-500"
+                  />
+                  <span className="text-xs text-gray-400">{t('schedule.offsetMin')}</span>
+                </div>
+                <p className="mt-1 text-[10px] text-gray-500">{t('schedule.sunHint')}</p>
+              </div>
+            )}
+          </div>
+
           {/* Time — scroll-wheel pickers */}
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
-              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.start')}</label>
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">
+                {form.startAnchor === 'time' ? t('schedule.start') : t('schedule.startFallback')}
+              </label>
               <div className="mt-1">
                 <TimeWheel value={form.startTime} onChange={v => setForm(prev => ({ ...prev, startTime: v }))} />
               </div>
@@ -671,8 +722,14 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange, editRequ
                 </button>
                 <Clock className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="text-sm font-semibold text-white font-mono">
-                  {formatTime(s.startTime, timeFormat)}{s.endTime ? ` \u2013 ${formatTime(s.endTime, timeFormat)}` : ''}
+                  {formatTime(s.startTimeToday ?? s.startTime, timeFormat)}{s.endTime ? ` \u2013 ${formatTime(s.endTime, timeFormat)}` : ''}
                 </span>
+                {s.startAnchor && s.startAnchor !== 'time' && (
+                  <span className="text-[10px] text-amber-300" title={t('schedule.sunHint')}>
+                    {s.startAnchor === 'sunrise' ? '\u2600\u2191' : '\u2600\u2193'} {t(`schedule.anchor.${s.startAnchor}`)}
+                    {s.startOffsetMin ? ` ${s.startOffsetMin > 0 ? '+' : ''}${s.startOffsetMin} min` : ''}
+                  </span>
+                )}
                 {scheduleConflictMap.has(s.scheduleId) && (
                   <span title={t('schedule.conflict', { names: scheduleConflictMap.get(s.scheduleId)!.join(', ') })}>
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />

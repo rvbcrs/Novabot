@@ -893,7 +893,16 @@
       "hour": "Hour",
       "minute": "Minute",
       "period": "AM or PM"
-    }
+    },
+    "startAt": "Start at",
+    "anchor": {
+      "time": "Fixed time",
+      "sunrise": "Sunrise",
+      "sunset": "Sunset"
+    },
+    "offsetMin": "minutes (minus = before, plus = after)",
+    "sunHint": "The start time moves with the sun every day (computed from the charging station's GPS position). The server starts the mower.",
+    "startFallback": "Start without GPS"
   },
   "rain": {
     "since": "Since {{time}}",
