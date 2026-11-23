@@ -30,6 +30,12 @@ A note on merge order we hit in practice: if other feature branches add new
 UI strings, those keys also need an `es` entry or the TypeScript build fails —
 worth syncing locales when merging feature PRs together.
 
+**Status (2026-11-23):** both branches were merged with the current `master` and
+are complete: dashboard `es.json` has all 1739 keys of `en.json` (0 missing), and
+every server catalog entry has its `es` text (`tsc --noEmit` clean,
+`serverText.coverage.test.ts` 14/14 passing). PRs: #181 (dashboard) and #184
+(admin + server).
+
 ## Español
 
 Se hizo una traducción completa de la interfaz de OpenNova al español
@@ -57,3 +63,9 @@ Un detalle de orden de merge que apareció en la práctica: si otras ramas agreg
 cadenas nuevas de la interfaz, esas claves también necesitan su entrada `es` o
 falla la compilación de TypeScript; conviene sincronizar los idiomas al mergear
 PRs de features juntos.
+
+**Estado (23-11-2026):** las dos ramas se pusieron al día con `master` y están
+completas: el `es.json` del dashboard tiene las 1739 claves de `en.json` (0 faltantes)
+y todas las entradas de los catálogos del servidor tienen su texto `es` (compilación
+de tipos sin errores y test `serverText.coverage` 14/14 OK). PRs: #181 (dashboard) y
+#184 (admin + servidor).

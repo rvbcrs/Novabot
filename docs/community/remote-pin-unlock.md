@@ -1,13 +1,15 @@
-# Remote PIN unlock research (WORK IN PROGRESS — no working unlock yet)
+# Remote PIN unlock — WORKING (v3.6.101, live-tested twice)
 
-> Community research notes from a Novabot owner running OpenNova. Shared as
-> **work in progress**, not a finished solution. Firmware attempts so far: v3.6.99
-> verifies the PIN correctly but **does not clear the lock**; v3.6.100 tried to
-> clear it but targeted the **wrong incident number** (cleared the IMU incident, not
-> the PIN) and failed live; v3.6.101 (correct incident `0xd`) is **built but not yet
-> flashed/tested**. **No patch unlocks a real lock yet.** The genuinely reusable,
-> already-confirmed finding is **how the MCU flasher works** (bottom section) — that
-> part stands on its own.
+> Community research notes from a Novabot owner running OpenNova.
+> **Status: solved.** A patched chassis MCU firmware (**v3.6.101**) unlocks a real
+> anti-theft PIN lock remotely, with the correct PIN only, and with no side
+> effects seen. Live-tested on a genuinely locked mower on **2026-11-22** and again
+> after a deliberate power-off on **2026-11-23** (unlocked ~9 s after boot; the mower
+> then docked, charged and mowed normally). The anti-theft is preserved: a wrong
+> PIN is rejected (`status 3`) and the lock comes back on every boot.
+> The history below (v3.6.99 / v3.6.100) explains the two wrong turns on the way.
+>
+> 🇦🇷 **Resumen en español al final del documento.**
 >
 > **Firmware flashing is risky.** Everything below touches the motor-controller
 > MCU. Read it end to end, keep a verified backup of the stock binary, and do
@@ -110,7 +112,7 @@ Worse, `clr_incident`'s switch has **no case for `0x10`**, so the stub only touc
 the 64-bit incident mask and **never cleared the `0x10000` bit in `error_set_flag`**
 — the lock was never even addressed.
 
-## Attempt 3: v3.6.101 — correct incident (`0xd`), built, NOT yet flashed
+## Attempt 3: v3.6.101 — correct incident (`0xd`) — ✅ WORKS
 
 The fix is to clear **incident 13 (`0xd`)** instead of 16:
 
@@ -121,10 +123,52 @@ The fix is to clear **incident 13 (`0xd`)** instead of 16:
   `set_incident(0xd)` (`0x08045952`).
 - Version byte `0x65` (= 101); CRC recalculated and verified.
 
-**Status: built and CRC-verified, NOT yet flashed or tested live** (awaiting owner
-OK to flash). Until a live test shows the mower actually leaves `151`, this stays
-unconfirmed — hence the PR is still a draft. The physical screen remains the only
-*proven* way to clear a real lock.
+**Live test 1 (2026-11-22 19:39):** mower genuinely locked at `151` →
+`type=2` + correct PIN → `status 0`, `error_set_flag` dropped the `0x10000` bit,
+MQTT `error_status` went `151 → 0`.
+
+**Live test 2 (2026-11-23 12:42), from a cold boot:** owner powered the mower off and
+on with the button. Chassis log: `chassis_board_version: 3 6 101`, then
+`error_set_flag = 65536` + `error_no_pin_code` at 12:42:20 (locked, as designed).
+An automatic watcher sent the verify at 12:42:31 → `CMD_PIN_CODE_SET done` →
+`error_set_flag = 0` the same millisecond, `Goal succeeded`, MQTT `151 → 0`. The
+mower was then sent to the dock (`go_to_charge`), charged, and started a normal
+coverage run (`Work:MOVING`, error 0). No charging, blade or IMU side effects.
+
+## How to use it (once v3.6.101 is on the chip)
+
+1. On the mower, with the ROS 2 environment loaded
+   (`source /opt/ros/galactic/setup.bash`, `source /root/novabot/install/setup.bash`,
+   `ROS_LOCALHOST_ONLY=1`, `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`,
+   `ip link set lo multicast on`), send the action
+   `/chassis_pin_code_set` (`novabot_msgs/action/ChassisPinCodeSet`) with
+   **`type: 2`** and `code: "<PIN>"`. From Python (`rclpy.action.ActionClient`)
+   pass the PIN over **stdin**, never as a command-line argument.
+2. Result `status 0` = accepted; `status 3` = wrong PIN (lock stays; there is no
+   attempt counter, but do not loop on a rejected PIN).
+3. **Verify the real lock, not the action result:** the last
+   `error_set_flag = N` line in `chassis_control_node_*.log` must no longer have bit
+   `0x10000` (`81920`/`65536` = locked, `16384`/`0` = unlocked). The log can lag a
+   second or two — poll for up to ~10 s before concluding it is still locked.
+   On the server side, MQTT `report_state_robot.error_status` leaves `151`.
+4. **Mask the PIN in the logs afterwards.** `chassis_control_node` writes it in clear
+   text twice: `send action_config_pin_code_set = NNNN` and
+   `Goal succeeded ,PinCode_data = NNNN`. Overwrite only the digits in place (same
+   length, no truncate) so you do not race the node that is still appending, e.g.
+   regex `(?i)(pin_?code[a-z_]* ?[=:] ?"?)(\d{4,8})` → replace group 2 with `*`.
+
+Gotchas we hit:
+
+- The "Enter PIN" prompt on the **screen** can stay up after the unlock — that is
+  just the keypad lock of the display. Trust `151` / bit `0x10000`, not the screen.
+- `error_set_flag` bit `0x100000` (`1048576`) is **incident 44 = blade-height (lift)
+  motor**, not the PIN.
+- `report_exception_state.no_set_pin_code` is **not** the lock (see above).
+
+Automating it (what we run): a small watcher follows the server's decrypted MQTT
+stream; on `error_status 151/152` it runs the verify (PIN from an encrypted vault,
+piped over stdin), waits for `151` to clear, sends `go_to_charge` if the mower is not
+docked, and notifies the owner. A rejected PIN is never retried in the same episode.
 
 ## How the MCU flasher actually works (confirmed, reusable)
 
@@ -201,14 +245,44 @@ or power-cycling it. After each flash the MCU raises `no_pin_code` +
 - Incident analysis: **confirmed** — the PIN lock is **incident 13 (`0xd`)**, which
   raises the `0x10000` bit of `error_set_flag`; incident 16 (`0x10`) is a separate
   **IMU** error (I2C `0x68`, regs `0x75`/`0x1f`), unrelated to the PIN.
-- Honest-verify `type=2` patch (v3.6.99): **flashed + live-tested; returns status
-  0/3 correctly; does NOT clear a real lock.**
-- Clear-incident patch (v3.6.100): **flashed + live-tested; FAILED** — cleared
-  incident `0x10` (IMU), which has no `clr_incident` case, so `error_set_flag` was
-  never touched; mower stayed at `151`.
-- Correct-incident patch (v3.6.101): **built + CRC-verified; NOT yet flashed/tested**
-  — `clr_incident(0xd)`, whose case `0xd` (`0x08027B9C`) does `bic #1` on the flag,
-  undoing the boot's `set_incident(0xd)`. Awaiting a live test.
+- Honest-verify `type=2` patch (v3.6.99): verified the PIN correctly but did not
+  clear the lock (superseded).
+- v3.6.100: cleared incident `0x10` (IMU) by mistake — failed (superseded).
+- **v3.6.101: ✅ WORKS** — `clr_incident(0xd)` on a verified PIN. Live-tested
+  2026-11-22 and 2026-11-23 (cold boot → unlocked in ~9 s → docked, charged, mowed).
+  Wrong PIN → `status 3`, lock intact. Lock returns on every boot (anti-theft kept).
 
-If any of this is useful, or someone can confirm the live result of
-`clr_incident(0xd)` on a verified PIN, we would love to hear it.
+Happy to share the exact patch bytes/diff against stock v3.6.20 with the
+maintainer if it is useful for the project.
+
+## Resumen en español
+
+**Se logró destrabar a distancia el PIN anti-robo, sin errores.** Después de un
+apagado completo, el chip de motores (STM32) arranca trabado (error `151`) y el stock
+solo se destraba tipeando el PIN en la pantalla física.
+
+**Cómo se logró:**
+
+1. **Encontrar el candado real.** Desensamblando el firmware stock v3.6.20 se vio que el
+   candado es el **incidente 13 (`0xd`)**: al arrancar, `set_incident(0xd)` prende el bit
+   `0x10000` (`no_pin_code`) del `error_set_flag`, y Linux lo traduce en el error `151`.
+   El único que lo apagaba era el camino de la pantalla (`clr_incident(0xd)`).
+2. **Agregar un "verify" honesto al chip.** El stock ignoraba el comando remoto
+   `CMD 0x23 type=2`. El parche lo implementa: compara el PIN de verdad (correcto →
+   `status 0`, incorrecto → `status 3`). No toca el byte de modo `0x2000150C` (el que
+   rompía la carga en v3.6.8).
+3. **Que el verify apague el candado correcto.** v3.6.100 llamaba por error al
+   incidente 16 (la IMU). **v3.6.101** cambia una sola instrucción para llamar a
+   `clr_incident(0xd)`: con el PIN correcto apaga el bit `0x10000` y el `151` se va.
+4. **Grabarlo por Wi-Fi.** El flasheador del MCU está en `chassis_control_node`: se deja
+   un único `.bin` (con CRC verificado) en `MCU_BIN/` y se reinicia el nodo; si la
+   versión del nombre difiere de la que corre, la graba por IAP.
+5. **Usarlo.** Action ROS 2 `/chassis_pin_code_set` con `type 2` y el PIN (por stdin,
+   nunca en la línea de comandos). Se confirma mirando el `error_set_flag` real (sin el
+   bit `0x10000`) y el `151` que desaparece en MQTT. Después se enmascara el PIN, que el
+   nodo deja en claro en su log.
+
+**Pruebas en vivo:** 22-11-2026 (trabado real → destrabado) y 23-11-2026 (apagado y
+prendido a propósito → un vigía automático lo destrabó a los ~9 s → volvió a la base,
+cargó y salió a cortar normal). El PIN equivocado se rechaza y el candado vuelve en cada
+arranque: **el anti-robo queda intacto**.
