@@ -125,6 +125,7 @@ startMowerIpDiscovery();
 // schrijft dan de actuele waardes naar equipment_lora_cache. Voorkomt
 // dat UI stale data toont nadat een charger z'n channel zelf verplaatst.
 import { startLoraAutoSync } from './services/loraAutoSync.js';
+import { mountDashboard, dashboardFallback } from './dashboardStatic.js';
 startLoraAutoSync();
 
 // ── Express app ───────────────────────────────────────────────────────────────
@@ -372,11 +373,13 @@ if (PROXY_MODE === 'cloud') {
   // Dashboard static files (only if ENABLE_DASHBOARD=true)
   const dashboardEnabled = process.env.ENABLE_DASHBOARD === 'true';
   if (dashboardEnabled) {
-    app.use(express.static(dashboardPath));
+    mountDashboard(app, dashboardPath);
     console.log('[DASHBOARD] Web UI enabled');
   } else {
     console.log('[DASHBOARD] Web UI disabled (set ENABLE_DASHBOARD=true to enable)');
   }
+
+  const spaFallback = dashboardFallback(dashboardPath);
 
   // ── Catch-all ──────────────────────────────────────────────────────────────
   app.use((req, res) => {
@@ -387,10 +390,7 @@ if (PROXY_MODE === 'cloud') {
     }
 
     if (dashboardEnabled) {
-      // Dashboard SPA fallback
-      res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
-        if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
-      });
+      spaFallback(req, res, () => {});
     } else {
       const T = reqT(req);
       res.status(200).send(`<html lang="${langOf(req)}"><body style="background:#111;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1>OpenNova</h1><p>${T`De server draait. Verbind met de OpenNova-app.`}</p></div></body></html>`);
