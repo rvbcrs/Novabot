@@ -309,13 +309,6 @@ function ThemedApp({
     animation: 'slide_from_right' as const,
   }), [c.bg, colorScheme]);
 
-  // Re-apply Android navigation bar background when color scheme changes.
-  useEffect(() => {
-    if (Platform.OS === 'android') {
-      NavigationBar.setBackgroundColorAsync(c.bg);
-    }
-  }, [c.bg]);
-
   const navContent = (
     <NavigationContainer theme={navTheme} ref={navigationRef}>
       {isAuthenticated ? (
@@ -412,8 +405,9 @@ export default function App() {
   useEffect(() => {
     // Hide Android navigation bar
     if (Platform.OS === 'android') {
+      // Edge-to-edge only since SDK 58: the bar is transparent and swiping
+      // brings it back, so there is no background colour or behaviour to set.
       NavigationBar.setVisibilityAsync('hidden');
-      NavigationBar.setBehaviorAsync('overlay-swipe');
     }
     // Wait for auth check, then show app
     const timer = setTimeout(() => setAppReady(true), 1500);

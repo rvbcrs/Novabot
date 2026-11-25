@@ -105,7 +105,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.42)',
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   sheet: {
     backgroundColor: c.card,

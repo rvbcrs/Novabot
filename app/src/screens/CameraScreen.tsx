@@ -331,7 +331,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   },
   retryText: { fontSize: 14, fontWeight: '600', color: c.text },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',

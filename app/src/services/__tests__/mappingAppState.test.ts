@@ -13,7 +13,7 @@ it.each([false, true])('stops on native focus loss, never restarts, and removes 
   };
   const stop = vi.fn();
   const foreground = vi.fn();
-  const cleanup = stopOnAppBlur(appState, stop, android, foreground);
+  const cleanup = stopOnAppBlur(appState as unknown as Parameters<typeof stopOnAppBlur>[0], stop, android, foreground);
   expect(foreground).toHaveBeenLastCalledWith(true);
   listeners.get('change')?.('inactive');
   expect(foreground).toHaveBeenLastCalledWith(false);
